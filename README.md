@@ -41,3 +41,6 @@ Browser localStorage. Use **Backup / Restore** regularly. Optional Supabase sync
 - New Invoice Theme screen: 7 templates, 10 colours, text size, page size, orientation (js/templates.js)
 - PDF / print / share-image now use the chosen template; Delivery Note
 - Business Profile: completeness bar, 8 business-card designs + Share Card, draw signature
+
+
+© 2026 Billaura. All rights reserved. See COPYRIGHT.txt.

@@ -1,104 +1,154 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#2563EB" />
-  <title>Store – Billaura</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <style>
-    :root { --primary:#2563EB; --bg:#F8FAFC; --text:#0F172A; --muted:#64748B; --card:#fff; --border:#E2E8F0; --cta:#E11D48; }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: Inter, system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
-    .hero { background: linear-gradient(135deg,#1E40AF,#3B82F6); color: #fff; padding: 28px 20px 32px; text-align: center; }
-    .hero h1 { font-size: 1.5rem; margin-bottom: 6px; }
-    .hero p { opacity: .9; font-size: .875rem; }
-    .wrap { max-width: 720px; margin: 0 auto; padding: 16px; }
-    .search { width: 100%; padding: 12px 16px; border: 1.5px solid var(--border); border-radius: 12px; font-size: 1rem; margin-bottom: 16px; font-family: inherit; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(150px,1fr)); gap: 12px; }
-    .card { background: var(--card); border-radius: 14px; padding: 14px; border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,.04); }
-    .card h3 { font-size: .9375rem; margin-bottom: 4px; }
-    .price { font-weight: 700; color: var(--primary); margin-top: 8px; }
-    .meta { font-size: .75rem; color: var(--muted); }
-    .empty { text-align: center; padding: 48px 16px; color: var(--muted); }
-    .footer { text-align: center; padding: 24px; font-size: .75rem; color: var(--muted); }
-    .wa { display: inline-block; margin-top: 12px; background: #25D366; color: #fff; padding: 10px 18px; border-radius: 24px; text-decoration: none; font-weight: 600; font-size: .875rem; }
-    .badge { display: inline-block; background: rgba(255,255,255,.2); padding: 4px 10px; border-radius: 20px; font-size: .75rem; margin-top: 8px; }
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#EF1A3C" />
+<meta name="copyright" content="© Billaura. All rights reserved." />
+<title>Online Store</title>
+<style>
+  :root { --brand:#EF1A3C; --bg:#F4F6FB; --text:#1B2133; --muted:#6B7287; --card:#fff; --border:#E5E8F0; }
+  * { box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
+  body { font-family:Roboto,Arial,Helvetica,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); min-height:100vh; padding-bottom:90px; }
+  .hero { background:var(--brand); color:#fff; padding:30px 20px 56px; text-align:center; position:relative; }
+  .hero::after { content:""; position:absolute; left:0; right:0; bottom:-1px; height:28px; background:var(--bg); border-radius:28px 28px 0 0; }
+  .av { width:76px; height:76px; border-radius:50%; background:#fff; color:var(--brand); font-size:2rem; font-weight:800; display:flex; align-items:center; justify-content:center; margin:0 auto 12px; box-shadow:0 6px 18px rgba(0,0,0,.2); }
+  .hero h1 { font-size:1.45rem; font-weight:800; }
+  .hero p { opacity:.92; font-size:.9rem; margin-top:4px; }
+  .wrap { max-width:720px; margin:0 auto; padding:0 16px; }
+  .acts { display:flex; gap:10px; margin:-6px 0 14px; }
+  .act { flex:1; display:flex; align-items:center; justify-content:center; gap:6px; background:#fff; border:1px solid var(--border); border-radius:12px; padding:11px 6px; font-size:.85rem; font-weight:700; color:var(--text); text-decoration:none; box-shadow:0 1px 3px rgba(0,0,0,.04); }
+  .act.wa { background:#25D366; border-color:#25D366; color:#fff; }
+  .links { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
+  .links a { background:#fff; border:1.5px solid var(--brand); color:var(--brand); border-radius:999px; padding:8px 16px; font-weight:700; font-size:.85rem; text-decoration:none; }
+  .search { width:100%; padding:13px 16px; border:1px solid var(--border); border-radius:14px; font-size:1rem; font-family:inherit; background:#fff; margin-bottom:10px; outline:none; }
+  .search:focus { border-color:var(--brand); }
+  .chips { display:flex; gap:8px; overflow-x:auto; padding-bottom:10px; scrollbar-width:none; }
+  .chips::-webkit-scrollbar { display:none; }
+  .chip { flex:0 0 auto; border:1px solid var(--border); background:#fff; border-radius:999px; padding:7px 14px; font-size:.82rem; font-weight:600; color:var(--muted); cursor:pointer; font-family:inherit; }
+  .chip.on { background:var(--brand); border-color:var(--brand); color:#fff; }
+  .grid { display:grid; grid-template-columns:repeat(2,1fr); gap:12px; }
+  @media(min-width:560px){ .grid{grid-template-columns:repeat(3,1fr);} }
+  .card { background:#fff; border:1px solid var(--border); border-radius:16px; padding:14px; display:flex; flex-direction:column; box-shadow:0 1px 3px rgba(0,0,0,.04); }
+  .ph { height:70px; border-radius:12px; background:linear-gradient(135deg,color-mix(in srgb,var(--brand) 14%,#fff),color-mix(in srgb,var(--brand) 5%,#fff)); color:var(--brand); font-size:1.6rem; font-weight:800; display:flex; align-items:center; justify-content:center; margin-bottom:10px; }
+  .card h3 { font-size:.92rem; font-weight:700; line-height:1.25; }
+  .meta { font-size:.74rem; color:var(--muted); margin-top:2px; }
+  .price { font-weight:800; color:var(--brand); margin:8px 0 10px; }
+  .out { font-size:.72rem; color:#b91c1c; font-weight:700; }
+  .add { margin-top:auto; border:0; background:var(--brand); color:#fff; border-radius:10px; padding:9px; font-weight:700; font-size:.85rem; font-family:inherit; cursor:pointer; }
+  .qty { margin-top:auto; display:flex; align-items:center; justify-content:space-between; background:color-mix(in srgb,var(--brand) 10%,#fff); border-radius:10px; }
+  .qty button { width:38px; height:36px; border:0; background:none; color:var(--brand); font-size:1.3rem; font-weight:800; cursor:pointer; }
+  .qty b { font-size:.95rem; }
+  .empty { text-align:center; padding:48px 16px; color:var(--muted); }
+  .foot { text-align:center; padding:26px 16px 10px; font-size:.75rem; color:var(--muted); line-height:1.7; }
+  .cart { position:fixed; left:12px; right:12px; bottom:12px; max-width:696px; margin:0 auto; background:#1B2133; color:#fff; border:0; border-radius:16px; padding:14px 18px; display:flex; justify-content:space-between; align-items:center; font-weight:700; font-size:.95rem; font-family:inherit; cursor:pointer; box-shadow:0 8px 24px rgba(0,0,0,.25); }
+  .cart[hidden]{display:none;}
+  .cart span:last-child { background:#25D366; border-radius:10px; padding:7px 12px; font-size:.85rem; }
+</style>
 </head>
 <body>
-  <div class="hero" id="hero">
-    <h1 id="shopName">Store</h1>
-    <p id="shopSub">Loading catalog…</p>
-  </div>
-  <div class="wrap">
-    <div id="links" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px"></div>
-    <input class="search" id="q" type="search" placeholder="Search products…" />
-    <div class="grid" id="grid"></div>
-    <div class="empty" id="empty" hidden>No products published yet. Open Billaura → Online Store → Publish.</div>
-  </div>
-  <div class="footer">Powered by <strong>Billaura</strong></div>
-  <script>
-    function money(n) {
-      n = Number(n) || 0;
-      return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
-    }
-    function loadCatalog() {
-      try {
-        if (location.hash && location.hash.length > 2) {
-          const h = location.hash.slice(1);
-          if (h.startsWith('c=')) {
-            const json = decodeURIComponent(escape(atob(h.slice(2).replace(/-/g,'+').replace(/_/g,'/'))));
-            return JSON.parse(json);
-          }
-        }
-      } catch (e) {}
-      try {
-        const raw = localStorage.getItem('billaura_public_store');
-        if (raw) return JSON.parse(raw);
-      } catch (e) {}
-      return null;
-    }
-    const data = loadCatalog();
-    const hero = document.getElementById('hero');
-    const grid = document.getElementById('grid');
-    const empty = document.getElementById('empty');
+<div class="hero">
+  <div class="av" id="av">S</div>
+  <h1 id="shopName">Store</h1>
+  <p id="shopSub">Loading…</p>
+</div>
+<div class="wrap">
+  <div class="acts" id="acts"></div>
+  <div class="links" id="links"></div>
+  <input class="search" id="q" type="search" placeholder="Search products…" />
+  <div class="chips" id="chips"></div>
+  <div class="grid" id="grid"></div>
+  <div class="empty" id="empty" hidden>No products published yet.<br>Open Billaura → Online Store → Publish.</div>
+  <div class="foot">Powered by <b>Billaura</b><br>© <span id="yr"></span> Billaura. All rights reserved.</div>
+</div>
+<button class="cart" id="cart" hidden><span id="cartTxt"></span><span>Send order on WhatsApp</span></button>
+<script>
+(function () {
+  document.getElementById('yr').textContent = new Date().getFullYear();
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const money = n => (Number(n) || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  const unb64 = s => { s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; const b = atob(s); return Uint8Array.from(b, c => c.charCodeAt(0)); };
+  async function load() {
+    const h = (location.hash || '').slice(1);
+    try {
+      if (h.startsWith('z=')) {
+        const ds = new DecompressionStream('deflate-raw');
+        const w = ds.writable.getWriter(); w.write(unb64(h.slice(2))); w.close();
+        const t = await new Response(ds.readable).text();
+        return expand(JSON.parse(t));
+      }
+      if (h.startsWith('j=')) return expand(JSON.parse(new TextDecoder().decode(unb64(h.slice(2)))));
+      if (h.startsWith('c=')) return JSON.parse(decodeURIComponent(escape(atob(h.slice(2).replace(/-/g, '+').replace(/_/g, '/')))));
+    } catch (e) {}
+    try { const raw = localStorage.getItem('billaura_public_store'); if (raw) return JSON.parse(raw); } catch (e) {}
+    return null;
+  }
+  function expand(c) {
+    return { shop: c.n, phone: c.p, email: c.e, address: c.a, currency: c.c, tagline: c.t, wa: c.w, color: c.k,
+      links: (c.l || []).map(x => ({ label: x[0], url: x[1] })),
+      items: (c.i || []).map(x => ({ name: x[0], price: x[1], unit: x[2], category: x[3], stock: x[4] })) };
+  }
+  const waNum = v => { v = String(v || '').replace(/\D/g, ''); return v.replace(/^0/, '92'); };
+  load().then(data => {
     if (!data || !data.items || !data.items.length) {
-      document.getElementById('shopSub').textContent = 'Catalog not published on this device';
-      empty.hidden = false;
-    } else {
-      document.getElementById('shopName').textContent = data.shop || 'Store';
-      const bits = [data.phone, data.address].filter(Boolean).join(' · ');
-      document.getElementById('shopSub').textContent = data.tagline || bits || (data.items.length + ' products');
-      (data.links || []).forEach(l => { const a = document.createElement('a'); a.href = l.url; a.target = '_blank'; a.rel = 'noopener'; a.textContent = l.label; a.style.cssText = 'display:block;text-align:center;background:#fff;border:1.5px solid #E11D48;color:#E11D48;padding:12px;border-radius:12px;font-weight:600;text-decoration:none'; document.getElementById('links').appendChild(a); });
-      const cur = data.currency || 'Rs';
-      let items = data.items;
-      function render(list) {
-        grid.innerHTML = list.map(it => `
-          <div class="card">
-            <h3>${escapeHtml(it.name)}</h3>
-            <div class="meta">${escapeHtml([it.category, it.unit].filter(Boolean).join(' · '))}</div>
-            <div class="price">${cur} ${money(it.price)}</div>
-          </div>`).join('');
-        empty.hidden = list.length > 0;
-      }
-      function escapeHtml(s) {
-        return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-      }
-      render(items);
-      document.getElementById('q').addEventListener('input', e => {
-        const q = e.target.value.trim().toLowerCase();
-        render(items.filter(it => !q || (it.name || '').toLowerCase().includes(q) || (it.category || '').toLowerCase().includes(q)));
-      });
-      if (data.wa || data.phone) {
-        const a = document.createElement('a');
-        a.className = 'wa';
-        a.href = 'https://wa.me/' + String(data.wa || data.phone).replace(/\D/g, '').replace(/^0/, '92');
-        a.target = '_blank';
-        a.textContent = 'Order on WhatsApp';
-        document.querySelector('.wrap').appendChild(a);
-      }
+      document.getElementById('shopSub').textContent = 'Catalog not available';
+      document.getElementById('empty').hidden = false; return;
     }
-  </script>
+    if (/^#[0-9a-f]{6}$/i.test(data.color || '')) document.documentElement.style.setProperty('--brand', data.color);
+    const name = data.shop || 'Store';
+    document.title = name;
+    document.getElementById('shopName').textContent = name;
+    document.getElementById('av').textContent = name.trim().charAt(0).toUpperCase();
+    document.getElementById('shopSub').textContent = data.tagline || data.address || (data.items.length + ' products');
+    const acts = document.getElementById('acts');
+    if (data.phone) acts.insertAdjacentHTML('beforeend', `<a class="act" href="tel:${esc(data.phone)}">📞 Call</a>`);
+    const wa = waNum(data.wa || data.phone);
+    if (wa) acts.insertAdjacentHTML('beforeend', `<a class="act wa" href="https://wa.me/${wa}" target="_blank" rel="noopener">WhatsApp</a>`);
+    if (data.address) acts.insertAdjacentHTML('beforeend', `<a class="act" href="https://maps.google.com/?q=${encodeURIComponent(data.address)}" target="_blank" rel="noopener">📍 Map</a>`);
+    if (!acts.children.length) acts.remove();
+    const lk = document.getElementById('links');
+    (data.links || []).forEach(l => { if (/^https?:\/\//i.test(l.url)) lk.insertAdjacentHTML('beforeend', `<a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)}</a>`); });
+    if (!lk.children.length) lk.remove();
+    const cur = data.currency || 'Rs';
+    const cats = ['All', ...Array.from(new Set(data.items.map(i => i.category).filter(Boolean)))];
+    let cat = 'All', q = '';
+    const cart = {};
+    const chips = document.getElementById('chips');
+    if (cats.length < 3) chips.remove();
+    function drawChips() { chips.innerHTML = cats.map(c => `<button class="chip ${c === cat ? 'on' : ''}" data-c="${esc(c)}">${esc(c)}</button>`).join(''); }
+    function draw() {
+      const list = data.items.map((it, i) => ({ it, i })).filter(({ it }) => (cat === 'All' || it.category === cat) && (!q || (it.name || '').toLowerCase().includes(q)));
+      document.getElementById('grid').innerHTML = list.map(({ it, i }) => {
+        const out = it.stock != null && it.stock !== '' && Number(it.stock) <= 0;
+        const n = cart[i] || 0;
+        return `<div class="card"><div class="ph">${esc((it.name || '?').charAt(0).toUpperCase())}</div><h3>${esc(it.name)}</h3>
+          <div class="meta">${esc([it.category, it.unit].filter(Boolean).join(' · '))}</div>
+          <div class="price">${esc(cur)} ${money(it.price)}</div>
+          ${out ? '<div class="out">Out of stock</div>' : n ? `<div class="qty"><button data-d="-1" data-i="${i}">−</button><b>${n}</b><button data-d="1" data-i="${i}">+</button></div>` : `<button class="add" data-d="1" data-i="${i}">Add</button>`}</div>`;
+      }).join('');
+      document.getElementById('empty').hidden = list.length > 0;
+      const ids = Object.keys(cart).filter(k => cart[k] > 0);
+      const total = ids.reduce((s, k) => s + cart[k] * (Number(data.items[k].price) || 0), 0);
+      const cb = document.getElementById('cart');
+      cb.hidden = !ids.length || !wa;
+      document.getElementById('cartTxt').textContent = ids.reduce((s, k) => s + cart[k], 0) + ' items · ' + cur + ' ' + money(total);
+    }
+    drawChips(); draw();
+    chips.addEventListener('click', e => { const b = e.target.closest('[data-c]'); if (!b) return; cat = b.dataset.c; drawChips(); draw(); });
+    document.getElementById('q').addEventListener('input', e => { q = e.target.value.trim().toLowerCase(); draw(); });
+    document.getElementById('grid').addEventListener('click', e => {
+      const b = e.target.closest('[data-i]'); if (!b) return;
+      const i = b.dataset.i; cart[i] = Math.max(0, (cart[i] || 0) + Number(b.dataset.d)); draw();
+    });
+    document.getElementById('cart').addEventListener('click', () => {
+      const ids = Object.keys(cart).filter(k => cart[k] > 0);
+      let total = 0;
+      const lines = ids.map(k => { const it = data.items[k], amt = cart[k] * (Number(it.price) || 0); total += amt; return `• ${it.name} x ${cart[k]} = ${cur} ${money(amt)}`; });
+      const msg = `Hello ${name}, I would like to order:\n${lines.join('\n')}\nTotal: ${cur} ${money(total)}`;
+      window.open('https://wa.me/' + wa + '?text=' + encodeURIComponent(msg), '_blank');
+    });
+  });
+})();
+</script>
 </body>
 </html>
