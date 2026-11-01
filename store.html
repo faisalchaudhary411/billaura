@@ -32,6 +32,7 @@
     <p id="shopSub">Loading catalog…</p>
   </div>
   <div class="wrap">
+    <div id="links" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px"></div>
     <input class="search" id="q" type="search" placeholder="Search products…" />
     <div class="grid" id="grid"></div>
     <div class="empty" id="empty" hidden>No products published yet. Open Billaura → Online Store → Publish.</div>
@@ -68,7 +69,8 @@
     } else {
       document.getElementById('shopName').textContent = data.shop || 'Store';
       const bits = [data.phone, data.address].filter(Boolean).join(' · ');
-      document.getElementById('shopSub').textContent = bits || (data.items.length + ' products');
+      document.getElementById('shopSub').textContent = data.tagline || bits || (data.items.length + ' products');
+      (data.links || []).forEach(l => { const a = document.createElement('a'); a.href = l.url; a.target = '_blank'; a.rel = 'noopener'; a.textContent = l.label; a.style.cssText = 'display:block;text-align:center;background:#fff;border:1.5px solid #E11D48;color:#E11D48;padding:12px;border-radius:12px;font-weight:600;text-decoration:none'; document.getElementById('links').appendChild(a); });
       const cur = data.currency || 'Rs';
       let items = data.items;
       function render(list) {
@@ -88,10 +90,10 @@
         const q = e.target.value.trim().toLowerCase();
         render(items.filter(it => !q || (it.name || '').toLowerCase().includes(q) || (it.category || '').toLowerCase().includes(q)));
       });
-      if (data.phone) {
+      if (data.wa || data.phone) {
         const a = document.createElement('a');
         a.className = 'wa';
-        a.href = 'https://wa.me/' + String(data.phone).replace(/\D/g, '').replace(/^0/, '92');
+        a.href = 'https://wa.me/' + String(data.wa || data.phone).replace(/\D/g, '').replace(/^0/, '92');
         a.target = '_blank';
         a.textContent = 'Order on WhatsApp';
         document.querySelector('.wrap').appendChild(a);
