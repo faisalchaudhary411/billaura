@@ -490,6 +490,7 @@
   }
 
   // ---------- Navigation ----------
+  let _histInit = false;
   function setView(view, options = {}) {
     if (settings.warnUnsaved && currentView === 'create-invoice' && view !== 'create-invoice' && !window._docSaved && window._docLines && window._docLines.length) {
       if (!confirm('Discard this unsaved bill?')) return;
@@ -509,12 +510,21 @@
     }
     if (options.replace) previousView = currentView;
     currentView = view;
+    if (!options._pop) {
+      try {
+        const n0 = (history.state && history.state.n) || 0;
+        if (options.replace || !_histInit) { history.replaceState({ v: view, n: n0 }, '', '#' + view); }
+        else if (!options.keepHistory) { history.pushState({ v: view, n: n0 + 1 }, '', '#' + view); }
+        else { history.replaceState({ v: view, n: n0 }, '', '#' + view); }
+        _histInit = true;
+      } catch (e) {}
+    }
     // Highlight matching bottom nav item (home/dashboard/products/more)
     const navMap = { home: 'home', dashboard: 'dashboard', products: 'products', more: 'more',
       invoices: 'home', 'create-invoice': 'home', customers: 'more', suppliers: 'more',
       reports: 'more', expenses: 'more', purchases: 'more', daybook: 'more', 'stock-history': 'more',
       settings: 'more', 'business-profile': 'more',
-      'txn-settings': 'more', 'print-settings': 'more', 'invoice-theme': 'more', account: 'more', 'item-settings': 'more',
+      'txn-settings': 'more', 'print-settings': 'more', 'invoice-theme': 'more', account: 'more', 'app-lock': 'more', 'item-settings': 'more',
       'party-settings': 'more', 'tax-settings': 'more', 'general-settings': 'more', 'cash-in-hand': 'more', 'daybook-detail': 'more', 'multi-currency': 'more', reminders: 'more', 'online-store': 'more', 'sale-report': 'more', 'profit-loss': 'more', 'trial-balance': 'more', 'stock-summary': 'more', 'low-stock': 'more', 'party-pl': 'more', 'item-pl': 'more', banks: 'more', 'bank-ledger': 'more', loans: 'more', 'other-income': 'more', 'barcode-gen': 'more', 'balance-sheet': 'more', pos: 'home', 'stock-adjust': 'more', 'payments-in': 'more', 'payments-out': 'more', cheques: 'more', sync: 'more', companies: 'more', verify: 'more', recycle: 'more', 'bill-pnl': 'more' };
     const activeNav = navMap[view] || view;
     $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.view === activeNav));
@@ -559,6 +569,7 @@
       'business-profile': () => { title.textContent = 'Business Profile'; content.innerHTML = viewBusinessProfile(); },
       'txn-settings': () => { title.textContent = 'Transaction'; content.innerHTML = viewTxnSettings(); },
       'print-settings': () => { title.textContent = 'Invoice Print'; content.innerHTML = viewPrintSettings(); },
+      'app-lock': () => { title.textContent = 'App Lock & Staff PIN'; content.innerHTML = viewAppLock(); },
       account: () => { title.textContent = 'Account & Data'; content.innerHTML = viewAccount(); },
       'invoice-theme': () => { title.textContent = 'Change Theme'; content.innerHTML = viewInvoiceTheme(); },
       'item-settings': () => { title.textContent = 'Item'; content.innerHTML = viewItemSettings(); },
@@ -1127,30 +1138,54 @@
     const staff = kind === 'staff';
     if (!window.HisablyFreemium || !HisablyFreemium.hasFeature('passcode')) { toast('PIN lock and staff mode are Pro features.', 4500); openPlansModal && openPlansModal(); return; }
     if (staff && !settings.pinHash) { toast('Set the owner PIN first'); return; }
-    $('#modalRoot').innerHTML = `
-      <div class="modal-overlay"><div class="modal-sheet">
-        <div class="modal-handle"></div>
-        <div class="modal-header"><h3 class="modal-title">${staff ? 'Staff PIN' : 'Owner PIN'}</h3>
-          <button class="modal-close" data-action="close-modal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
-        <div class="text-sm text-secondary mb-8">${staff ? 'Staff can make sales, quotations and returns and receive payments. They cannot see profit, costs, reports or settings, and cannot delete anything.' : 'The owner PIN opens everything. Choose 4 digits you will remember.'}</div>
-        <form id="pinForm" autocomplete="off">
-          <div class="form-group"><label class="form-label">New PIN (4 digits)</label><input type="password" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" class="form-input" id="pin1" /></div>
-          <div class="form-group"><label class="form-label">Repeat PIN</label><input type="password" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" class="form-input" id="pin2" /></div>
-          <button type="submit" class="btn btn-primary btn-block mt-12">Save PIN</button>
-        </form></div></div>`;
-    document.getElementById('pinForm').addEventListener('submit', async e => {
-      e.preventDefault();
-      const a = document.getElementById('pin1').value, b = document.getElementById('pin2').value;
-      if (!/^\d{4}$/.test(a)) { toast('PIN must be 4 digits'); return; }
-      if (a !== b) { toast('PINs do not match'); return; }
+    let stage = 1, first = '';
+    const draw = (entered, msg) => {
+      const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'];
+      $('#modalRoot').innerHTML = `<div class="lock-screen pin-setup"><div class="lock-box">
+        <div class="lock-title">${staff ? 'Staff PIN' : 'Owner PIN'}</div>
+        <div class="lock-sub">${escapeHtml(msg || (stage === 1 ? 'Choose a 4-digit PIN' : 'Repeat the PIN to confirm'))}</div>
+        <div class="lock-dots">${[0, 1, 2, 3].map(i => `<span class="${i < entered.length ? 'on' : ''}"></span>`).join('')}</div>
+        <div class="lock-pad">${keys.map(k => k === '' ? '<span></span>' : `<button type="button" data-k="${k}">${k}</button>`).join('')}</div>
+        <div class="lock-sub" style="font-size:.78rem;margin-top:10px">${staff ? 'Staff can sell, quote, take returns and receive payments only.' : 'The owner PIN opens everything.'}</div>
+        <button type="button" class="lock-link" data-pin-cancel>Cancel</button></div></div>`;
+      document.querySelector('[data-pin-cancel]').onclick = () => closeModal();
+      document.querySelectorAll('#modalRoot [data-k]').forEach(b => b.onclick = () => press(entered, b.dataset.k));
+    };
+    const press = async (entered, k) => {
+      if (k === '⌫') return draw(entered.slice(0, -1));
+      if (entered.length >= 4) return;
+      entered += k;
+      if (entered.length < 4) return draw(entered);
+      draw(entered);
+      if (stage === 1) { first = entered; stage = 2; setTimeout(() => draw(''), 180); return; }
+      if (entered !== first) { stage = 1; first = ''; setTimeout(() => draw('', 'PINs did not match – try again'), 250); return; }
       if (!settings.pinSalt) settings.pinSalt = uid().replace(/-/g, '');
-      const h = await pinHash(a);
-      if (staff && h === settings.pinHash) { toast('Staff PIN must be different from the owner PIN'); return; }
-      if (!staff && settings.staffHash && h === settings.staffHash) { toast('Owner PIN must be different from the staff PIN'); return; }
+      const h = await pinHash(entered);
+      if (staff && h === settings.pinHash) { stage = 1; first = ''; draw('', 'Staff PIN must differ from owner PIN'); return; }
+      if (!staff && settings.staffHash && h === settings.staffHash) { stage = 1; first = ''; draw('', 'Owner PIN must differ from staff PIN'); return; }
       if (staff) settings.staffHash = h; else { settings.pinHash = h; setRole('owner'); }
-      persist(); toast(staff ? 'Staff PIN saved' : 'Owner PIN saved. The app will lock when you leave it.');
-      openSettingsModal();
-    });
+      persist(); closeModal();
+      toast(staff ? 'Staff PIN saved' : 'Owner PIN saved. The app will lock when you leave it.', 3500);
+      if (currentView === 'app-lock') render(); else setView('app-lock');
+    };
+    draw('');
+  }
+  function viewAppLock() {
+    const on = !!settings.pinHash;
+    const row = (label, attr, danger) => `<div class="list-row" ${attr}><div class="list-row-left"><div class="list-row-label" ${danger ? 'style="color:#E11D48"' : ''}>${label}</div></div><svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div>`;
+    const pro = HisablyFreemium.hasFeature('passcode');
+    return `<div class="fade-in" style="padding:16px 0 28px">
+      <div class="doc-card" style="margin:0 16px 12px"><div style="font-weight:800;font-size:1.05rem">${on ? '🔒 App lock is ON' : '🔓 App lock is OFF'}</div>
+        <div class="text-sm text-secondary" style="margin-top:4px">${on ? 'The app asks for a PIN when you open it.' + (settings.staffHash ? ' Staff PIN is set.' : ' No staff PIN yet.') : 'Protect your shop data with a 4-digit PIN, and give your staff a limited login.'}</div>
+        ${pro ? '' : '<div class="text-sm" style="color:#B45309;margin-top:8px">PIN lock and staff mode need the Pro or Lifetime plan.</div>'}</div>
+      <div class="list-group">
+        ${row(on ? 'Change owner PIN' : 'Set owner PIN', 'data-action="pin-set-owner"')}
+        ${on ? row(settings.staffHash ? 'Change staff PIN' : 'Set staff PIN', 'data-action="pin-set-staff"') : ''}
+        ${on ? row('Lock app now', 'data-action="lock-now"') : ''}
+        ${on ? row('Remove PIN lock', 'data-action="pin-remove"', true) : ''}
+      </div>
+      <div class="text-sm text-secondary" style="padding:14px 16px;line-height:1.6"><b>Staff can:</b> make sales, quotations and returns, receive payments.<br><b>Staff cannot:</b> see profit, costs, reports or settings, or delete anything.<br>Forgot the PIN? Sign in to your cloud account to reset it.</div>
+    </div>`;
   }
   function themePickerHTML() {
     const cur = settings.invoiceTheme || 'teal';
@@ -1559,17 +1594,13 @@
             <label class="paid-toggle"><input type="checkbox" id="paidFull" /> <span>${isPur ? 'Paid in full' : isRet ? 'Refunded in full' : 'Received in full'}</span></label>
           </div>
           <input type="number" inputmode="decimal" min="0" step="any" class="form-input" id="paidIn" placeholder="0" name="paidAmount" />
-          <div class="chip-row mt-8" id="modeRow">
-            <button type="button" class="cat-chip active" data-mode="Cash">Cash</button>
-            <button type="button" class="cat-chip" data-mode="Bank">Bank</button>
-            <button type="button" class="cat-chip" data-mode="Online">Online</button>
-            <button type="button" class="cat-chip" data-mode="Cheque">Cheque</button>
-          </div>
+          <button type="button" class="ps-field mt-8" id="modeBtn"><span><small style="color:#6B7287;display:block;font-size:.72rem">Payment Type</small><b id="modeTxt">Cash</b></span><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>
           <div class="tot-row mt-8"><span>${isPur ? 'Balance payable' : isRet ? 'Credit left with customer' : 'Balance due'}</span><b id="tDue"></b></div>
           ${isRet ? '' : `<div class="tot-row tot-input"><span>Due date</span><span class="tot-ctl"><input type="date" id="dueIn" name="dueDate" min="${today}" style="width:150px" /></span></div>
           <div class="chip-row"><button type="button" class="cat-chip" data-due="7">+7 days</button><button type="button" class="cat-chip" data-due="15">+15 days</button><button type="button" class="cat-chip" data-due="30">+30 days</button></div>`}
         </div>
 
+        ${isPur ? '' : `<div class="doc-card"><label class="tot-row tot-check" style="margin:0"><span>Print “Received by / Delivered by”</span><input type="checkbox" name="rb" ${settings.printReceivedBy !== false ? 'checked' : ''} /></label></div>`}
         <div class="save-bar" id="saveBar">
           <div><div class="doc-label" style="margin:0">Total</div><div class="save-total" id="saveTotal">${escapeHtml(cur)} 0</div></div>
           <button type="submit" class="btn btn-primary" id="createInvoiceBtn" disabled>${isPur ? 'Save Purchase' : isRet ? 'Save Return' : (isEst ? 'Save Quotation' : 'Save Invoice')}</button>
@@ -1731,10 +1762,7 @@
       const d = new Date(); d.setDate(d.getDate() + (+b.dataset.due));
       const el = document.getElementById('dueIn'); if (el) el.value = d.toISOString().slice(0, 10);
     }));
-    document.querySelectorAll('#modeRow .cat-chip').forEach(b => b.addEventListener('click', () => {
-      st.mode = b.dataset.mode;
-      document.querySelectorAll('#modeRow .cat-chip').forEach(x => x.classList.toggle('active', x === b));
-    }));
+    { const mb = document.getElementById('modeBtn'); if (mb) mb.addEventListener('click', () => pickSheet({ title: 'Payment Type', options: PAY_MODES, selected: st.mode, onPick: v => { st.mode = v; document.getElementById('modeTxt').textContent = v; } })); }
 
     if (isStaff()) ['discIn', 'taxIn', 'chIn', 'chLabel', 'roundIn'].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = true; });
     document.getElementById('addItemsBtn').addEventListener('click', () => openItemPicker(lines, addProduct, (isEst || isPur) ? (() => true) : isRet ? (ref ? (p => (refQty[p.id] || 0) > 0) : (() => true)) : null));
@@ -1869,6 +1897,7 @@
       if (isRet && ref) { meta.refId = ref.id; meta.refNumber = ref.number; }
       if (isEst) { const vu = fd.get('validUntil'); if (vu) meta.validUntil = vu; }
       if (isStaff()) meta.by = 'Staff';
+      if (!isPur) meta.rb = fd.has('rb') ? 1 : 0;
       { const bn = (fd.get('billingName') || '').trim(); if (bn) meta.billingName = bn; const po = (fd.get('poNo') || '').trim(); if (po) meta.po = po; const pd = fd.get('poDate'); if (pd) meta.poDate = pd; }
       { const dd = fd.get('dueDate'); if (dd && !isRet && !isEst && paymentStatus !== 'paid') meta.dueDate = dd; }
       if (from) { meta.fromId = from.id; meta.fromNumber = from.number; }
@@ -2697,126 +2726,47 @@
   }
 
   function viewBusinessProfile() {
-    const themes = [
-      { id: 'royal', name: 'Royal Blue', color: 'linear-gradient(135deg,#1E40AF,#3B82F6)' },
-      { id: 'teal', name: 'Teal', color: 'linear-gradient(135deg,#0F766E,#14B8A6)' },
-      { id: 'emerald', name: 'Emerald', color: 'linear-gradient(135deg,#047857,#34D399)' },
-      { id: 'crimson', name: 'Crimson', color: 'linear-gradient(135deg,#BE123C,#FB7185)' },
-      { id: 'slate', name: 'Slate', color: 'linear-gradient(135deg,#334155,#94A3B8)' },
-      { id: 'amber', name: 'Amber', color: 'linear-gradient(135deg,#B45309,#FBBF24)' }
-    ];
-    const curTheme = settings.invoiceTheme || 'royal';
-    const cardStyle = settings.businessCardStyle || 'modern';
-    const bpPct = profileCompleteness();
-    return `<div class="fade-in" style="padding:16px 16px 32px">
-      <div style="font-weight:700;margin-bottom:2px">Profile ${bpPct}% complete</div><div class="prog" style="margin:6px 0 4px"><div style="width:${bpPct}%"></div></div>
-      <div class="section-label">Business details</div>
-      <div class="field has-value">
-        <input type="text" id="bpName" value="${escapeHtml(settings.businessName||'')}" placeholder=" " />
-        <label>Business Name</label>
-      </div>
-      <div class="field ${settings.phone?'has-value':''}">
-        <input type="tel" id="bpPhone" value="${escapeHtml(settings.phone||'')}" placeholder=" " />
-        <label>Phone Number</label>
-      </div>
-      <div class="field ${settings.email?'has-value':''}">
-        <input type="email" id="bpEmail" value="${escapeHtml(settings.email||'')}" placeholder=" " />
-        <label>Email ID</label>
-      </div>
-      <div class="field ${settings.address?'has-value':''}">
-        <input type="text" id="bpAddress" value="${escapeHtml(settings.address||'')}" placeholder=" " />
-        <label>Business Address</label>
-      </div>
-      <div class="field ${settings.city?'has-value':''}">
-        <input type="text" id="bpCity" value="${escapeHtml(settings.city||'')}" placeholder=" " />
-        <label>City / Pincode</label>
-      </div>
-      <div class="field ${settings.taxId?'has-value':''}">
-        <input type="text" id="bpTax" value="${escapeHtml(settings.taxId||'')}" placeholder=" " />
-        <label>Tax ID / NTN / GSTIN</label>
-      </div>
-      <div class="field ${settings.phone2?'has-value':''}">
-        <input type="tel" id="bpPhone2" value="${escapeHtml(settings.phone2||'')}" placeholder=" " />
-        <label>Second Phone Number</label>
-      </div>
-      <div class="field ${settings.businessDesc?'has-value':''}">
-        <input type="text" id="bpDesc" value="${escapeHtml(settings.businessDesc||'')}" placeholder=" " />
-        <label>Business Description / Tagline</label>
-      </div>
-      <div class="field ${settings.ownerName?'has-value':''}">
-        <input type="text" id="bpOwner" value="${escapeHtml(settings.ownerName||'')}" placeholder=" " />
-        <label>Owner Name</label>
-      </div>
-      <div class="form-group">
-        <label class="form-label">Currency</label>
-        <select class="form-select" id="bpCurrency">
-          ${['PKR','INR','BDT','USD','AED','SAR','GBP','EUR'].map(c => `<option value="${c}" ${settings.currency===c?'selected':''}>${c}</option>`).join('')}
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-label">Invoice Prefix</label>
-        <input class="form-input" id="bpPrefix" value="${escapeHtml(settings.invoicePrefix||'INV')}" />
-      </div>
-
-      <div class="section-label">Branding</div>
-      <div class="brand-card">
-        <h4>Business Logo</h4>
-        <div class="brand-row">
-          <div class="brand-preview" id="logoPreview">${settings.logo ? `<img src="${settings.logo}" alt="Logo"/>` : 'No logo'}</div>
-          <div class="brand-actions">
-            <input type="file" id="logoFile" accept="image/*" hidden />
-            <button type="button" class="btn btn-outline btn-sm" data-action="pick-logo">Upload Logo</button>
-            ${settings.logo ? `<button type="button" class="btn btn-ghost btn-sm" data-action="remove-logo">Remove</button>` : ''}
-          </div>
+    const T = window.BillauraTemplates;
+    const pct = profileCompleteness();
+    const tab = settings._bpTab || 'basic';
+    const fld = (id, label, val, type) => `<div class="field ${val ? 'has-value' : ''}"><input type="${type || 'text'}" id="${id}" value="${escapeHtml(val || '')}" placeholder=" " /><label>${label}</label></div>`;
+    const brand = (title, id, key, prev, up, empty) => `<div class="brand-card"><h4>${title}</h4><div class="brand-row"><div class="brand-preview" id="${prev}">${settings[key] ? `<img src="${settings[key]}" alt="">` : empty}</div>
+      <div class="brand-actions"><input type="file" id="${id}" accept="image/*" hidden /><button type="button" class="btn btn-outline btn-sm" data-action="${up}">${settings[key] ? 'Change' : 'Upload'}</button>${settings[key] ? `<button type="button" class="btn btn-ghost btn-sm" data-action="remove-${key === 'paymentQr' ? 'qr' : key}">Remove</button>` : ''}</div></div></div>`;
+    const cur = settings.businessCardTpl || 'classic';
+    const cards = T ? `<div class="bc-strip">${T.CARD_TEMPLATES.map(c => `<div class="bc-item ${cur === c.id ? 'active' : ''}" data-action="set-card-tpl" data-value="${c.id}"><div class="bc-scale">${T.cardHTML(settings, c.id)}</div></div>`).join('')}</div>` : '';
+    return `<div class="fade-in bp-page">
+      <div class="bp-hero">${cards}
+        <button class="bp-share" data-action="share-business-card"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg> Share Card</button>
+        <div class="bp-tip">💡 67% businessmen saw their business increase after sharing their visiting card</div></div>
+      <div class="bp-body">
+        <div style="font-weight:700">${pct === 100 ? 'Profile 100% complete.' : `Profile ${pct}% complete`}</div><div class="prog bp-prog" style="margin:8px 0 0"><div style="width:${pct}%;background:#0A6FE0"></div></div>
+        <div class="bp-dash"></div>
+        <div class="bp-tabs"><button class="bp-tab ${tab === 'basic' ? 'on' : ''}" data-action="bp-tab" data-tab="basic">Basic Details</button><button class="bp-tab ${tab === 'biz' ? 'on' : ''}" data-action="bp-tab" data-tab="biz">Business Details</button></div>
+        <div class="bp-pane" id="bpBasic" ${tab === 'basic' ? '' : 'hidden'}>
+          ${fld('bpName', 'Business Name', settings.businessName)}
+          ${fld('bpPhone', 'Phone Number 1', settings.phone, 'tel')}
+          ${fld('bpPhone2', 'Phone Number 2', settings.phone2, 'tel')}
+          ${fld('bpEmail', 'Email ID', settings.email, 'email')}
+          ${fld('bpAddress', 'Business Address', settings.address)}
+          ${fld('bpCity', 'Pincode / City', settings.city)}
+          ${fld('bpDesc', 'Business Description', settings.businessDesc)}
+          <div style="font-weight:600;margin:14px 0 8px">Signature</div>
+          <div class="sig-box" id="sigPreview">${settings.signature ? `<img src="${settings.signature}" alt="Signature">` : '<span>No signature</span>'}</div>
+          <input type="file" id="sigFile" accept="image/*" hidden />
+          <div class="sig-btns"><button type="button" class="pill-btn" data-action="draw-signature">${settings.signature ? 'Change' : 'Draw'}</button><button type="button" class="pill-btn" data-action="pick-signature">Upload</button><button type="button" class="pill-btn ${settings.signature ? '' : 'dis'}" data-action="remove-signature">Remove</button></div>
+        </div>
+        <div class="bp-pane" id="bpBiz" ${tab === 'biz' ? '' : 'hidden'}>
+          ${fld('bpTax', 'Tax ID / NTN / GSTIN', settings.taxId)}
+          ${fld('bpOwner', 'Owner Name', settings.ownerName)}
+          <div class="form-group"><label class="form-label">Currency</label><select class="form-select" id="bpCurrency">${['PKR', 'INR', 'BDT', 'USD', 'AED', 'SAR', 'GBP', 'EUR'].map(c => `<option value="${c}" ${settings.currency === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
+          <div class="form-group"><label class="form-label">Invoice Prefix</label><input class="form-input" id="bpPrefix" value="${escapeHtml(settings.invoicePrefix || 'INV')}" /></div>
+          ${brand('Business Logo', 'logoFile', 'logo', 'logoPreview', 'pick-logo', 'No logo')}
+          ${brand('Company Stamp / Seal', 'stampFile', 'stamp', 'stampPreview', 'pick-stamp', 'No stamp')}
+          ${brand('Payment QR (optional)', 'qrFile', 'paymentQr', 'qrPreview', 'pick-qr', 'No QR')}
+          <button class="btn btn-outline btn-block" style="margin-top:14px" data-action="open-theme">Invoice theme &amp; colours</button>
         </div>
       </div>
-      <div class="brand-card">
-        <h4>Signature</h4>
-        <div class="brand-row">
-          <div class="brand-preview sig" id="sigPreview">${settings.signature ? `<img src="${settings.signature}" alt="Sign"/>` : 'No signature'}</div>
-          <div class="brand-actions">
-            <input type="file" id="sigFile" accept="image/*" hidden />
-            <button type="button" class="btn btn-outline btn-sm" data-action="draw-signature">Draw Signature</button>
-            <button type="button" class="btn btn-outline btn-sm" data-action="pick-signature">Upload</button>
-            ${settings.signature ? `<button type="button" class="btn btn-ghost btn-sm" data-action="remove-signature">Remove</button>` : ''}
-          </div>
-        </div>
-      </div>
-      <div class="brand-card">
-        <h4>Company Stamp / Seal</h4>
-        <div class="brand-row">
-          <div class="brand-preview" id="stampPreview">${settings.stamp ? `<img src="${settings.stamp}" alt="Stamp"/>` : 'No stamp'}</div>
-          <div class="brand-actions">
-            <input type="file" id="stampFile" accept="image/*" hidden />
-            <button type="button" class="btn btn-outline btn-sm" data-action="pick-stamp">Upload Stamp</button>
-            ${settings.stamp ? `<button type="button" class="btn btn-ghost btn-sm" data-action="remove-stamp">Remove</button>` : ''}
-          </div>
-        </div>
-      </div>
-      <div class="brand-card">
-        <h4>Payment QR (optional)</h4>
-        <div class="brand-row">
-          <div class="brand-preview" id="qrPreview">${settings.paymentQr ? `<img src="${settings.paymentQr}" alt="QR"/>` : 'No QR'}</div>
-          <div class="brand-actions">
-            <input type="file" id="qrFile" accept="image/*" hidden />
-            <button type="button" class="btn btn-outline btn-sm" data-action="pick-qr">Upload QR</button>
-            ${settings.paymentQr ? `<button type="button" class="btn btn-ghost btn-sm" data-action="remove-qr">Remove</button>` : ''}
-          </div>
-        </div>
-      </div>
-
-      <div class="section-label">Invoice theme</div>
-      <button class="btn btn-outline btn-block" data-action="open-theme">Change Invoice Theme &amp; Colours</button>
-
-      <div class="section-label">Business card</div>
-      ${(function(){ const T=window.BillauraTemplates; if(!T) return ''; const cur=settings.businessCardTpl||'classic';
-        return `<div class="bc-strip" style="margin:0 -16px">${T.CARD_TEMPLATES.map(c=>`<div class="bc-item ${cur===c.id?'active':''}" data-action="set-card-tpl" data-value="${c.id}"><div class="bc-scale">${T.cardHTML(settings,c.id)}</div></div>`).join('')}</div>`; })()}
-      <div style="display:flex;gap:10px;margin-top:4px">
-        <button class="btn btn-outline" style="flex:1" data-action="preview-business-card">Preview</button>
-        <button class="btn btn-primary" style="flex:1" data-action="share-business-card">Share Card</button>
-      </div>
-
-      <button class="btn btn-primary btn-lg btn-block" style="margin-top:20px" data-action="save-business-profile">Save Profile</button>
+      <div class="bp-bar"><button class="bp-cancel" data-view="more">Cancel</button><button class="bp-save" data-action="save-business-profile">Save</button></div>
     </div>`;
   }
 
@@ -3039,8 +2989,10 @@
         ${toggleRow('Print description', 'printFooterDesc', { info: true })}
         ${toggleRow('Terms & Conditions', 'printTerms', { info: true })}
         ${toggleRow('Print Signature Text', 'printSignature', { info: true })}
+        ${toggleRow('Received by / Delivered by', 'printReceivedBy', { info: true })}
         ${toggleRow('Payment mode', 'printPaymentMode', { info: true })}
         ${toggleRow('Print Page Numbers', 'printPageNumbers', { info: true })}
+        <div class="list-row" data-action="toggle-brand"><div class="list-row-left"><div class="list-row-label">Show “Generated with Billaura” ${settings.hideBranding && brandingOn() === true ? '' : ''}<span class="premium-badge"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z"/></svg></span></div></div><div class="list-row-right text-secondary">${brandingOn() ? 'On' : 'Off'}</div></div>
       </div>
       `}
     </div>`;
@@ -3117,7 +3069,7 @@
       </div>
       <div class="section-title">Security</div>
       <div class="list-group">
-        ${navRow('App Lock &amp; Staff PIN', 'open-settings')}
+        ${navRow('App Lock &amp; Staff PIN', 'app-lock', true)}
       </div>
       <div class="section-title">More Transactions</div>
       <div class="list-group">
@@ -3518,9 +3470,23 @@
     </div>`;
   }
 
+  async function packCatalog(c) {
+    const compact = { n: c.shop, p: c.phone, e: c.email, a: c.address, c: c.currency, t: c.tagline, w: c.wa, k: c.color, l: (c.links || []).map(l => [l.label, l.url]), i: c.items.map(x => [x.name, x.price, x.unit, x.category, x.stock]) };
+    const json = JSON.stringify(compact);
+    const b64 = u8 => btoa(String.fromCharCode.apply(null, u8)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    try {
+      if (window.CompressionStream) {
+        const cs = new CompressionStream('deflate-raw');
+        const w = cs.writable.getWriter(); w.write(new TextEncoder().encode(json)); w.close();
+        const buf = new Uint8Array(await new Response(cs.readable).arrayBuffer());
+        return 'z=' + b64(buf);
+      }
+    } catch (e) {}
+    return 'j=' + b64(new TextEncoder().encode(json));
+  }
   function storeUrl() {
     let u = new URL('store.html', location.href).href;
-    if (settings._storeHash) u += '#c=' + settings._storeHash;
+    if (settings._storeHash) u += '#' + (/^[zj]=/.test(settings._storeHash) ? settings._storeHash : 'c=' + settings._storeHash);
     return u;
   }
   function viewOnlineStore() {
@@ -3540,7 +3506,7 @@
         <button class="sh-edit" data-action="store-edit-info">Edit store info</button></div>
       ${isPro ? `
       <div class="doc-card" style="margin:14px 16px 0"><div class="doc-label">Your store link</div>
-        <div class="store-url">${escapeHtml(url.length > 90 ? url.slice(0, 60) + '…' : url)}</div>
+        <div class="store-url">${escapeHtml(new URL(url).host + '/store.html' + (settings._storeHash ? ' · ' + (url.length / 1000).toFixed(1) + 'k link' : ''))}</div>
         <div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-outline" style="flex:1" data-action="copy-store-link">Copy link</button><button class="btn btn-primary" style="flex:1" data-action="share-store-link">Share on WhatsApp</button></div></div>
       <div style="padding:12px 16px;display:flex;flex-direction:column;gap:10px">
         <button class="btn btn-primary btn-lg btn-block" data-action="publish-store-page">${published ? 'Update' : 'Publish'} Store Page</button>
@@ -4083,13 +4049,15 @@
   // ---------- Receipt printing: 58 / 80 / 88 mm thermal, A4, Bluetooth ----------
   let printTarget = null;
 
+  function brandingOn() { try { return !(settings.hideBranding && HisablyFreemium.hasFeature('themes')); } catch (e) { return true; } }
   function tplCtx() {
-    return { settings, money, formatDate, amountInWords, products, qrAllowed: !window.HisablyFreemium || HisablyFreemium.effectivePlan().limits.paymentQrOnInvoice };
+    return { brand: brandingOn(), settings, money, formatDate, amountInWords, products, qrAllowed: !window.HisablyFreemium || HisablyFreemium.effectivePlan().limits.paymentQrOnInvoice };
   }
   function tplOK() { if (!window.BillauraTemplates) { toast('Template module not loaded. Refresh the page.'); return false; } return true; }
 
   function receiptCtx() {
     return {
+      brand: brandingOn(),
       settings,
       money,
       formatDate,
@@ -4557,6 +4525,26 @@
       ${plan.limited ? `<div class="plan-banner">Free plan limit reached – ${plan.limited} new product(s) not added. <button type="button" class="linkish" data-action="open-plans">Upgrade</button></div>` : ''}
       <button class="btn btn-primary btn-block" data-action="bulk-import-confirm" ${plan.adds.length + plan.updates.length === 0 ? 'disabled' : ''}>Import ${plan.adds.length + plan.updates.length} product(s)</button>`);
   }
+  function pickSheet(o) {
+    const old = document.getElementById('pickSheet'); if (old) old.remove();
+    const el = document.createElement('div'); el.id = 'pickSheet'; el.className = 'ps-back';
+    const close = () => el.remove();
+    const draw = (q) => {
+      const list = o.options.filter(x => !q || x.toLowerCase().includes(q.toLowerCase()));
+      el.querySelector('.ps-list').innerHTML = list.map(x => `<button type="button" class="ps-item ${x === o.selected ? 'sel' : ''}" data-v="${escapeHtml(x)}"><span class="ps-radio"></span>${escapeHtml(x)}</button>`).join('') || '<div class="doc-empty">Nothing found</div>';
+      el.querySelectorAll('.ps-item').forEach(b => b.onclick = () => { close(); o.onPick(b.dataset.v); });
+    };
+    el.innerHTML = `<div class="ps-sheet"><div class="ps-head"><b>${escapeHtml(o.title)}</b><button type="button" class="ps-x" aria-label="Close">✕</button></div>
+      ${o.search ? '<input class="form-input ps-q" placeholder="Search" />' : ''}<div class="ps-list"></div>
+      ${o.addNew ? `<button type="button" class="ps-add">+ ${escapeHtml(o.addNew)}</button>` : ''}</div>`;
+    document.body.appendChild(el);
+    draw('');
+    el.onclick = e => { if (e.target === el) close(); };
+    el.querySelector('.ps-x').onclick = close;
+    const q = el.querySelector('.ps-q'); if (q) q.oninput = () => draw(q.value);
+    const a = el.querySelector('.ps-add');
+    if (a) a.onclick = () => { const n = (prompt(o.addNew.replace(/^Add New /, 'New ') + ' name') || '').trim(); if (n) { close(); o.onPick(o.normalize ? o.normalize(n) : n); } };
+  }
   function modalShell(title, inner) {
     return `<div class="modal-overlay"><div class="modal-sheet"><div class="modal-handle"></div>
       <div class="modal-header"><h3 class="modal-title">${title}</h3>
@@ -4777,58 +4765,92 @@
     return out;
   }
 
-  function openProductModal(p) {
-    editingId = p ? p.id : null;
+  const UNIT_LIST = [['BAGS', 'bag'], ['BOTTLES', 'btl'], ['BOX', 'box'], ['BUNDLES', 'bdl'], ['CANS', 'can'], ['CARTONS', 'ctn'], ['DOZENS', 'dz'], ['GRAMS', 'g'], ['KILOGRAMS', 'kg'], ['LITRE', 'ltr'], ['MILILITRE', 'ml'], ['METERS', 'm'], ['FEET', 'ft'], ['SQUARE FEET', 'sq ft'], ['NUMBERS', 'nos'], ['PACKS', 'pack'], ['PAIRS', 'pair'], ['PIECES', 'pcs'], ['ROLLS', 'roll'], ['SETS', 'set'], ['TABLETS', 'tab']];
+  function unitName(code) { const u = UNIT_LIST.find(x => x[1] === code); return u ? u[0] : String(code || '').toUpperCase(); }
+  let _pmDraft = null, _pmItem = null;
+  function pmCollect() {
+    const f = $('#productForm'); if (!f) return _pmDraft || {};
+    const fd = new FormData(f); const d = {};
+    fd.forEach((v, k) => { d[k] = v; });
+    d._tab = (document.querySelector('.pm-tab.on') || {}).dataset ? document.querySelector('.pm-tab.on').dataset.tab : 'price';
+    d.unit = (_pmDraft && _pmDraft.unit) || d.unit; d.unit2 = _pmDraft && _pmDraft.unit2; d.unitRate = _pmDraft && _pmDraft.unitRate;
+    return d;
+  }
+  function genItemCode() {
+    for (let i = 0; i < 20; i++) { const c = String(Math.floor(1e10 + Math.random() * 9e10)); if (!products.some(x => x.barcode === c)) return c; }
+    return String(Date.now()).slice(-11);
+  }
+  function openUnitSheet() {
+    const d = _pmDraft || {};
+    const opts = (sel, ph) => `<option value="">${ph}</option>` + UNIT_LIST.map(u => `<option value="${u[1]}" ${sel === u[1] ? 'selected' : ''}>${u[0]} ( ${u[1]} )</option>`).join('');
+    $('#modalRoot').innerHTML = `<div class="modal-overlay"><div class="pm-page">
+      <div class="pm-unit-head"><button class="pm-back" data-action="pm-unit-cancel">←</button><span>Add Item Unit</span></div>
+      <div style="padding:18px 16px"><select class="form-select" id="unPri">${opts(d.unit || 'pcs', 'Primary Unit')}</select>
+      <select class="form-select" id="unSec" style="margin-top:16px">${opts(d.unit2 || '', 'Secondary Unit')}</select>
+      <div id="unConv"></div></div>
+      <div class="pm-foot two"><button class="pm-cancel" data-action="pm-unit-cancel">Cancel</button><button class="pm-save blue" data-action="pm-unit-save">Save</button></div></div></div>`;
+    const draw = () => {
+      const pr = $('#unPri').value, sc = $('#unSec').value, box = $('#unConv');
+      if (!pr || !sc || pr === sc) { box.innerHTML = ''; return; }
+      box.innerHTML = `<div style="font-weight:700;margin:22px 0 10px">Select Conversion Rate</div>
+        <div class="un-row">1 ${unitName(pr)} = <input id="unRate" type="number" inputmode="decimal" min="0" step="any" value="${d.unitRate || ''}" placeholder="0" /> ${unitName(sc)}</div>`;
+    };
+    $('#unPri').onchange = draw; $('#unSec').onchange = draw; draw();
+  }
+  function openProductModal(p, draft) {
+    editingId = p ? p.id : null; _pmItem = p || null;
+    const D = draft || {};
+    _pmDraft = { unit: D.unit || (p ? p.unit : (settings.defaultUnit || 'pcs')) || 'pcs', unit2: D.unit2 !== undefined ? D.unit2 : (p ? p.unit2 : ''), unitRate: D.unitRate !== undefined ? D.unitRate : (p ? p.unitRate : '') };
+    const v = (k, pv) => escapeHtml(D[k] !== undefined ? D[k] : (pv == null ? '' : pv));
     const cats = categoryList();
-    const units = ['pcs', 'kg', 'g', 'ltr', 'ml', 'box', 'pack', 'dozen', 'set', 'meter', 'ft', 'sq ft', 'bag'];
-    const showBarcode = settings.enableBarcode || (p && p.barcode);
-    $('#modalRoot').innerHTML = modalShell(p ? 'Edit Item' : 'Add Item', `
-      <form id="productForm" autocomplete="off">
-        <div class="form-group"><label class="form-label">Item name *</label>
-          <input class="form-input" name="name" required maxlength="80" value="${escapeHtml(p ? p.name : '')}" placeholder="e.g. Steel rod 12mm" /></div>
-        <div class="form-row">
-          <div class="form-group"><label class="form-label">Sale price (${escapeHtml(settings.currency)})</label>
-            <input class="form-input" name="price" type="number" inputmode="decimal" min="0" step="any" value="${p ? p.price : ''}" placeholder="0" /></div>
-          ${settings.enableDisplayPurchasePrice !== false ? `<div class="form-group"><label class="form-label">Purchase price</label>
-            <input class="form-input" name="cost" type="number" inputmode="decimal" min="0" step="any" value="${p && p.cost != null ? p.cost : ''}" placeholder="0" /></div>` : ''}
+    const curCat = D.category !== undefined ? D.category : (p ? (p.category || '') : '');
+    const tab = D._tab || 'price';
+    const showBarcode = true;
+    const conv = (_pmDraft.unit2 && _pmDraft.unitRate) ? `<div class="pm-conv">1 ${escapeHtml(_pmDraft.unit.toUpperCase())} = ${escapeHtml(_pmDraft.unitRate)} ${escapeHtml(_pmDraft.unit2.toUpperCase())}</div>` : '';
+    const fl = (label, inner) => `<div class="pm-f"><span class="pm-fl">${label}</span>${inner}</div>`;
+    const today = new Date().toISOString().slice(0, 10);
+    $('#modalRoot').innerHTML = `<div class="modal-overlay"><div class="pm-page">
+      <div class="pm-head"><button class="pm-back" data-action="close-modal" aria-label="Back">←</button><h2>${p ? 'Edit Item' : 'Add Item'}</h2></div>
+      <form id="productForm" autocomplete="off" class="pm-scroll">
+        ${fl('Item Name <i>*</i>', `<input name="name" required maxlength="80" value="${v('name', p && p.name)}" /><button type="button" class="pm-chip" data-action="pm-edit-unit">${p || D.unit || D.name ? 'Edit Unit' : 'Select Unit'}</button>`)}
+        ${conv}
+        ${showBarcode ? fl('Item Code / Barcode', `<input name="barcode" id="pmBarcode" maxlength="40" value="${v('barcode', p && p.barcode)}" /><button type="button" class="pm-chip" data-action="pm-assign-code">Assign Code</button><button type="button" class="pm-chip pm-scan" id="pmScan">Scan</button>`) : ''}
+        ${settings.enableItemCategory !== false ? fl('Item Category', `<button type="button" class="ps-field" id="pmCatBtn"><span id="pmCatTxt">${escapeHtml(curCat || 'Select category')}</span><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button><select name="category" id="pmCat" style="display:none"><option value=""></option>${cats.map(c => `<option value="${escapeHtml(c)}" ${c === curCat ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}${curCat && !cats.includes(curCat) ? `<option selected>${escapeHtml(curCat)}</option>` : ''}<option value="__new">+ Add New Category</option></select>`) : ''}
+        <div class="pm-tabs"><button type="button" class="pm-tab ${tab === 'price' ? 'on' : ''}" data-action="pm-tab" data-tab="price">Pricing</button><button type="button" class="pm-tab ${tab === 'stock' ? 'on' : ''}" data-action="pm-tab" data-tab="stock">Stock</button></div>
+        <div class="pm-pane" id="pmPrice" ${tab === 'price' ? '' : 'hidden'}>
+          <div class="pm-h">Sale Price</div>
+          ${fl('Sale Price', `<input name="price" type="number" inputmode="decimal" min="0" step="any" value="${v('price', p && p.price)}" />`)}
+          ${settings.enableWholesale ? fl('Wholesale Price', `<input name="wholesale" type="number" inputmode="decimal" min="0" step="any" value="${v('wholesale', p && p.wholesale)}" />`) : `<div class="pm-link" data-action="pm-wholesale">+ Add Wholesale Price</div>`}
+          ${settings.enableDisplayPurchasePrice !== false ? `<div class="pm-h">Purchase Price</div>${fl('Purchase Price', `<input name="cost" type="number" inputmode="decimal" min="0" step="any" value="${v('cost', p && p.cost)}" />`)}` : ''}
+          ${settings.enableItemTax ? fl('Item tax %', `<input name="taxRate" type="number" inputmode="decimal" min="0" step="any" value="${v('taxRate', p && p.taxRate)}" />`) : ''}
+          ${settings.enableItemDiscount ? fl('Item discount %', `<input name="discount" type="number" inputmode="decimal" min="0" max="100" step="any" value="${v('discount', p && p.discount)}" />`) : ''}
+          ${settings.enableItemDescription ? fl('Description', `<input name="desc" maxlength="120" value="${v('desc', p && p.desc)}" />`) : ''}
+          ${extraFieldsHTML('itemFields', p && p.extra)}
         </div>
-        ${settings.enableStock !== false ? `<div class="form-row">
-          <div class="form-group"><label class="form-label">${p ? 'Current stock' : 'Opening stock'}</label>
-            <input class="form-input" name="stock" type="number" inputmode="decimal" step="any" value="${p ? p.stock : ''}" placeholder="0" /></div>
-          <div class="form-group"><label class="form-label">Low-stock alert</label>
-            <input class="form-input" name="lowStock" type="number" inputmode="decimal" min="0" step="any" value="${p && p.lowStock != null ? p.lowStock : ''}" placeholder="${settings.lowStockDefault || 5}" /></div>
-        </div>` : ''}
-        <div class="form-row">
-          ${settings.enableItemUnits !== false ? `<div class="form-group"><label class="form-label">Unit</label>
-            <input class="form-input" name="unit" list="unitList" value="${escapeHtml(p ? (p.unit || '') : (settings.defaultUnit || 'pcs'))}" maxlength="12" />
-            <datalist id="unitList">${units.map(u => `<option value="${u}">`).join('')}</datalist></div>` : ''}
-          ${settings.enableItemCategory !== false ? `<div class="form-group"><label class="form-label">Category</label>
-            <input class="form-input" name="category" list="catList" value="${escapeHtml(p ? (p.category || '') : '')}" maxlength="40" placeholder="Optional" />
-            <datalist id="catList">${cats.map(c => `<option value="${escapeHtml(c)}">`).join('')}</datalist></div>` : ''}
+        <div class="pm-pane" id="pmStock" ${tab === 'stock' ? '' : 'hidden'}>
+          ${settings.enableStock !== false ? `
+          ${fl(p ? 'Current Stock' : 'Opening Stock', `<input name="stock" type="number" inputmode="decimal" step="any" value="${v('stock', p && p.stock)}" placeholder="Ex: 300" />`)}
+          <div class="pm-two">${fl('As of Date', `<input name="stockDate" type="date" value="${v('stockDate', (p && p.stockDate) || today)}" max="${today}" />`)}${fl('At Price/Unit', `<input name="stockPrice" type="number" inputmode="decimal" min="0" step="any" value="${v('stockPrice', p && p.stockPrice)}" placeholder="Ex: 2,000" />`)}</div>
+          <div class="pm-two">${fl('Min Stock Qty', `<input name="lowStock" type="number" inputmode="decimal" min="0" step="any" value="${v('lowStock', p && p.lowStock)}" placeholder="Ex: ${settings.lowStockDefault || 5}" />`)}${fl('Item Location', `<input name="location" maxlength="40" value="${v('location', p && p.location)}" />`)}</div>
+          ${p ? `<div class="pm-f"><span class="pm-fl">Add stock now</span><input id="stockInQty" type="number" inputmode="decimal" min="0" placeholder="Quantity" /><button type="button" class="pm-chip" data-action="stock-in" data-id="${p.id}">Add</button></div>` : ''}` : '<div class="doc-empty">Stock tracking is switched off in Item Settings.</div>'}
+          ${fl('Notes', `<input name="notes" maxlength="120" value="${v('notes', p && p.notes)}" />`)}
+          ${p ? `<button type="button" class="btn btn-ghost btn-block mt-12" style="color:var(--danger)" data-action="delete-product">Delete item</button>` : ''}
         </div>
-        ${showBarcode ? `<div class="form-group"><label class="form-label">Barcode / SKU</label>
-          <div class="input-with-btn"><input class="form-input" name="barcode" id="pmBarcode" value="${escapeHtml(p ? (p.barcode || '') : '')}" maxlength="40" />
-          <button type="button" class="btn btn-outline btn-sm" id="pmScan" style="height:48px">Scan</button></div></div>` : ''}
-        ${settings.enableItemTax ? `<div class="form-group"><label class="form-label">Item tax %</label>
-          <input class="form-input" name="taxRate" type="number" inputmode="decimal" min="0" step="any" value="${p && p.taxRate != null ? p.taxRate : ''}" /></div>` : ''}
-        ${settings.enableItemDiscount ? `<div class="form-group"><label class="form-label">Item discount %</label>
-          <input class="form-input" name="discount" type="number" inputmode="decimal" min="0" max="100" step="any" value="${p && p.discount != null ? p.discount : ''}" /></div>` : ''}
-        ${settings.enableWholesale ? `<div class="form-group"><label class="form-label">Wholesale price</label>
-          <input class="form-input" name="wholesale" type="number" inputmode="decimal" min="0" step="any" value="${p && p.wholesale != null ? p.wholesale : ''}" /></div>` : ''}
-        ${extraFieldsHTML('itemFields', p && p.extra)}
-        ${settings.enableItemDescription ? `<div class="form-group"><label class="form-label">Description</label>
-          <input class="form-input" name="desc" maxlength="120" value="${escapeHtml(p ? (p.desc || '') : '')}" /></div>` : ''}
-        <div class="form-group"><label class="form-label">Notes</label>
-          <input class="form-input" name="notes" maxlength="120" value="${escapeHtml(p ? (p.notes || '') : '')}" placeholder="Optional" /></div>
-        <button type="submit" class="btn btn-primary btn-block">${p ? 'Save changes' : 'Save item'}</button>
       </form>
-      ${p && settings.enableStock !== false ? `<div class="form-group mt-16"><label class="form-label">Add stock (purchase / stock-in)</label>
-        <div class="input-with-btn"><input class="form-input" id="stockInQty" type="number" inputmode="decimal" min="0" placeholder="Quantity" />
-        <button type="button" class="btn btn-secondary btn-sm" style="height:48px" data-action="stock-in" data-id="${p.id}">Add</button></div></div>` : ''}
-      ${p ? `<button type="button" class="btn btn-ghost btn-block mt-12" style="color:var(--danger)" data-action="delete-product">Delete item</button>` : ''}`);
+      <button class="pm-save" id="pmSaveBtn">Save</button></div></div>`;
     const f = $('#productForm');
     const scan = $('#pmScan');
     if (scan) scan.onclick = () => startScanner(code => { const b = $('#pmBarcode'); if (b) b.value = code; });
+    const cat = $('#pmCat');
+    const catBtn = $('#pmCatBtn');
+    if (cat && catBtn) catBtn.onclick = () => {
+      const opts = Array.from(cat.options).map(o => o.value).filter(v => v && v !== '__new');
+      pickSheet({ title: 'Select Category', options: opts, selected: cat.value, search: true, addNew: 'Add New Category', normalize: normalizeCategory, onPick: v => {
+        if (!Array.from(cat.options).some(o => o.value === v)) { const o = document.createElement('option'); o.value = o.textContent = v; cat.insertBefore(o, cat.lastElementChild); }
+        cat.value = v; $('#pmCatTxt').textContent = v; } });
+    };
+    if (cat) cat.onchange = () => { if (cat.value === '__new') { const n = (prompt('New category name') || '').trim(); if (n) { const o = document.createElement('option'); o.value = o.textContent = normalizeCategory(n); cat.insertBefore(o, cat.lastElementChild); cat.value = o.value; } else cat.value = ''; } };
+    $('#pmSaveBtn').onclick = () => f.requestSubmit();
     f.addEventListener('submit', e => {
       e.preventDefault();
       const fd = new FormData(f);
@@ -4837,8 +4859,10 @@
       const dup = products.find(x => x.name.trim().toLowerCase() === name.toLowerCase() && (!p || x.id !== p.id));
       if (dup) { toast('An item with this name already exists'); return; }
       const price = Math.max(0, numOrBlank(fd.get('price')) || 0);
-      const rec = { name, price, unit: String(fd.get('unit') || '').trim() || 'pcs', category: normalizeCategory(fd.get('category')),
-        notes: String(fd.get('notes') || '').trim(), extra: readExtra(f) };
+      const catV = String(fd.get('category') || ''); 
+      const rec = { name, price, unit: _pmDraft.unit || 'pcs', unit2: _pmDraft.unit2 || '', unitRate: Number(_pmDraft.unitRate) || 0, category: catV === '__new' ? '' : normalizeCategory(catV),
+        notes: String(fd.get('notes') || '').trim(), extra: readExtra(f), location: String(fd.get('location') || '').trim(), stockDate: String(fd.get('stockDate') || '') };
+      const sp = numOrBlank(fd.get('stockPrice')); if (sp != null) rec.stockPrice = sp;
       if (fd.has('cost')) rec.cost = Math.max(0, numOrBlank(fd.get('cost')) || 0); else if (!p) rec.cost = 0;
       if (fd.has('barcode')) rec.barcode = String(fd.get('barcode') || '').trim();
       if (fd.has('desc')) rec.desc = String(fd.get('desc') || '').trim();
@@ -5272,8 +5296,8 @@
       <div class="menu-card"><div class="menu-h">Others</div>
         ${mrow('crown', 'Plans &amp; Pricing', 'data-action="open-plans"')}
         ${tg('grow', 'whatsapp', 'Grow Your Business')}${msub('grow', [['Payment Reminders', 'data-view="reminders"'], ['Business Card &amp; Profile', 'data-view="business-profile"'], ['Share Catalog', 'data-view="online-store"'], ['Shopify Sync' + (_pro ? '' : ' (Pro)'), 'data-action="open-shopify"']])}
-        ${mrow('gear', 'Settings', 'data-view="settings"')}${mrow('users', 'Account &amp; Data', 'data-view="account"')}${mrow('lock', 'App Lock &amp; Staff PIN', 'data-action="open-settings"')}</div>
-      <div style="text-align:center;padding:14px;color:#8F95A8;font-size:.8rem">Billaura v${APP_VERSION}${profileCompleteness() < 100 ? ` · <a href="#" data-view="business-profile" style="color:#0A6FE0">Complete profile (${profileCompleteness()}%)</a>` : ''}</div></div>`;
+        ${mrow('gear', 'Settings', 'data-view="settings"')}${mrow('users', 'Account &amp; Data', 'data-view="account"')}${mrow('lock', 'App Lock &amp; Staff PIN', 'data-view="app-lock"')}</div>
+      <div style="text-align:center;padding:14px;color:#8F95A8;font-size:.8rem">© ${new Date().getFullYear()} Billaura. All rights reserved.<br>Billaura v${APP_VERSION}${profileCompleteness() < 100 ? ` · <a href="#" data-view="business-profile" style="color:#0A6FE0">Complete profile (${profileCompleteness()}%)</a>` : ''}</div></div>`;
   }
   IC.lock = '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>';
 
@@ -5544,6 +5568,19 @@
         toast('Card style: ' + st);
         break;
       }
+      case 'pm-edit-unit': { _pmDraft = Object.assign(_pmDraft || {}, {}); const d = pmCollect(); _pmDraft._form = d; openUnitSheet(); break; }
+      case 'pm-unit-cancel': openProductModal(_pmItem, Object.assign({}, _pmDraft._form, { unit: _pmDraft.unit, unit2: _pmDraft.unit2, unitRate: _pmDraft.unitRate })); break;
+      case 'pm-unit-save': {
+        const pr = ($('#unPri') || {}).value, sc = ($('#unSec') || {}).value, rate = ($('#unRate') || {}).value;
+        if (!pr) { toast('Choose a primary unit'); break; }
+        if (sc && sc !== pr && !(Number(rate) > 0)) { toast('Enter the conversion rate'); break; }
+        openProductModal(_pmItem, Object.assign({}, _pmDraft._form, { unit: pr, unit2: (sc && sc !== pr) ? sc : '', unitRate: (sc && sc !== pr) ? rate : '' }));
+        break;
+      }
+      case 'pm-assign-code': { const b = $('#pmBarcode'); if (b) b.value = genItemCode(); break; }
+      case 'pm-tab': { document.querySelectorAll('.pm-tab').forEach(x => x.classList.toggle('on', x.dataset.tab === t.dataset.tab)); const a1 = $('#pmPrice'), b1 = $('#pmStock'); if (a1) a1.hidden = t.dataset.tab !== 'price'; if (b1) b1.hidden = t.dataset.tab !== 'stock'; break; }
+      case 'pm-wholesale': settings.enableWholesale = true; persist(); { const d = pmCollect(); d._form = d; openProductModal(_pmItem, Object.assign({}, d, { unit: _pmDraft.unit, unit2: _pmDraft.unit2, unitRate: _pmDraft.unitRate })); } break;
+      case 'bp-tab': { settings._bpTab = t.dataset.tab; document.querySelectorAll('.bp-tab').forEach(x => x.classList.toggle('on', x.dataset.tab === t.dataset.tab)); const a1 = $('#bpBasic'), b1 = $('#bpBiz'); if (a1) a1.hidden = t.dataset.tab !== 'basic'; if (b1) b1.hidden = t.dataset.tab !== 'biz'; break; }
       case 'set-card-tpl': {
         settings.businessCardTpl = t.dataset.value; persist();
         document.querySelectorAll('[data-action="set-card-tpl"]').forEach(el => el.classList.toggle('active', el.dataset.value === t.dataset.value));
@@ -5587,9 +5624,6 @@
         if (!any) { toast('Draw your signature first'); break; }
         settings.signature = cv.toDataURL('image/png'); persist(); closeModal(); render(); toast('Signature saved'); break;
       }
-      case 'pick-signature':
-      case 'pick-stamp':
-      case 'pick-logo':
       case 'pick-qr': bindBrandFile('qrFile', 'paymentQr', 'qrPreview', 'Payment QR'); break;
       case 'pick-qr-legacy': {
         // handled below with unified uploader when id matches
@@ -5760,27 +5794,16 @@
       }
       case 'publish-store-page': {
         const catalog = {
-          shop: settings.businessName || 'My Shop',
-          phone: settings.phone || '',
-          email: settings.email || '',
+          shop: settings.businessName || 'My Shop', phone: settings.phone || '', email: settings.email || '',
           address: [settings.address, settings.city].filter(Boolean).join(', '),
-          tagline: settings.storeTagline || settings.businessDesc || '',
-          wa: settings.storeWhatsapp || settings.phone || '',
+          tagline: settings.storeTagline || settings.businessDesc || '', wa: settings.storeWhatsapp || settings.phone || '',
+          color: settings.invoiceColor || '#EF1A3C',
           links: (settings.storeLinks || []).map(l => ({ label: l.label, url: l.url })),
-          currency: settings.currency || 'PKR',
-          updatedAt: new Date().toISOString(),
-          items: products.map(p => ({
-            name: p.name, price: p.price, unit: p.unit || '', category: p.category || '', stock: p.stock
-          })).slice(0, 80)
+          currency: settings.currency || 'PKR', updatedAt: new Date().toISOString(),
+          items: products.map(p => ({ name: p.name, price: p.price, unit: p.unit || '', category: p.category || '', stock: p.stock })).slice(0, 150)
         };
         localStorage.setItem('billaura_public_store', JSON.stringify(catalog));
-        try {
-          const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(catalog)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-          settings._storeHash = b64;
-          persist();
-        } catch (e) {}
-        toast('Store published (' + catalog.items.length + ' items). Share link works on any phone.');
-        render();
+        packCatalog(catalog).then(h => { settings._storeHash = h; persist(); toast('Store published (' + catalog.items.length + ' items). Share the link on WhatsApp.'); render(); }).catch(() => toast('Could not publish'));
         break;
       }
       case 'store-edit-info': openStoreInfoModal(); break;
@@ -5799,13 +5822,13 @@
       case 'copy-store-link': { const u = storeUrl(); (navigator.clipboard ? navigator.clipboard.writeText(u) : Promise.reject()).then(() => toast('Link copied'), () => { prompt('Copy this link', u); }); break; }
       case 'open-store-page': {
         let u = new URL('store.html', location.href).href;
-        if (settings._storeHash) u += '#c=' + settings._storeHash;
+        if (settings._storeHash) u += '#' + (/^[zj]=/.test(settings._storeHash) ? settings._storeHash : 'c=' + settings._storeHash);
         window.open(u, '_blank');
         break;
       }
       case 'share-store-link': {
         let u = new URL('store.html', location.href).href;
-        if (settings._storeHash) u += '#c=' + settings._storeHash;
+        if (settings._storeHash) u += '#' + (/^[zj]=/.test(settings._storeHash) ? settings._storeHash : 'c=' + settings._storeHash);
         else {
           try {
             const raw = localStorage.getItem('billaura_public_store');
@@ -5935,10 +5958,14 @@
         toast('Backup downloaded');
         break;
       }
+      case 'toggle-brand': {
+        if (!settings.hideBranding) { if (!HisablyFreemium.hasFeature('themes')) { toast('Hiding Billaura branding is a Pro feature.', 4000); openPlansModal(); break; } settings.hideBranding = true; } else settings.hideBranding = false;
+        persist(); render(); break;
+      }
       case 'pin-set-owner': openPinModal('owner'); break;
       case 'pin-set-staff': openPinModal('staff'); break;
       case 'pin-remove':
-        if (confirm('Remove the PIN lock and staff PIN?')) { settings.pinHash = ''; settings.staffHash = ''; persist(); setRole(''); toast('Lock removed'); openSettingsModal(); }
+        if (confirm('Remove the PIN lock and staff PIN?')) { settings.pinHash = ''; settings.staffHash = ''; persist(); setRole(''); toast('Lock removed'); if (currentView === 'app-lock') render(); else openSettingsModal(); }
         break;
       case 'home-tab': homeTab = t.dataset.tab; homeQuery = ''; render(); break;
       case 'sheet-add-txn': openAddTxnSheet(); break;
@@ -6584,7 +6611,17 @@
     }
   });
 
+  window.addEventListener('popstate', (e) => {
+    if (!document.getElementById('app') || document.getElementById('app').hidden) return;
+    const st = e.state;
+    const mr = document.getElementById('modalRoot');
+    if (mr && mr.innerHTML.trim()) { closeModal(); try { history.pushState({ v: currentView, n: (st && st.n || 0) + 1 }, '', '#' + currentView); } catch (x) {} return; }
+    const v = (st && st.v) || 'home';
+    if (viewStack.length) viewStack.pop();
+    setView(v, { _pop: true, keepHistory: true });
+  });
   $('#backBtn').addEventListener('click', () => {
+    if (history.state && history.state.n > 0) { history.back(); return; }
     if (viewStack && viewStack.length) {
       const prev = viewStack.pop();
       setView(prev, { keepHistory: true });
@@ -6868,6 +6905,7 @@
         <button type="submit" class="btn btn-primary btn-block">${isLogin ? 'Sign in' : 'Create free account'}</button>
       </form>
       <p class="auth-hint">Sign in to sync your shop across devices. Your data on this phone is kept.</p>
+      <p class="auth-hint" style="font-size:.72rem;margin-top:14px">© ${new Date().getFullYear()} Billaura. All rights reserved. Unauthorised copying or resale of this software is prohibited.</p>
     </div>`;
   }
 
@@ -7335,7 +7373,9 @@
         });
       }
     } catch (e) {}
-    setView('home', { replace: true });
+    { const h = (location.hash || '').replace(/^#\/?/, '');
+      const ok = h && !['create-invoice', 'daybook-detail', 'bank-ledger', 'pos', 'auth'].includes(h);
+      setView(ok ? h : 'home', { replace: true }); }
     viewStack = [];
     initCloudAutoSync();
     maybeAutoBackup();

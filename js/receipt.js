@@ -132,6 +132,7 @@ ${(ctx.print && ctx.print.amountInWords) ? `<div class="sub c" style="margin-top
 <div class="c"><span class="badge">${st.label}</span></div>
 ${(ctx.qrAllowed && s.paymentQr) ? `<div class="c" style="margin-top:6px"><img class="qr" src="${esc(s.paymentQr)}" alt=""><div class="sub">Scan to pay</div><div class="sub">${esc(s.paymentNote || '')}</div></div>` : ''}
 <div class="c foot">${esc(footer || 'Thank you for your business!')}</div>
+${ctx.brand !== false ? '<div class="c sub" style="margin-top:6px">Powered by Billaura</div>' : ''}
 </body></html>`;
   }
 
@@ -379,7 +380,7 @@ thead{display:table-header-group}tr{break-inside:avoid}
       }
       y += Math.round(6 * S);
       center(footer, 17, false);
-      center('Powered by Billaura', 13, false);
+      if (c.brand !== false) center('Powered by Billaura', 13, false);
       y += Math.round(28 * S);                  // feed so the tear-off bar clears the text
       return y;
     }

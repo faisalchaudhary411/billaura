@@ -135,7 +135,7 @@
     const terms = flag(s, 'printTerms', true) && flag(s, 'enableTerms', true) ? `<div class="terms"><div class="lbl">Terms &amp; Conditions</div>${esc(s.termsText || 'Thank you for doing business with us.').replace(/\n/g, '<br>')}</div>` : '';
     const qr = (ctx.qrAllowed && s.paymentQr && showPrices && !isEst) ? `<div class="qr"><img src="${esc(s.paymentQr)}" alt=""><div><b>Scan to pay</b><div class="sm">${esc(s.paymentNote || '')}</div></div></div>` : '';
     const sig = flag(s, 'printSignature', true) ? `<div class="sig"><div class="sg"><div class="sgi">${s.signature ? `<img src="${esc(s.signature)}" alt="">` : ''}${s.stamp ? `<img class="st" src="${esc(s.stamp)}" alt="">` : ''}</div><div class="sgl">For ${esc(s.businessName || 'Business')}</div><div class="sm">${esc(s.signatureText || 'Authorized Signatory')}</div></div></div>` : '';
-    const recv = flag(s, 'printReceivedBy', true) ? `<div class="rb"><div>Received by: ______________</div><div>Delivered by: ______________</div></div>` : '';
+    const recv = (m.rb != null ? !!m.rb : flag(s, 'printReceivedBy', true)) ? `<div class="rb"><div>Received by: ______________</div><div>Delivered by: ______________</div></div>` : '';
     const orig = s.printOriginalDup ? `<div class="od">ORIGINAL FOR RECIPIENT</div>` : '';
     const desc = flag(s, 'printFooterDesc', true) && m.note ? `<div class="terms"><div class="lbl">Description</div>${esc(m.note)}</div>` : '';
 
@@ -178,6 +178,7 @@ tr{break-inside:avoid}thead{display:table-header-group}
 .rb{display:flex;justify-content:space-between;color:#6b7488;font-size:${fs - 1.5}px;margin-top:26px}
 .stat{display:inline-block;color:#fff;padding:3px 12px;border-radius:6px;font-weight:700;font-size:${fs - 2}px;letter-spacing:.05em}
 .od{text-align:right;font-size:${fs - 3}px;color:#8a93a6;letter-spacing:.1em;margin-bottom:6px}
+.gen{position:absolute;left:0;right:0;bottom:26px;text-align:center;color:#8a93a6;font-size:${fs - 3}px;letter-spacing:.04em}.gen b{color:${accent}}
 .pg{position:absolute;left:0;right:0;bottom:12px;text-align:center;color:#a0a8b8;font-size:${fs - 3}px}
 .brandline{height:0}
 `;
@@ -189,7 +190,7 @@ tr{break-inside:avoid}thead{display:table-header-group}
 .two{display:flex}.two>div{flex:1;padding:9px 12px}.two>div+div{border-left:1.5px solid #222}
 table th{border:1px solid #222;background:#f1f1f1;color:#111}table td{border:1px solid #444}table{border-top:1.5px solid #222}
 .bottom{margin:0;padding:10px 12px;border-top:1.5px solid #222;gap:18px}.grand{background:#f1f1f1;color:#111;border-radius:0}.sig{padding:0 12px 12px;margin-top:10px}.rb{padding:0 12px}`;
-        head = `<div class="wrap"><div class="hd">${brand}</div><div class="ttl">${(isEst ? 'QUOTATION' : o.deliveryNote ? 'DELIVERY NOTE' : isRet ? 'CREDIT NOTE' : 'TAX INVOICE')}</div>
+        head = `<div class="wrap"><div class="hd">${brand}</div><div class="ttl">${(isEst ? 'QUOTATION' : o.deliveryNote ? 'DELIVERY NOTE' : isRet ? 'CREDIT NOTE' : (m.tax > 0 ? 'TAX INVOICE' : 'INVOICE'))}</div>
 <div class="two"><div>${billTo}</div><div>${metaBlock}</div></div>`;
         break;
       case 'classic':
@@ -237,6 +238,7 @@ th{background:${soft(accent, .12)};color:${accent};border-radius:0}th:first-chil
 <table><thead>${thead}</thead><tbody>${tbody}</tbody><tfoot>${qtyRow}</tfoot></table>
 <div class="bottom"><div class="bl">${words}${desc}${terms}${qr}</div>${showPrices ? totalsHTML : ''}</div>
 ${recv}${sig}${close}
+${ctx.brand !== false ? '<div class="gen">Generated with <b>Billaura</b></div>' : ''}
 ${flag(s, 'printPageNumbers', true) ? `<div class="pg">${esc(inv.number)} · Page 1</div>` : ''}`;
     return { html: `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)} ${esc(inv.number)}</title><style>${css}${tcss}</style></head><body>${bodyHTML}</body></html>`, W, H, land };
   }
