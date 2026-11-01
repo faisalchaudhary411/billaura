@@ -309,3 +309,73 @@ body { font-family: var(--font); color: var(--text); }
 .pn-h{font-weight:800;margin-bottom:6px;color:#166534}
 .feat{font-size:.88rem;padding:3px 0;display:flex;gap:8px}.feat.on{color:#166534}.feat.off{color:#8A90A5}
 body.plan-pro .premium-badge{display:none}
+
+/* ===== Add Item page ===== */
+.pm-page{position:fixed;inset:0;background:#fff;display:flex;flex-direction:column;z-index:300}
+.pm-head{display:flex;align-items:center;gap:14px;padding:12px 16px;border-bottom:1px solid #eceff5}.pm-head h2{font-size:1.2rem;margin:0;font-weight:600}
+.pm-back{border:0;background:none;font-size:1.5rem;cursor:pointer;padding:0 6px}
+.pm-scroll{flex:1;overflow-y:auto;padding:22px 16px 90px}
+.pm-f{position:relative;display:flex;align-items:center;gap:8px;border:1.5px solid #9aa3b5;border-radius:8px;padding:0 10px;height:54px;margin-bottom:16px;background:#fff}
+.pm-f:focus-within{border-color:#0A6FE0}.pm-f input,.pm-f select{flex:1;min-width:0;border:0;outline:0;font:inherit;font-size:1rem;background:transparent;height:100%}
+.pm-fl{position:absolute;top:-9px;left:10px;background:#fff;padding:0 4px;font-size:.78rem;color:#6B7288}.pm-f:focus-within .pm-fl{color:#0A6FE0}.pm-fl i{color:#d00;font-style:normal}
+.pm-chip{border:0;background:#E3F0FD;color:#0A6FE0;font:600 .88rem inherit;font-family:inherit;border-radius:18px;padding:8px 14px;cursor:pointer;flex:none;box-shadow:0 1px 4px rgba(0,0,0,.12)}
+.pm-conv{text-align:right;color:#8A90A5;font-size:.85rem;margin:-10px 4px 14px}
+.pm-tabs{display:flex;margin:6px -16px 0;border-bottom:1px solid #e1e5ee}.pm-tab{flex:1;border:0;background:none;padding:14px;font:600 1rem inherit;font-family:inherit;color:#9aa0b5;border-bottom:3px solid transparent;cursor:pointer}.pm-tab.on{color:#E0102F;border-color:#E0102F}
+.pm-pane{padding-top:16px}.pm-h{font-weight:700;margin:6px 0 14px;color:#22273A}
+.pm-two{display:flex;gap:12px}.pm-two .pm-f{flex:1;min-width:0}
+.pm-link{color:#0A6FE0;font-weight:700;margin:-2px 0 22px;cursor:pointer}
+.pm-save{position:fixed;left:0;right:0;bottom:0;height:54px;border:0;background:#EF1A3C;color:#fff;font:700 1.05rem inherit;font-family:inherit;cursor:pointer}
+.pm-foot{position:fixed;left:0;right:0;bottom:0;height:54px;display:flex}.pm-foot button{flex:1;border:0;font:700 1rem inherit;font-family:inherit;cursor:pointer;background:#fff;color:#33394d}.pm-foot .pm-save{position:static;height:auto;color:#fff}.pm-save.blue{background:#1E88FF}
+.pm-unit-head{display:flex;align-items:center;gap:14px;background:#0A7BA8;color:#fff;padding:14px 16px;font-size:1.1rem}.pm-unit-head .pm-back{color:#fff}
+.un-row{display:flex;align-items:center;gap:8px;color:#6B7288}.un-row input{width:90px;border:1px solid #9aa3b5;border-radius:4px;padding:6px;font:inherit;text-align:center;color:#111}
+/* ===== Business profile ===== */
+.bp-page{padding-bottom:70px}.bp-hero{background:#E3F2FD;padding:12px 0 14px;position:relative}
+.bp-hero .bc-strip{padding-bottom:30px}.bp-share{position:absolute;left:50%;transform:translateX(-50%);top:150px;background:#EF1A3C;color:#fff;border:0;border-radius:30px;padding:14px 26px;font:700 1.1rem inherit;font-family:inherit;display:flex;gap:8px;align-items:center;box-shadow:0 4px 14px rgba(239,26,60,.4);cursor:pointer}
+.bp-tip{margin:34px 16px 0;color:#4a5068;font-size:.9rem}
+.bp-body{background:#fff;padding:16px}.bp-prog{height:6px;background:#dbe3ef}
+.bp-dash{border-top:2px dashed #dfe3ee;margin:16px -16px 0}
+.bp-tabs{display:flex;margin:0 -16px 18px;border-bottom:1px solid #e1e5ee}.bp-tab{flex:1;border:0;background:none;padding:14px;font:600 1rem inherit;font-family:inherit;color:#9aa0b5;border-bottom:3px solid transparent}.bp-tab.on{color:#E0102F;border-color:#E0102F}
+.sig-box{height:150px;border:1.5px dashed #b6bccb;border-radius:8px;display:flex;align-items:center;justify-content:center;background:#fafafa;color:#9aa0b5}.sig-box img{max-height:130px;max-width:90%}
+.sig-btns{display:flex;gap:12px;justify-content:center;margin:16px 0}.pill-btn{border:0;background:#E3F0FD;color:#0A6FE0;border-radius:22px;padding:12px 24px;font:600 .95rem inherit;font-family:inherit;cursor:pointer}.pill-btn.dis{background:#eee;color:#8a8f9e}
+.bp-bar{position:fixed;left:0;right:0;bottom:0;height:54px;display:flex;z-index:70;background:#fff}.bp-bar button{flex:1;border:0;font:700 1rem inherit;font-family:inherit;cursor:pointer}.bp-cancel{background:#fff;color:#6B7288}.bp-save{background:#EF1A3C;color:#fff}
+
+/* ===== Fixed app shell: page never scrolls, only .app-content ===== */
+html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+body { min-height: 0; }
+#app { height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; }
+.app-header { flex: 0 0 auto; }
+.app-content { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.bottom-nav { left: 0; right: 0; margin: 0 auto; transform: none; }
+.auth-screen { overflow-y: auto; max-height: 100dvh; }
+
+/* ===== PIN lock screen ===== */
+.lock-screen { position: fixed; inset: 0; z-index: 1000; background: linear-gradient(160deg,#1c2340,#0f1530); color: #fff; display: flex; align-items: center; justify-content: center; padding: 20px; overflow-y: auto; }
+.lock-screen[hidden] { display: none; }
+.lock-box { width: 100%; max-width: 340px; text-align: center; }
+.lock-title { font-size: 1.35rem; font-weight: 800; }
+.lock-sub { color: rgba(255,255,255,.7); font-size: .9rem; margin-top: 6px; min-height: 1.2em; }
+.lock-dots { display: flex; justify-content: center; gap: 16px; margin: 22px 0 24px; }
+.lock-dots span { width: 15px; height: 15px; border-radius: 50%; border: 2px solid rgba(255,255,255,.7); transition: background .12s; }
+.lock-dots span.on { background: #fff; }
+.lock-dots.shake { animation: lockShake .35s; }
+@keyframes lockShake { 20%,60% { transform: translateX(-9px); } 40%,80% { transform: translateX(9px); } }
+.lock-pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; justify-items: center; max-width: 280px; margin: 0 auto; }
+.lock-pad button { width: 70px; height: 70px; border-radius: 50%; border: 0; background: rgba(255,255,255,.12); color: #fff; font-size: 1.5rem; font-weight: 600; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.lock-pad button:active { background: rgba(255,255,255,.3); }
+.lock-link { margin-top: 18px; background: none; border: 0; color: rgba(255,255,255,.8); font-size: .95rem; text-decoration: underline; cursor: pointer; }
+.lock-box.shake { animation: lockShake .35s; }
+
+/* ===== Bottom pick sheet ===== */
+.ps-back { position: fixed; inset: 0; z-index: 900; background: rgba(15,21,48,.45); display: flex; align-items: flex-end; justify-content: center; }
+.ps-sheet { width: 100%; max-width: 480px; max-height: 80dvh; background: #fff; border-radius: 20px 20px 0 0; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; animation: psUp .18s ease-out; }
+@keyframes psUp { from { transform: translateY(40px); opacity: .6; } }
+.ps-head { display: flex; justify-content: space-between; align-items: center; font-size: 1.05rem; margin-bottom: 10px; }
+.ps-x { border: 0; background: #F1F3F9; width: 32px; height: 32px; border-radius: 50%; cursor: pointer; }
+.ps-q { margin-bottom: 8px; }
+.ps-list { overflow-y: auto; min-height: 0; }
+.ps-item { width: 100%; display: flex; align-items: center; gap: 12px; padding: 14px 4px; border: 0; border-bottom: 1px solid #EEF0F6; background: none; font: inherit; font-size: 1rem; text-align: left; cursor: pointer; }
+.ps-radio { width: 20px; height: 20px; border-radius: 50%; border: 2px solid #B8BECF; flex: none; }
+.ps-item.sel .ps-radio { border-color: #0A6FE0; box-shadow: inset 0 0 0 4px #fff; background: #0A6FE0; }
+.ps-add { margin-top: 12px; border: 0; background: #EF1A3C; color: #fff; font: inherit; font-weight: 700; border-radius: 999px; padding: 13px; cursor: pointer; }
+.ps-field { width: 100%; display: flex; justify-content: space-between; align-items: center; background: #fff; border: 1px solid #D5DAE8; border-radius: 10px; padding: 12px 14px; font: inherit; font-size: 1rem; text-align: left; cursor: pointer; color: inherit; }
+#pmCatBtn { border: 0; background: transparent; padding: 4px 0; }
