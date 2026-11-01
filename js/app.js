@@ -1,1 +1,7323 @@
-[]
+/* ============================================
+   Billaura v2 – Full Inventory + Invoicing
+   ============================================ */
+
+(function () {
+  'use strict';
+
+  const APP_VERSION = '2.1.0';
+
+  const STORAGE = {
+    products: 'sb_products_v2',
+    invoices: 'sb_invoices_v2',
+    customers: 'sb_customers_v2',
+    suppliers: 'sb_suppliers_v2',
+    expenses: 'sb_expenses_v2',
+    stockMovements: 'sb_stock_v2',
+    purchases: 'sb_purchases_v2',
+    banks: 'sb_banks_v2',
+    bankTxns: 'sb_bank_txns_v2',
+    otherIncome: 'sb_other_income_v2',
+    loans: 'sb_loans_v2',
+    settings: 'sb_settings_v2',
+    counter: 'sb_counter_v2',
+    tombs: 'sb_tombstones_v3'      // ids deleted locally, waiting to be deleted in the cloud
+  };
+  const OWNER_KEY = 'billaura_data_owner_v1';        // which account the local data belongs to
+  const LEGACY_FLAG = 'sb_legacy_reset_pending';    // v1 -> v2 id migration needs a clean cloud
+  const SYNC_COLLECTIONS = ['products', 'customers', 'suppliers', 'invoices', 'expenses', 'stockMovements', 'purchases'];
+  const DB_TABLE = { stockMovements: 'stock_movements' };
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  function load(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch { return fallback; }
+  }
+  let _storageWarned = false;
+  function save(key, val) {
+    try {
+      localStorage.setItem(key, JSON.stringify(val));
+    } catch (e) {
+      // Storage full (logo/QR images are big) - tell the user instead of silently losing data
+      if (!_storageWarned) {
+        _storageWarned = true;
+        try { toast('Storage is full! Export a backup and remove old data.', 6000); } catch (_) {}
+      }
+      console.error('save failed', key, e);
+    }
+  }
+
+  let products = load(STORAGE.products, []);
+  let invoices = load(STORAGE.invoices, []);
+  let customers = load(STORAGE.customers, []);
+  let suppliers = load(STORAGE.suppliers, []);
+  let expenses = load(STORAGE.expenses, []);
+  let stockMovements = load(STORAGE.stockMovements, []);
+  let purchases = load(STORAGE.purchases, []);
+  let banks = load(STORAGE.banks, []);
+  let bankTxns = load(STORAGE.bankTxns, []);
+  let otherIncome = load(STORAGE.otherIncome, []);
+  let loans = load(STORAGE.loans, []);
+  function defaultSettings() {
+    return {
+      businessName: 'My Business',
+      ownerName: '',
+      phone: '',
+      email: '',
+      address: '',
+      city: '',
+      taxId: '',
+      currency: 'Rs',
+      invoicePrefix: 'INV',
+      taxRate: 0,
+      invoiceTheme: 'royal',
+      pinSalt: '',
+      pinHash: '',
+      staffHash: '',
+      lowStockDefault: 5,
+      logo: '',
+      favourites: [],
+      signature: '',
+      stamp: '',
+      paymentQr: '',
+      paymentNote: 'Pay via JazzCash / EasyPaisa / Bank',
+      baseCurrency: 'PKR',
+      currencies: [],
+      remindersEnabled: false,
+
+      // Feature flags (Vyapar-style toggles)
+      enableStock: true,
+      enableItemUnits: true,
+      enableItemCategory: true,
+      enableBarcode: false,
+      enableItemTax: false,
+      enableItemDiscount: false,
+      qtyDecimals: 2,
+      enablePartyShipping: false,
+      enablePartyGrouping: false,
+      enablePartyTIN: false,
+      enableInvoiceNumber: true,
+      enableCashSaleDefault: false,
+      enableInclusiveTax: true,
+      enableDisplayPurchasePrice: true,
+      enableTxnTax: true,
+      enableTxnDiscount: true,
+      enableRoundOff: false,
+      enableTerms: true,
+      enableInvoicePreview: true,
+      printCompanyName: true,
+      printLogo: true,
+      printAddress: true,
+      printEmail: true,
+      printPhone: true,
+      printTaxDetails: true,
+      printAmountInWords: true,
+      printReceivedAmount: true,
+      printBalanceAmount: true,
+      printTerms: true,
+      printSignature: true,
+      printPageNumbers: true,
+      amountWordsFormat: 'indian',
+      thermalPageSize: '80',
+      dateFormat: 'dd/MM/yyyy',
+      decimalPlaces: 2,
+      appLanguage: 'en'
+    };
+  }
+  let settings = Object.assign(defaultSettings(), load(STORAGE.settings, {}));
+  let invoiceCounter = load(STORAGE.counter, 1001);
+  let docCtx = {};                 // {type:'return', ref:invoice} set before opening the create form
+  let tombs = load(STORAGE.tombs, {});
+
+  let currentView = 'home';
+  let viewStack = [];
+  let previousView = null;
+  let editingId = null;
+  let scanner = null;
+
+  const $ = (s, c = document) => c.querySelector(s);
+  const $$ = (s, c = document) => [...c.querySelectorAll(s)];
+
+  // Real UUIDs: they are also the primary keys in the cloud database
+  function uid() {
+    if (window.crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+      const r = Math.random() * 16 | 0;
+      return (c === 'x' ? r : (r & 3 | 8)).toString(16);
+    });
+  }
+  function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
+  function lowLimit(p) { return (p.lowStock ?? settings.lowStockDefault); }
+  function money(n) {
+    return (Number(n) || 0).toLocaleString('en-PK', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  }
+  function formatDate(iso) {
+    return new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  }
+  function initials(name) {
+    return (name || '?').split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
+  }
+  function escapeHtml(str) {
+    if (str === 0) return '0';
+    if (!str) return '';
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  // Custom dropdown helper (searchable, matches app design)
+
+  function invoiceBelongsToCustomer(inv, customerId, customerName, customerPhone) {
+    if (customerId && inv.customerId === customerId) return true;
+    const invName = (inv.customerName || '').trim().toLowerCase();
+    const name = (customerName || '').trim().toLowerCase();
+    if (!name || invName !== name) return false;
+    // Same name: also match phone if both have phone
+    const invPhone = (inv.customerPhone || '').replace(/\D/g, '');
+    const phone = (customerPhone || '').replace(/\D/g, '');
+    if (phone && invPhone) return invPhone === phone || invPhone.endsWith(phone) || phone.endsWith(invPhone);
+    // If invoice has customerId pointing elsewhere, don't steal it
+    if (inv.customerId && customerId && inv.customerId !== customerId) return false;
+    return true;
+  }
+
+  // Document kinds: 'sale' (default), 'return' (credit note, reverses a sale), 'estimate' (no effect on books)
+  function docSign(inv) { return inv.docType === 'return' ? -1 : (inv.docType === 'estimate' ? 0 : 1); }
+  function docWord(inv) { return inv.docType === 'return' ? 'Credit Note' : (inv.docType === 'estimate' ? 'Quotation' : 'Invoice'); }
+  function nextDocNumber(prefix) {
+    let mx = 1000;
+    invoices.forEach(i => {
+      const m = String(i.number).match(/^(.*?)-?(\d+)\s*$/);
+      if (m && m[1] === prefix) mx = Math.max(mx, parseInt(m[2], 10));
+    });
+    return `${prefix}-${mx + 1}`;
+  }
+  function returnedQty(refId) {
+    const r = {};
+    invoices.forEach(i => {
+      if (i.docType === 'return' && i.meta && i.meta.refId === refId) (i.items || []).forEach(it => { r[it.productId] = (r[it.productId] || 0) + (it.qty || 0); });
+    });
+    return r;
+  }
+  // Net sales / cost / receivable across all documents (returns subtract, estimates ignored)
+  function netTotals() {
+    let revenue = 0, cogs = 0, recv = 0;
+    invoices.forEach(i => {
+      const g = docSign(i); if (!g) return;
+      revenue += g * (i.total || 0);
+      cogs += g * (i.items || []).reduce((a, it) => a + ((it.cost || 0) * it.qty), 0);
+      recv += g * Math.max(0, (i.total || 0) - (i.paidAmount || 0));
+    });
+    return { revenue: round2(revenue), cogs: round2(cogs), receivable: Math.max(0, round2(recv)) };
+  }
+
+  function customerBalance(customerId, customerName, customerPhone) {
+    let net = 0, paid = 0, total = 0, count = 0;
+    invoices.forEach(inv => {
+      if (!invoiceBelongsToCustomer(inv, customerId, customerName, customerPhone)) return;
+      const g = docSign(inv); if (!g) return;
+      total += g * (inv.total || 0);
+      paid += g * (inv.paidAmount || 0);
+      net += g * Math.max(0, (inv.total || 0) - (inv.paidAmount || 0));
+      count++;
+    });
+    return { due: Math.max(0, round2(net)), credit: Math.max(0, round2(-net)), paid, total, count };
+  }
+
+  function findOrCreateCustomer(name, phone) {
+    name = (name || '').trim();
+    phone = (phone || '').trim();
+    if (!name || name === 'Walk-in Customer') return null;
+    const phoneDigits = phone.replace(/\D/g, '');
+    // Prefer match by name + phone
+    let c = customers.find(x => {
+      const sameName = x.name.toLowerCase() === name.toLowerCase();
+      if (!sameName) return false;
+      if (!phoneDigits) return true;
+      const xp = (x.phone || '').replace(/\D/g, '');
+      return !xp || xp === phoneDigits || xp.endsWith(phoneDigits) || phoneDigits.endsWith(xp);
+    });
+    if (c) {
+      if (phone && !c.phone) { c.phone = phone; persist(); }
+      return c;
+    }
+    // Exact name only if unique
+    const sameName = customers.filter(x => x.name.toLowerCase() === name.toLowerCase());
+    if (sameName.length === 1 && !phoneDigits) return sameName[0];
+    // Create new (respect the Free-plan customer limit instead of silently exceeding it)
+    if (window.HisablyFreemium && !HisablyFreemium.canAdd('customers', customers.length).ok) return null;
+    c = { id: uid(), name, phone, address: '', notes: '' };
+    customers.push(c);
+    persist();
+    return c;
+  }
+
+  // One-time migration: link invoices to customers by name, migrate old storage keys
+  function getList(n) {
+    return { products, customers, suppliers, invoices, expenses, stockMovements, purchases }[n];
+  }
+  function setList(n, list) {
+    if (n === 'products') products = list;
+    else if (n === 'customers') customers = list;
+    else if (n === 'suppliers') suppliers = list;
+    else if (n === 'invoices') invoices = list;
+    else if (n === 'expenses') expenses = list;
+    else if (n === 'stockMovements') stockMovements = list;
+    else if (n === 'purchases') purchases = list;
+  }
+  function ts(x) { const t = Date.parse(x); return isNaN(t) ? 0 : t; }
+
+  // Backups / old data may be missing fields - never let that crash a screen
+  function normalizeData() {
+    const nowIso = new Date().toISOString();
+    SYNC_COLLECTIONS.forEach(n => {
+      const list = getList(n);
+      if (!Array.isArray(list)) { setList(n, []); return; }
+      setList(n, list.filter(r => r && typeof r === 'object'));
+    });
+    products.forEach(p => {
+      p.name = String(p.name || 'Unnamed');
+      p.price = Number(p.price) || 0; p.cost = Number(p.cost) || 0;
+      p.stock = Math.round(Number(p.stock) || 0);
+      p.updatedAt = p.updatedAt || p.createdAt || nowIso;
+    });
+    customers.forEach(c => { c.name = String(c.name || 'Unnamed'); c.updatedAt = c.updatedAt || nowIso; });
+    suppliers.forEach(c => { c.name = String(c.name || 'Unnamed'); c.updatedAt = c.updatedAt || nowIso; });
+    expenses.forEach(e => {
+      e.amount = Number(e.amount) || 0;
+      e.date = e.date || nowIso.slice(0, 10);
+      e.updatedAt = e.updatedAt || e.date || nowIso;
+    });
+    invoices.forEach(i => {
+      if (!Array.isArray(i.items)) i.items = [];
+      i.total = Number(i.total) || 0;
+      i.paidAmount = Number(i.paidAmount) || 0;
+      i.number = String(i.number == null ? '' : i.number);
+      i.docType = i.docType || 'sale';
+      if (!i.meta || typeof i.meta !== 'object') i.meta = {};
+      i.date = i.date || nowIso;
+      i.updatedAt = i.updatedAt || i.date;
+    });
+    purchases.forEach(p => {
+      if (!Array.isArray(p.items)) p.items = [];
+      p.total = Number(p.total) || 0; p.paidAmount = Number(p.paidAmount) || 0;
+      p.number = String(p.number == null ? '' : p.number); p.date = p.date || nowIso;
+      p.updatedAt = p.updatedAt || p.date;
+      if (!p.meta || typeof p.meta !== 'object') p.meta = {};
+    });
+    stockMovements.forEach(m => { m.qty = Number(m.qty) || 0; m.date = m.date || nowIso; m.updatedAt = m.updatedAt || m.date; });
+    // Never reuse an invoice number that already exists (other device / restored backup)
+    const maxNum = invoices.reduce((mx, i) => {
+      const m = String(i.number).match(/(\d+)\s*$/);
+      return m ? Math.max(mx, parseInt(m[1], 10)) : mx;
+    }, 0);
+    if (maxNum >= invoiceCounter) invoiceCounter = maxNum + 1;
+  }
+
+  // v1 used non-UUID ids. The cloud needs UUIDs, so convert once and fix references.
+  function migrateIds() {
+    const map = { products: {}, customers: {} };
+    let legacy = false;
+    const fix = (list, key) => list.forEach(r => {
+      if (!r.id || !UUID_RE.test(r.id)) {
+        const n = uid();
+        if (r.id && key) map[key][r.id] = n;
+        r.id = n;
+        legacy = true;
+      }
+    });
+    fix(products, 'products'); fix(customers, 'customers'); fix(suppliers);
+    fix(expenses); fix(invoices); fix(stockMovements);
+    if (!legacy) return;
+    const remap = (val, m) => (val ? (m[val] || (UUID_RE.test(val) ? val : null)) : val);
+    invoices.forEach(inv => {
+      inv.customerId = remap(inv.customerId, map.customers);
+      (inv.items || []).forEach(it => { it.productId = remap(it.productId, map.products); });
+    });
+    stockMovements.forEach(m => { m.productId = remap(m.productId, map.products); });
+    try { localStorage.setItem(LEGACY_FLAG, '1'); } catch (e) {}
+    saveAll();
+  }
+
+  // ---- change tracking: stamps updatedAt on edited records, tombstones deleted ones ----
+  let _snap = {};
+  let _settingsSnap = '';
+  let _snapReady = false;
+  function snapKey(r) { const { updatedAt, ...rest } = r; return JSON.stringify(rest); }
+  function settingsKey() { const { updatedAt, ...rest } = settings; return JSON.stringify(rest); }
+  function resnap() {
+    SYNC_COLLECTIONS.forEach(n => {
+      const m = new Map();
+      getList(n).forEach(r => { if (r && r.id) m.set(r.id, snapKey(r)); });
+      _snap[n] = m;
+    });
+    _settingsSnap = settingsKey();
+    _snapReady = true;
+  }
+  function stampChanges() {
+    if (!_snapReady) resnap();
+    const now = new Date().toISOString();
+    SYNC_COLLECTIONS.forEach(n => {
+      const old = _snap[n] || new Map();
+      const cur = new Map();
+      getList(n).forEach(r => {
+        if (!r.id) r.id = uid();
+        const k = snapKey(r);
+        if (old.get(r.id) !== k || !r.updatedAt) r.updatedAt = now;
+        cur.set(r.id, k);
+      });
+      old.forEach((_, id) => {
+        if (!cur.has(id)) (tombs[n] = tombs[n] || {})[id] = now;
+      });
+      if (tombs[n]) cur.forEach((_, id) => { delete tombs[n][id]; });
+      _snap[n] = cur;
+    });
+    const sk = settingsKey();
+    if (sk !== _settingsSnap) { settings.updatedAt = now; _settingsSnap = sk; }
+  }
+
+  function migrateData() {
+    try {
+      if (!localStorage.getItem('sb_migrated_v3')) {
+        ['products','invoices','customers','suppliers'].forEach(k => {
+          const old = localStorage.getItem('stockbill_' + k) || localStorage.getItem('sb_' + k);
+          if (old && !localStorage.getItem('sb_' + k + '_v2')) {
+            localStorage.setItem('sb_' + k + '_v2', old);
+          }
+        });
+        localStorage.setItem('sb_migrated_v3', '1');
+      }
+    } catch(e) {}
+    normalizeData();
+    migrateIds();
+    if (!_snapReady) resnap();
+    // Link orphan invoices to customers by name/phone
+    let changed = false;
+    invoices.forEach(inv => {
+      if (inv.customerId) return;
+      const name = (inv.customerName || '').trim();
+      if (!name || name === 'Walk-in Customer') return;
+      const c = findOrCreateCustomer(name, inv.customerPhone || '');
+      if (c) { inv.customerId = c.id; changed = true; }
+    });
+    if (changed) persist();
+  }
+
+
+  function customSelect(name, options, selectedValue, placeholder, searchable) {
+    const selected = options.find(o => o.value === selectedValue) || options[0];
+    const label = selected ? selected.label : (placeholder || 'Select...');
+    const searchHtml = searchable ? `
+      <div class="custom-select-search">
+        <input type="search" class="custom-select-search-input" placeholder="Search..." data-action="filter-select" autocomplete="off" />
+      </div>` : '';
+    return `
+      <div class="custom-select${searchable ? ' searchable' : ''}" data-name="${name}">
+        <input type="hidden" name="${name}" value="${escapeHtml(selectedValue || '')}" class="custom-select-hidden" />
+        <button type="button" class="custom-select-trigger" data-action="toggle-select">${escapeHtml(label)}</button>
+        <div class="custom-select-options">
+          ${searchHtml}
+          <div class="custom-select-options-list">
+            ${options.map(o => `
+              <div class="custom-select-option ${o.value === selectedValue ? 'selected' : ''}"
+                   data-action="select-option" data-value="${escapeHtml(o.value)}" data-label="${escapeHtml(o.label)}" data-search="${escapeHtml((o.label || '').toLowerCase())}">
+                ${escapeHtml(o.label)}
+              </div>`).join('')}
+          </div>
+        </div>
+      </div>`;
+  }
+  let _toastTimer = null;
+  // Never show developer-style errors to shop owners
+  function friendlyMsg(m) {
+    const t = String(m == null ? '' : m);
+    if (/failed to fetch|networkerror|load failed|network request|fetch failed/i.test(t)) return 'No internet connection. Check your connection and try again.';
+    if (/row-level security|permission denied|\brls\b/i.test(t)) return 'You are not allowed to do that. Please sign in again.';
+    if (/\bjwt\b/i.test(t)) return 'Your session expired. Please sign in again.';
+    if (/pgrst|does not exist|syntax error|violates|duplicate key|supabase|\bsql\b|edge function|deploy|\.md\b|\.js\b|typeerror|referenceerror|is not a function|undefined|cannot read|\bhttp \d{3}\b|\bdb (get|post|patch)/i.test(t)) return 'Something went wrong. Please try again. If it keeps happening, contact support.';
+    return t;
+  }
+
+  function toast(msg, ms = 2500) {
+    msg = friendlyMsg(msg);
+    const el = $('#toast');
+    if (!el) return;
+    clearTimeout(_toastTimer);
+    el.textContent = msg;
+    el.hidden = false;
+    requestAnimationFrame(() => el.classList.add('show'));
+    _toastTimer = setTimeout(() => {
+      el.classList.remove('show');
+      setTimeout(() => el.hidden = true, 250);
+    }, ms);
+  }
+  let _cloudPushTimer = null;
+  let _cloudSyncing = false;
+  let _cloudAutoEnabled = true; // auto push/pull when signed in
+
+  function saveAll() {
+    save(STORAGE.products, products);
+    save(STORAGE.invoices, invoices);
+    save(STORAGE.customers, customers);
+    save(STORAGE.suppliers, suppliers);
+    save(STORAGE.expenses, expenses);
+    save(STORAGE.stockMovements, stockMovements);
+    save(STORAGE.purchases, purchases);
+    save(STORAGE.banks, banks);
+    save(STORAGE.bankTxns, bankTxns);
+    save(STORAGE.otherIncome, otherIncome);
+    save(STORAGE.loans, loans);
+    save(STORAGE.settings, settings);
+    save(STORAGE.counter, invoiceCounter);
+    save(STORAGE.tombs, tombs);
+  }
+
+  function persist() {
+    stampChanges();
+    saveAll();
+    // Auto-sync to cloud ~2s after last change (debounced)
+    scheduleCloudPush();
+  }
+
+  function scheduleCloudPush() {
+    if (!_cloudAutoEnabled) return;
+    if (!window.HisablyCloud || !HisablyCloud.ready()) return;
+    if (!HisablyCloud.getSession()) return;
+    clearTimeout(_cloudPushTimer);
+    _cloudPushTimer = setTimeout(() => {
+      doCloudSync({ silent: true });
+    }, 2000);
+  }
+
+  // ---------- Navigation ----------
+  function setView(view, options = {}) {
+    closeModal();
+    if (isStaff()) {
+      if (!STAFF_VIEWS.includes(view)) { toast('Only the owner can open that'); view = 'dashboard'; }
+      if (view === 'create-invoice' && docCtx.type === 'purchase') docCtx = {};
+    }
+    if (!options.keepHistory && !options.replace) {
+      if (currentView && currentView !== view) {
+        viewStack.push(currentView);
+        if (viewStack.length > 30) viewStack.shift();
+      }
+      previousView = currentView;
+    }
+    if (options.replace) previousView = currentView;
+    currentView = view;
+    // Highlight matching bottom nav item (home/dashboard/products/more)
+    const navMap = { home: 'home', dashboard: 'dashboard', products: 'products', more: 'more',
+      invoices: 'home', 'create-invoice': 'home', customers: 'more', suppliers: 'more',
+      reports: 'more', expenses: 'more', purchases: 'more', daybook: 'more', 'stock-history': 'more',
+      settings: 'more', 'business-profile': 'more',
+      'txn-settings': 'more', 'print-settings': 'more', 'invoice-theme': 'more', 'item-settings': 'more',
+      'party-settings': 'more', 'tax-settings': 'more', 'general-settings': 'more', 'cash-in-hand': 'more', 'daybook-detail': 'more', 'multi-currency': 'more', reminders: 'more', 'online-store': 'more', 'sale-report': 'more', 'profit-loss': 'more', 'trial-balance': 'more', 'stock-summary': 'more', 'low-stock': 'more', 'party-pl': 'more', 'item-pl': 'more', banks: 'more', 'bank-ledger': 'more', loans: 'more', 'other-income': 'more', 'barcode-gen': 'more', 'balance-sheet': 'more', pos: 'home', 'stock-adjust': 'more', 'payments-in': 'more', 'payments-out': 'more', cheques: 'more', sync: 'more', companies: 'more', verify: 'more', recycle: 'more', 'bill-pnl': 'more' };
+    const activeNav = navMap[view] || view;
+    $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.view === activeNav));
+    const showBack = !['home','dashboard','products','more'].includes(view);
+    $('#backBtn').hidden = !showBack;
+    render();
+    window.scrollTo(0, 0);
+  }
+
+  // ---------- Render Router ----------
+  function render() {
+    const content = $('#appContent');
+    const title = $('#headerTitle');
+    const right = $('#headerRight');
+    right.innerHTML = '';
+
+    const map = {
+      home: () => {
+        title.textContent = settings.businessName || 'Billaura';
+        right.innerHTML = `<button class="icon-btn header-dot" data-view="reminders" aria-label="Reminders">${ico('bell')}</button><button class="icon-btn" data-view="settings" aria-label="Settings">${ico('gear')}</button>`;
+        content.innerHTML = viewHome();
+      },
+      
+      dashboard: () => { title.textContent = 'Dashboard'; content.innerHTML = viewDashboard(); },
+      products: () => {
+        title.textContent = 'Items';
+        if (!isStaff()) right.innerHTML = `<button class="btn btn-outline btn-sm" data-action="bulk-tools" style="margin-right:8px">Bulk</button><button class="icon-btn" data-action="add-product" aria-label="Add"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`;
+        content.innerHTML = viewProducts();
+      },
+      invoices: () => { title.textContent = 'Transactions'; content.innerHTML = viewInvoices(); },
+      daybook: () => { title.textContent = 'Cash In-Hand'; content.innerHTML = viewCashInHand(); },
+      'cash-in-hand': () => { title.textContent = 'Cash In-Hand'; content.innerHTML = viewCashInHand(); },
+      'daybook-detail': () => { title.textContent = 'Day Book'; content.innerHTML = viewDayBook(); },
+      purchases: () => {
+        title.textContent = 'Purchases';
+        right.innerHTML = `<button class="icon-btn" data-action="new-purchase"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`;
+        content.innerHTML = viewPurchases();
+      },
+      'create-invoice': () => { title.textContent = (docCtx.type === 'purchase' ? 'New Purchase' : docCtx.type === 'return' ? 'Sale Return' : docCtx.type === 'estimate' ? 'New Quotation' : 'New Invoice'); content.innerHTML = viewCreateInvoice(); bindCreateInvoice(); },
+      more: () => { title.textContent = 'Menu'; content.innerHTML = viewMore(); },
+      settings: () => { title.textContent = 'Settings'; content.innerHTML = viewSettings(); },
+      'business-profile': () => { title.textContent = 'Business Profile'; content.innerHTML = viewBusinessProfile(); },
+      'txn-settings': () => { title.textContent = 'Transaction'; content.innerHTML = viewTxnSettings(); },
+      'print-settings': () => { title.textContent = 'Invoice Print'; content.innerHTML = viewPrintSettings(); },
+      'invoice-theme': () => { title.textContent = 'Change Theme'; content.innerHTML = viewInvoiceTheme(); },
+      'item-settings': () => { title.textContent = 'Item'; content.innerHTML = viewItemSettings(); },
+      'party-settings': () => { title.textContent = 'Party'; content.innerHTML = viewPartySettings(); },
+      'tax-settings': () => { title.textContent = 'Tax List'; content.innerHTML = viewTaxSettings(); },
+      'general-settings': () => { title.textContent = 'General'; content.innerHTML = viewGeneralSettings(); },
+      'multi-currency': () => { title.textContent = 'Multi-Currency'; content.innerHTML = viewMultiCurrency(); },
+      reminders: () => { title.textContent = 'Reminders'; content.innerHTML = viewReminders(); },
+      'online-store': () => { title.textContent = 'Online Store'; content.innerHTML = viewOnlineStore(); },
+      pos: () => { title.textContent = 'Quick Sale (POS)'; content.innerHTML = viewPOS(); bindPOS(); },
+      'stock-adjust': () => { title.textContent = 'Stock Adjustment'; content.innerHTML = viewStockAdjust(); },
+      'payments-in': () => { title.textContent = 'Payment-In'; content.innerHTML = paymentList('in'); },
+      'payments-out': () => { title.textContent = 'Payment-Out'; content.innerHTML = paymentList('out'); },
+      cheques: () => { title.textContent = 'Cheque'; content.innerHTML = viewCheques(); },
+      sync: () => { title.textContent = 'Sync & Share'; content.innerHTML = viewSync(); },
+      companies: () => { title.textContent = 'Manage Companies'; content.innerHTML = viewCompanies(); },
+      verify: () => { title.textContent = 'Verify my data'; content.innerHTML = viewVerify(); },
+      recycle: () => { title.textContent = 'Recycle Bin'; content.innerHTML = viewRecycle(); },
+      'bill-pnl': () => { title.textContent = 'Bill Wise Profit'; content.innerHTML = viewBillPnl(); },
+      banks: () => { title.textContent = 'Bank Accounts'; content.innerHTML = viewBanks(); },
+      'bank-ledger': () => { title.textContent = 'Bank Ledger'; content.innerHTML = viewBankLedger(); },
+      loans: () => { title.textContent = 'Loan Accounts'; content.innerHTML = viewLoans(); },
+      'other-income': () => { title.textContent = 'Other Income'; content.innerHTML = viewOtherIncome(); },
+      'barcode-gen': () => { title.textContent = 'Barcode Generator'; content.innerHTML = viewBarcodeGen(); },
+      'balance-sheet': () => { title.textContent = 'Balance Sheet'; content.innerHTML = viewBalanceSheet(); },
+      customers: () => {
+        title.textContent = 'Customers';
+        right.innerHTML = `<button class="icon-btn" data-action="add-customer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`;
+        content.innerHTML = viewCustomers();
+      },
+      suppliers: () => {
+        title.textContent = 'Suppliers';
+        right.innerHTML = `<button class="icon-btn" data-action="add-supplier"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`;
+        content.innerHTML = viewSuppliers();
+      },
+      reports: () => { title.textContent = 'Reports'; content.innerHTML = viewReports(); },
+      'sale-report': () => { title.textContent = 'Sale Report'; invFilter = 'sale'; content.innerHTML = viewInvoices(); },
+      'profit-loss': () => { title.textContent = 'Profit & Loss'; content.innerHTML = viewProfitLoss(); },
+      'trial-balance': () => { title.textContent = 'Trial Balance'; content.innerHTML = viewTrialBalance(); },
+      'stock-summary': () => { title.textContent = 'Stock Summary'; content.innerHTML = viewStockSummary(false); },
+      'low-stock': () => { title.textContent = 'Low Stock'; content.innerHTML = viewStockSummary(true); },
+      'party-pl': () => { title.textContent = 'Party Profit & Loss'; content.innerHTML = viewPartyPL(); },
+      'item-pl': () => { title.textContent = 'Item Profit & Loss'; content.innerHTML = viewItemPL(); },
+      expenses: () => {
+        title.textContent = 'Expenses';
+        right.innerHTML = `<button class="icon-btn" data-action="add-expense"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`;
+        content.innerHTML = viewExpenses();
+      },
+      'stock-history': () => {
+        title.textContent = 'Stock History';
+        content.innerHTML = viewStockHistory();
+      }
+    };
+
+    (map[currentView] || map.home)();
+    const hdr = $('#appHeader');
+    if (hdr) {
+      hdr.classList.toggle('is-home', currentView === 'home');
+      let st = hdr.querySelector('.header-store-ic');
+      if (currentView === 'home' && !st) { const hl = $('#headerLogo'); const sp = document.createElement('span'); sp.className = 'header-store-ic'; sp.innerHTML = ico('store'); hl.parentNode.insertBefore(sp, hl); }
+      else if (currentView !== 'home' && st) st.remove();
+      const hl2 = $('#headerLogo'); if (hl2) hl2.style.display = 'none';
+    }
+  }
+
+  // ---------- Dashboard ----------
+  function viewHomeOld() {
+    const { revenue, receivable } = netTotals();
+    const payable = totalPayable ? totalPayable() : 0;
+    const recent = [...invoices].sort((a,b) => new Date(b.date) - new Date(a.date)).slice(0, 8);
+    const biz = escapeHtml(settings.businessName || 'My Business');
+    const cur = settings.currency || 'Rs';
+
+    return `<div class="fade-in">
+      <div class="dash-header">
+        <div class="dash-greeting">Welcome back</div>
+        <div class="dash-business">${biz}</div>
+        <div class="dash-stats">
+          <div class="dash-stat positive">
+            <div class="dash-stat-label">You'll Get</div>
+            <div class="dash-stat-value">${cur} ${money(receivable)}</div>
+          </div>
+          <div class="dash-stat negative">
+            <div class="dash-stat-label">You'll Give</div>
+            <div class="dash-stat-value">${cur} ${money(payable)}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="quick-actions">
+        <button class="quick-action" data-view="pos">
+          <div class="quick-action-icon" style="background:#FEE2E2;color:#E11D48"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h8"/></svg></div>
+          <span>Quick Sale</span>
+        </button>
+        <button class="quick-action" data-view="create-invoice">
+          <div class="quick-action-icon" style="background:#E11D48"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg></div>
+          <span>Sale</span>
+        </button>
+        <button class="quick-action" data-action="new-purchase">
+          <div class="quick-action-icon" style="background:#F59E0B"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.7 13.4a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6L23 6H6"/></svg></div>
+          <span>Purchase</span>
+        </button>
+        <button class="quick-action" data-view="expenses">
+          <div class="quick-action-icon" style="background:#8B5CF6"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg></div>
+          <span>Expense</span>
+        </button>
+        <button class="quick-action" data-view="reports">
+          <div class="quick-action-icon" style="background:#2563EB"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg></div>
+          <span>Reports</span>
+        </button>
+      </div>
+
+      <div class="dash-card">
+        <div class="dash-card-title">
+          Recent Transactions
+          <button class="btn btn-ghost btn-sm" data-view="invoices">See all</button>
+        </div>
+        ${recent.length === 0
+          ? `<div class="empty-state" style="padding:24px 0">
+              <h3>No transactions yet</h3>
+              <p>Create your first sale invoice</p>
+              <button class="btn btn-primary" data-view="create-invoice">+ New Sale</button>
+            </div>`
+          : recent.map(inv => {
+              const bal = Math.max(0, (inv.total||0) - (inv.paidAmount||0));
+              const type = (inv.type || 'sale').toLowerCase();
+              const badgeClass = type.includes('purchase') ? 'purchase' : type.includes('return') ? 'expense' : 'sale';
+              return `<div class="txn-card" data-action="view-invoice" data-id="${inv.id}">
+                <div class="txn-top">
+                  <div class="txn-party">${escapeHtml(inv.customerName || inv.partyName || 'Walk-in')}</div>
+                  <span class="txn-badge ${badgeClass}">${type === 'sale' ? 'SALE' : type.toUpperCase()}</span>
+                </div>
+                <div class="txn-meta">
+                  <span>${formatDate(inv.date)} · #${escapeHtml(inv.number || inv.id.slice(0,6))}</span>
+                  <span class="txn-amount">${cur} ${money(inv.total||0)}</span>
+                </div>
+                ${bal > 0 ? `<div class="txn-meta mt-1"><span></span><span class="txn-balance">Due ${cur} ${money(bal)}</span></div>` : ''}
+              </div>`;
+            }).join('')}
+      </div>
+
+      <div style="padding:8px 16px 24px">
+        <button class="btn btn-primary btn-lg btn-block" data-view="create-invoice">+ Add New Sale</button>
+      </div>
+    </div>`;
+  }
+
+  function lowStockProducts() {
+    return products.filter(p => {
+      const low = p.lowStock != null ? p.lowStock : (settings.lowStockDefault || 5);
+      return (p.stock || 0) <= low;
+    }).sort((a,b) => (a.stock||0)-(b.stock||0));
+  }
+  function viewDashboardOld() {
+    const totalProducts = products.length;
+    const low = products.filter(p => p.stock > 0 && p.stock <= lowLimit(p)).length;
+    const out = products.filter(p => p.stock <= 0).length;
+    const { revenue, cogs, receivable } = netTotals();
+    const totalExpenses = expenses.reduce((s, e) => s + (e.amount || 0), 0);
+    const profit = revenue - cogs - totalExpenses;
+    const cur = settings.currency || 'Rs';
+    const monthSales = invoices.filter(i => {
+      const d = new Date(i.date);
+      const now = new Date();
+      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear() && (i.type||'sale') === 'sale';
+    }).reduce((s,i) => s + (i.total||0), 0);
+
+    return `<div class="fade-in">
+      <div class="dash-card" style="margin-top:12px">
+        <div class="dash-card-title">Sale Overview</div>
+        <div style="font-size:1.75rem;font-weight:700;color:var(--success)">${cur} ${money(monthSales)}</div>
+        <div class="text-muted" style="font-size:0.8125rem">This month · Total revenue ${cur} ${money(revenue)}</div>
+      </div>
+
+      <div class="list-group">
+        <div class="list-row" style="cursor:default">
+          <div class="list-row-label">You'll Get</div>
+          <div class="list-row-right text-success font-semibold">${cur} ${money(receivable)}</div>
+        </div>
+        <div class="list-row" style="cursor:default">
+          <div class="list-row-label">You'll Give</div>
+          <div class="list-row-right text-danger font-semibold">${cur} ${money(totalPayable ? totalPayable() : 0)}</div>
+        </div>
+        <div class="list-row" style="cursor:default">
+          <div class="list-row-label">Net Profit</div>
+          <div class="list-row-right font-semibold ${profit>=0?'text-success':'text-danger'}">${cur} ${money(profit)}</div>
+        </div>
+        <div class="list-row" style="cursor:default">
+          <div class="list-row-label">Expenses</div>
+          <div class="list-row-right">${cur} ${money(totalExpenses)}</div>
+        </div>
+      </div>
+
+      <div class="list-group">
+        <div class="list-row" style="cursor:default">
+          <div class="list-row-label">Items</div>
+          <div class="list-row-right">${totalProducts}</div>
+        </div>
+        <div class="list-row" style="cursor:default">
+          <div class="list-row-label">Low Stock</div>
+          <div class="list-row-right" style="color:var(--warning)">${low}</div>
+        </div>
+        <div class="list-row" style="cursor:default">
+          <div class="list-row-label">Out of Stock</div>
+          <div class="list-row-right text-danger">${out}</div>
+        </div>
+      </div>
+
+      <div style="padding:8px 16px 24px">
+        <button class="btn btn-blue btn-block" data-view="reports">View All Reports</button>
+      </div>
+    </div>`;
+  }
+
+  // ---------- Products ----------
+  // ---------- Products ----------
+  function viewProducts() {
+    if (products.length === 0) {
+      return emptyState('box', 'No products yet', 'Add your first product to start tracking stock and creating invoices.', 'Add Product', null, 'add-product');
+    }
+    if (productCat && productCat !== '__none__' && !categoryList().includes(productCat)) productCat = '';
+    return `<div class="fade-in">
+      <div class="search-wrap">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="search" class="search-input" id="productSearch" placeholder="Search name, barcode or category..." />
+      </div>
+      ${categoryChipsHTML()}
+      <div class="list" id="productList">${productListHTML('')}</div>
+    </div>`;
+  }
+
+  function listProduct(p) {
+    let badge = p.stock <= 0 ? '<span class="list-item-badge badge-out">Out of stock</span>' :
+                p.stock <= lowLimit(p) ? `<span class="list-item-badge badge-low">Low · ${p.stock}</span>` :
+                `<span class="list-item-badge badge-ok">${p.stock} in stock</span>`;
+    return `<div class="list-item" data-action="edit-product" data-id="${p.id}">
+      <div class="list-item-icon">${initials(p.name)}</div>
+      <div class="list-item-body">
+        <div class="list-item-title">${escapeHtml(p.name)}</div>
+        <div class="list-item-sub">${settings.currency} ${money(p.price)} · ${escapeHtml(p.unit || 'pcs')}${p.barcode ? ' · ' + escapeHtml(p.barcode) : ''}</div>
+      </div>
+      <div class="list-item-right">${badge}</div>
+    </div>`;
+  }
+
+  // ---------- Invoices ----------
+  let invFilter = 'all';
+  function viewInvoices() {
+    if (invoices.length === 0) {
+      return emptyState('invoice', 'No invoices yet', 'Create invoices for customers and track sales.', 'Create Invoice', 'create-invoice');
+    }
+    const kinds = [['all', 'All'], ['sale', 'Sales'], ['estimate', 'Quotes'], ['return', 'Returns']];
+    const list = invoices.filter(i => invFilter === 'all' || (i.docType || 'sale') === invFilter)
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+    return `<div class="fade-in">
+      <div class="cat-chips">${kinds.map(k => `<button class="cat-chip${invFilter === k[0] ? ' active' : ''}" data-action="inv-filter" data-kind="${k[0]}">${k[1]}</button>`).join('')}
+        <button class="cat-chip" data-action="new-estimate">+ Quotation</button><button class="cat-chip" data-action="new-return">+ Sale Return</button></div>
+      ${list.length ? `<div class="list">${list.map(inv => listInvoice(inv)).join('')}</div>` : '<div class="doc-empty">Nothing here yet</div>'}
+    </div>`;
+  }
+
+  function listInvoice(inv) {
+    const status = inv.paymentStatus || 'unpaid';
+    const paid = inv.paidAmount || 0;
+    const isRet = inv.docType === 'return';
+    let badge = '';
+    if (inv.docType === 'estimate') {
+      badge = inv.meta && inv.meta.convertedTo ? `<span class="list-item-badge badge-ok">Invoiced · ${escapeHtml(inv.meta.convertedTo)}</span>` : '<span class="list-item-badge badge-low">Quotation</span>';
+    } else if (isRet) {
+      badge = paid >= inv.total ? '<span class="list-item-badge badge-ok">Refunded</span>'
+        : `<span class="list-item-badge badge-low">Credit · ${settings.currency} ${money(Math.max(0, inv.total - paid))}</span>`;
+    } else if (status === 'paid' || paid >= inv.total) {
+      badge = '<span class="list-item-badge badge-ok">Paid</span>';
+    } else if (status === 'partial' || paid > 0) {
+      badge = `<span class="list-item-badge badge-low">Partial · ${settings.currency} ${money(paid)}</span>`;
+    } else {
+      badge = '<span class="list-item-badge badge-out">Unpaid</span>';
+    }
+    if (isOverdue(inv)) badge += ' <span class="list-item-badge badge-out">Overdue</span>';
+    return `<div class="list-item" data-action="view-invoice" data-id="${inv.id}">
+      <div class="list-item-icon">${initials(inv.customerName || 'C')}</div>
+      <div class="list-item-body">
+        <div class="list-item-title">${escapeHtml(inv.customerName || 'Walk-in Customer')}</div>
+        <div class="list-item-sub">${isRet ? 'Return ' : (inv.docType === 'estimate' ? 'Quote ' : '#')}${escapeHtml(inv.number)} · ${formatDate(inv.date)} · ${inv.items.length} item${inv.items.length !== 1 ? 's' : ''}</div>
+        ${badge}
+      </div>
+      <div class="list-item-right"><div class="list-item-price"${isRet ? ' style="color:var(--danger)"' : ''}>${isRet ? '−' : ''}${settings.currency} ${money(inv.total)}</div></div>
+    </div>`;
+  }
+
+  // ---------- Customer payments, ledger / statement, reminders ----------
+  // Money received (or refunded) against one document. Keeps a dated history in meta.payments.
+  function addPayment(inv, amt, mode, note, dateIso) {
+    const left = Math.max(0, round2((inv.total || 0) - (inv.paidAmount || 0)));
+    amt = round2(Math.min(Number(amt) || 0, left));
+    if (amt <= 0) return 0;
+    inv.meta = inv.meta || {};
+    (inv.meta.payments = inv.meta.payments || []).push({ date: dateIso || new Date().toISOString(), amount: amt, mode: mode || 'Cash', note: note || '' });
+    inv.paidAmount = round2((inv.paidAmount || 0) + amt);
+    inv.paymentStatus = inv.paidAmount >= inv.total ? 'paid' : 'partial';
+    inv.updatedAt = new Date().toISOString();
+    return amt;
+  }
+  function custDocs(cust) {
+    return invoices.filter(i => docSign(i) && invoiceBelongsToCustomer(i, cust.id, cust.name, cust.phone));
+  }
+  function isOverdue(inv) {
+    if (!(inv.meta && inv.meta.dueDate) || (inv.docType !== undefined && docSign(inv) <= 0)) return false;
+    return (inv.total || 0) - (inv.paidAmount || 0) > 0.001 && inv.meta.dueDate < new Date().toISOString().slice(0, 10);
+  }
+  // Chronological ledger: debit = customer owes more, credit = customer owes less
+  function customerLedger(cust) {
+    const rows = [];
+    custDocs(cust).forEach(inv => {
+      const ret = inv.docType === 'return';
+      rows.push({ t: ts(inv.date), date: inv.date, text: (ret ? 'Credit note ' : 'Invoice ') + inv.number, debit: ret ? 0 : inv.total, credit: ret ? inv.total : 0 });
+      const pays = (inv.meta && inv.meta.payments) || [];
+      const sumP = pays.reduce((s, p) => s + p.amount, 0);
+      const first = round2((inv.paidAmount || 0) - sumP);
+      if (first > 0.001) rows.push({ t: ts(inv.date) + 1, date: inv.date, text: (ret ? 'Refund paid' : 'Payment received') + ((inv.meta && inv.meta.paymentMode) ? ' · ' + inv.meta.paymentMode : '') + ' (' + inv.number + ')', debit: ret ? first : 0, credit: ret ? 0 : first });
+      pays.forEach(p => rows.push({ t: ts(p.date) + 1, date: p.date, text: (ret ? 'Refund paid' : 'Payment received') + (p.mode ? ' · ' + p.mode : '') + (p.note ? ' · ' + p.note : '') + ' (' + inv.number + ')', debit: ret ? p.amount : 0, credit: ret ? 0 : p.amount }));
+    });
+    rows.sort((a, b) => a.t - b.t);
+    let bal = 0;
+    rows.forEach(r => { bal = round2(bal + r.debit - r.credit); r.balance = bal; });
+    return rows;
+  }
+
+  function openReceiveModal(cust) {
+    const bal = customerBalance(cust.id, cust.name, cust.phone);
+    const saleDue = custDocs(cust).filter(i => docSign(i) > 0).reduce((s, i) => s + Math.max(0, (i.total || 0) - (i.paidAmount || 0)), 0);
+    const today = new Date().toISOString().slice(0, 10);
+    $('#modalRoot').innerHTML = `
+      <div class="modal-overlay"><div class="modal-sheet">
+        <div class="modal-handle"></div>
+        <div class="modal-header"><h3 class="modal-title">Receive Payment</h3>
+          <button class="modal-close" data-action="close-modal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+        <div class="text-secondary text-sm mb-8">${escapeHtml(cust.name)} · Due ${settings.currency} ${money(bal.due)}</div>
+        ${saleDue <= 0 ? '<div class="doc-empty">This customer has nothing pending.</div>' : `
+        <form id="receiveForm" autocomplete="off">
+          <div class="form-group"><label class="form-label">Amount (${settings.currency})</label>
+            <input type="number" inputmode="decimal" class="form-input" id="rcvAmt" min="0" step="any" value="${saleDue}" /></div>
+          <div class="chip-row mb-8" id="rcvMode">
+            <button type="button" class="cat-chip active" data-mode="Cash">Cash</button><button type="button" class="cat-chip" data-mode="Bank">Bank</button>
+            <button type="button" class="cat-chip" data-mode="Online">Online</button><button type="button" class="cat-chip" data-mode="Cheque">Cheque</button></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">Date</label><input type="date" class="form-input" id="rcvDate" value="${today}" max="${today}" /></div>
+            <div class="form-group"><label class="form-label">Note</label><input type="text" class="form-input" id="rcvNote" maxlength="40" placeholder="Optional" /></div>
+          </div>
+          <div class="text-sm text-secondary">The amount settles the oldest unpaid invoices first.</div>
+          <button type="submit" class="btn btn-primary btn-block mt-16">Save Payment</button>
+        </form>`}
+      </div></div>`;
+    const f = document.getElementById('receiveForm'); if (!f) return;
+    let mode = 'Cash';
+    document.querySelectorAll('#rcvMode .cat-chip').forEach(b => b.addEventListener('click', () => {
+      mode = b.dataset.mode; document.querySelectorAll('#rcvMode .cat-chip').forEach(x => x.classList.toggle('active', x === b));
+    }));
+    f.addEventListener('submit', e => {
+      e.preventDefault();
+      let amt = round2(parseFloat(document.getElementById('rcvAmt').value) || 0);
+      if (amt <= 0) { toast('Enter an amount'); return; }
+      if (amt > saleDue + 0.001) { toast(`Only ${settings.currency} ${money(saleDue)} is due`, 3500); return; }
+      const d = document.getElementById('rcvDate').value;
+      const dateIso = (d && d !== today) ? new Date(d + 'T12:00:00').toISOString() : new Date().toISOString();
+      const note = document.getElementById('rcvNote').value.trim();
+      const open = custDocs(cust).filter(i => docSign(i) > 0 && (i.total || 0) - (i.paidAmount || 0) > 0.001)
+        .sort((a, b) => ts(a.date) - ts(b.date));
+      let n = 0;
+      for (const inv of open) { if (amt <= 0.001) break; const used = addPayment(inv, amt, mode, note, dateIso); if (used > 0) { amt = round2(amt - used); n++; } }
+      persist();
+      toast(`Payment saved · ${n} invoice${n !== 1 ? 's' : ''} updated`);
+      render();
+      openCustomerDetail(cust);
+    });
+  }
+
+  function statementText(cust) {
+    const rows = customerLedger(cust);
+    const bal = customerBalance(cust.id, cust.name, cust.phone);
+    let t = `*${settings.businessName}*\nStatement for ${cust.name}\n\n`;
+    rows.slice(-12).forEach(r => {
+      t += `${formatDate(r.date)} · ${r.text}: ${r.debit ? '+' : '-'}${settings.currency} ${money(r.debit || r.credit)}\n`;
+    });
+    t += `\n*${bal.credit > 0 ? 'Credit with us' : 'Balance due'}: ${settings.currency} ${money(bal.credit > 0 ? bal.credit : bal.due)}*`;
+    if (settings.phone) t += `\n\nContact: ${settings.phone}`;
+    return t;
+  }
+  function reminderText(cust, onlyInv) {
+    const docs = onlyInv ? [onlyInv] : custDocs(cust).filter(i => docSign(i) > 0 && (i.total || 0) - (i.paidAmount || 0) > 0.001).sort((a, b) => ts(a.date) - ts(b.date));
+    const due = round2(docs.reduce((s, i) => s + (i.total - (i.paidAmount || 0)), 0));
+    let t = `Assalam o Alaikum ${cust.name || ''},\n\nA friendly reminder from *${settings.businessName}*: you have *${settings.currency} ${money(due)}* pending.\n\n`;
+    docs.slice(0, 6).forEach(i => {
+      t += `• ${i.number} (${formatDate(i.date)}): ${settings.currency} ${money(i.total - (i.paidAmount || 0))}${i.meta && i.meta.dueDate ? ' · due ' + formatDate(i.meta.dueDate) : ''}\n`;
+    });
+    if (docs.length > 6) t += `…and ${docs.length - 6} more\n`;
+    t += `\nKindly arrange the payment at your earliest convenience.`;
+    if (settings.paymentNote) t += `\n${settings.paymentNote}`;
+    if (settings.phone) t += `\nContact: ${settings.phone}`;
+    t += `\n\nThank you!`;
+    return t;
+  }
+  // Local numbers like 0300-1234567 need the country code for wa.me
+  function waNumber(phone) {
+    let d = (phone || '').replace(/\D/g, '');
+    const cc = { PKR: '92', INR: '91', BDT: '880' }[settings.currency];
+    if (cc && d.startsWith('0')) d = cc + d.slice(1);
+    return d;
+  }
+  function sendWhatsApp(phone, text) {
+    window.open(`https://wa.me/${waNumber(phone)}?text=${encodeURIComponent(text)}`, '_blank');
+  }
+  function custOfInvoice(inv) {
+    return customers.find(c => c.id === inv.customerId) || { id: inv.customerId, name: inv.customerName, phone: inv.customerPhone };
+  }
+
+  function openStatement(cust) {
+    const rows = customerLedger(cust);
+    const bal = customerBalance(cust.id, cust.name, cust.phone);
+    $('#modalRoot').innerHTML = `
+      <div class="modal-overlay"><div class="modal-sheet">
+        <div class="modal-handle"></div>
+        <div class="modal-header"><h3 class="modal-title">Statement · ${escapeHtml(cust.name)}</h3>
+          <button class="modal-close" data-action="close-modal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+        <div class="stats-grid mb-16">
+          <div class="stat-card"><div class="stat-label">Net Sales</div><div class="stat-value primary">${settings.currency} ${money(bal.total)}</div></div>
+          <div class="stat-card"><div class="stat-label">${bal.credit > 0 ? 'Credit' : 'Balance due'}</div><div class="stat-value ${bal.due > 0 ? 'danger' : 'success'}">${settings.currency} ${money(bal.credit > 0 ? bal.credit : bal.due)}</div></div>
+        </div>
+        ${rows.length ? `<div class="ledger">${rows.slice().reverse().map(r => `
+          <div class="led-row"><div class="led-main"><div class="led-text">${escapeHtml(r.text)}</div><div class="text-sm text-secondary">${formatDate(r.date)}</div></div>
+            <div class="led-amts"><div class="${r.debit ? 'led-dr' : 'led-cr'}">${r.debit ? '+' : '−'}${money(r.debit || r.credit)}</div><div class="text-sm text-secondary">Bal ${money(r.balance)}</div></div></div>`).join('')}</div>` : '<div class="doc-empty">No transactions yet</div>'}
+        <div class="flex gap-8 mt-16">
+          <button class="btn btn-secondary" style="flex:1" data-action="statement-pdf" data-id="${cust.id}">PDF</button>
+          <button class="btn btn-primary" style="flex:1" data-action="statement-wa" data-id="${cust.id}">WhatsApp</button>
+        </div>
+      </div></div>`;
+  }
+
+  function statementPDF(cust) {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    const W = 210, m = 16;
+    const TH = HisablyReceipt.themeOf(settings), D = HisablyReceipt.hexRgb(TH.dark);
+    const rows = customerLedger(cust);
+    const bal = customerBalance(cust.id, cust.name, cust.phone);
+    let y = 20;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(D[0], D[1], D[2]);
+    doc.text(settings.businessName || 'Business', m, y);
+    doc.setFontSize(11); doc.text('STATEMENT OF ACCOUNT', W - m, y, { align: 'right' });
+    y += 8; doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(100);
+    if (settings.phone) { doc.text(settings.phone, m, y); }
+    doc.text('Date: ' + formatDate(new Date().toISOString()), W - m, y, { align: 'right' });
+    y += 8; doc.setTextColor(15, 23, 42); doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
+    doc.text('Customer: ' + cust.name, m, y); y += 5;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(100);
+    if (cust.phone) { doc.text(cust.phone, m, y); y += 5; }
+    y += 3;
+    const head = () => {
+      doc.setFillColor(241, 245, 249); doc.roundedRect(m, y, W - 2 * m, 8, 1.5, 1.5, 'F');
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(100);
+      doc.text('DATE', m + 3, y + 5.5); doc.text('DETAILS', m + 28, y + 5.5);
+      doc.text('DEBIT', m + 118, y + 5.5, { align: 'right' }); doc.text('CREDIT', m + 144, y + 5.5, { align: 'right' }); doc.text('BALANCE', W - m - 3, y + 5.5, { align: 'right' });
+      y += 12;
+    };
+    head();
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(15, 23, 42);
+    rows.forEach(r => {
+      if (y > 275) { doc.addPage(); y = 20; head(); doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(15, 23, 42); }
+      doc.text(formatDate(r.date), m + 3, y);
+      const t = doc.splitTextToSize(r.text, 82);
+      doc.text(t[0], m + 28, y);
+      if (r.debit) doc.text(money(r.debit), m + 118, y, { align: 'right' });
+      if (r.credit) doc.text(money(r.credit), m + 144, y, { align: 'right' });
+      doc.text(money(r.balance), W - m - 3, y, { align: 'right' });
+      y += 6.5;
+    });
+    if (y > 262) { doc.addPage(); y = 20; }
+    y += 4; doc.setDrawColor(226, 232, 240); doc.line(m, y, W - m, y); y += 8;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(D[0], D[1], D[2]);
+    doc.text(bal.credit > 0 ? 'Credit with us' : 'Balance due', W - m - 60, y);
+    doc.text(`${settings.currency} ${money(bal.credit > 0 ? bal.credit : bal.due)}`, W - m, y, { align: 'right' });
+    doc.save(`Statement-${(cust.name || 'customer').replace(/[^a-z0-9]+/gi, '-')}.pdf`);
+  }
+
+  // ---------- Security: PIN lock + staff mode ----------
+  // Device-level protection (keeps casual access out). It is not a server-side permission system.
+  const ROLE_KEY = 'billaura_role_v1';
+  const STAFF_VIEWS = ['home', 'dashboard', 'products', 'create-invoice', 'invoices', 'customers', 'more'];
+  const STAFF_BLOCK = /^(add-product|edit-product|delete-|bulk-|stock-in|open-settings|open-plans|open-shopify|shopify-|export-data|import-data|clear-data|add-expense|edit-expense|new-purchase|view-purchase|purchase-|view-supplier|pay-supplier|add-supplier|edit-supplier|cloud-auth|sign-out-user|submit-payment|db-|pick-|remove-|pin-)/;
+  let _lastHidden = 0, _pinFails = 0, _pinWaitUntil = 0;
+  function lockEnabled() { return !!settings.pinHash && !!(window.HisablyFreemium && HisablyFreemium.hasFeature('passcode')); }
+  function getRole() { try { return sessionStorage.getItem(ROLE_KEY) || ''; } catch (e) { return ''; } }
+  function setRole(r) { try { if (r) sessionStorage.setItem(ROLE_KEY, r); else sessionStorage.removeItem(ROLE_KEY); } catch (e) {} }
+  function isStaff() { return lockEnabled() && getRole() === 'staff'; }
+  async function pinHash(pin) {
+    const str = `${settings.pinSalt || ''}:${pin}`;
+    try {
+      if (window.crypto && crypto.subtle) {
+        const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+        return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+      }
+    } catch (e) {}
+    let h = 5381;                                   // fallback where crypto.subtle is unavailable
+    for (let r = 0; r < 2000; r++) for (let i = 0; i < str.length; i++) h = ((h * 33) ^ str.charCodeAt(i) ^ r) >>> 0;
+    return 'f' + h.toString(16);
+  }
+
+  function showLock(mode) {
+    if (!lockEnabled()) return;
+    setRole('');
+    let el = document.getElementById('lockScreen');
+    if (!el) { el = document.createElement('div'); el.id = 'lockScreen'; el.className = 'lock-screen'; document.body.appendChild(el); }
+    el.hidden = false;
+    if (mode === 'forgot') renderForgot(el); else renderLock(el, '');
+  }
+  function hideLock() { const el = document.getElementById('lockScreen'); if (el) el.hidden = true; }
+  function renderLock(el, entered, msg) {
+    const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'];
+    el.innerHTML = `<div class="lock-box">
+      <div class="logo-circle" style="margin:0 auto 12px">H</div>
+      <div class="lock-title">${escapeHtml(settings.businessName || 'Billaura')}</div>
+      <div class="lock-sub">${msg ? escapeHtml(msg) : 'Enter your PIN'}</div>
+      <div class="lock-dots">${[0, 1, 2, 3].map(i => `<span class="${i < entered.length ? 'on' : ''}"></span>`).join('')}</div>
+      <div class="lock-pad">${keys.map(k => k === '' ? '<span></span>' : `<button type="button" data-k="${k}">${k}</button>`).join('')}</div>
+      <button type="button" class="lock-link" data-lock="forgot">Forgot PIN?</button></div>`;
+    el.querySelectorAll('[data-k]').forEach(b => b.addEventListener('click', () => keyPress(el, entered, b.dataset.k)));
+    const f = el.querySelector('[data-lock="forgot"]'); if (f) f.addEventListener('click', () => renderForgot(el));
+  }
+  async function keyPress(el, entered, k) {
+    if (k === '⌫') return renderLock(el, entered.slice(0, -1));
+    if (entered.length >= 4) return;
+    entered += k;
+    renderLock(el, entered);
+    if (entered.length < 4) return;
+    if (Date.now() < _pinWaitUntil) { renderLock(el, '', `Too many tries. Wait ${Math.ceil((_pinWaitUntil - Date.now()) / 1000)}s`); return; }
+    const h = await pinHash(entered);
+    if (h === settings.pinHash) { _pinFails = 0; setRole('owner'); hideLock(); render(); return; }
+    if (settings.staffHash && h === settings.staffHash) { _pinFails = 0; setRole('staff'); hideLock(); setView('dashboard'); return; }
+    _pinFails++;
+    if (_pinFails >= 5) { _pinWaitUntil = Date.now() + 30000; _pinFails = 0; }
+    const box = el.querySelector('.lock-box'); if (box) box.classList.add('shake');
+    setTimeout(() => renderLock(el, '', 'Wrong PIN'), 350);
+  }
+  function renderForgot(el) {
+    const cloud = window.HisablyCloud && HisablyCloud.ready() && HisablyCloud.getSession();
+    el.innerHTML = `<div class="lock-box">
+      <div class="lock-title">Reset PIN</div>
+      ${cloud ? `<div class="lock-sub">Enter your account password to remove the PIN lock.</div>
+        <input type="password" class="form-input" id="lockPw" placeholder="Account password" autocomplete="current-password" />
+        <button type="button" class="btn btn-primary btn-block mt-12" id="lockReset">Remove PIN lock</button>`
+        : `<div class="lock-sub">Sign in to your cloud account on this device to reset the PIN. Without a cloud account the PIN cannot be reset.</div>`}
+      <button type="button" class="lock-link" id="lockBack">Back</button></div>`;
+    el.querySelector('#lockBack').addEventListener('click', () => renderLock(el, ''));
+    const rb = el.querySelector('#lockReset');
+    if (rb) rb.addEventListener('click', async () => {
+      const pw = el.querySelector('#lockPw').value;
+      const email = HisablyCloud.getSession().user.email;
+      rb.disabled = true;
+      try { await HisablyCloud.signIn(email, pw); settings.pinHash = ''; settings.staffHash = ''; persist(); setRole('owner'); hideLock(); toast('PIN lock removed'); render(); }
+      catch (e) { toast('Wrong password'); rb.disabled = false; }
+    });
+  }
+  function openPinModal(kind) {
+    const staff = kind === 'staff';
+    if (!window.HisablyFreemium || !HisablyFreemium.hasFeature('passcode')) { toast('PIN lock and staff mode are Pro features.', 4500); openPlansModal && openPlansModal(); return; }
+    if (staff && !settings.pinHash) { toast('Set the owner PIN first'); return; }
+    $('#modalRoot').innerHTML = `
+      <div class="modal-overlay"><div class="modal-sheet">
+        <div class="modal-handle"></div>
+        <div class="modal-header"><h3 class="modal-title">${staff ? 'Staff PIN' : 'Owner PIN'}</h3>
+          <button class="modal-close" data-action="close-modal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+        <div class="text-sm text-secondary mb-8">${staff ? 'Staff can make sales, quotations and returns and receive payments. They cannot see profit, costs, reports or settings, and cannot delete anything.' : 'The owner PIN opens everything. Choose 4 digits you will remember.'}</div>
+        <form id="pinForm" autocomplete="off">
+          <div class="form-group"><label class="form-label">New PIN (4 digits)</label><input type="password" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" class="form-input" id="pin1" /></div>
+          <div class="form-group"><label class="form-label">Repeat PIN</label><input type="password" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" class="form-input" id="pin2" /></div>
+          <button type="submit" class="btn btn-primary btn-block mt-12">Save PIN</button>
+        </form></div></div>`;
+    document.getElementById('pinForm').addEventListener('submit', async e => {
+      e.preventDefault();
+      const a = document.getElementById('pin1').value, b = document.getElementById('pin2').value;
+      if (!/^\d{4}$/.test(a)) { toast('PIN must be 4 digits'); return; }
+      if (a !== b) { toast('PINs do not match'); return; }
+      if (!settings.pinSalt) settings.pinSalt = uid().replace(/-/g, '');
+      const h = await pinHash(a);
+      if (staff && h === settings.pinHash) { toast('Staff PIN must be different from the owner PIN'); return; }
+      if (!staff && settings.staffHash && h === settings.staffHash) { toast('Owner PIN must be different from the staff PIN'); return; }
+      if (staff) settings.staffHash = h; else { settings.pinHash = h; setRole('owner'); }
+      persist(); toast(staff ? 'Staff PIN saved' : 'Owner PIN saved. The app will lock when you leave it.');
+      openSettingsModal();
+    });
+  }
+  function themePickerHTML() {
+    const cur = settings.invoiceTheme || 'teal';
+    const ok = window.HisablyFreemium && HisablyFreemium.hasFeature('themes');
+    const T = HisablyReceipt.THEMES;
+    const th = T[cur] || T.teal, band = th.style === 'band';
+    return `<div class="doc-card" id="themePicker" style="margin-top:12px">
+      <div class="doc-label">Invoice style (PDF, image &amp; A4 print)</div>
+      <div class="chip-row mb-8">${Object.keys(T).map(k => `<button type="button" class="cat-chip${k === cur ? ' active' : ''}" data-action="pick-theme" data-theme="${k}"><span class="theme-dot" style="background:${T[k].accent}"></span>${T[k].name}${T[k].pro && !ok ? ' 🔒' : ''}</button>`).join('')}</div>
+      <div class="theme-prev" style="${band ? `background:${th.accent};color:#fff` : `border-bottom:3px solid ${th.accent}`}">
+        <b>${escapeHtml(settings.businessName || 'Your business')}</b><span>INVOICE</span></div>
+      <div class="theme-prev-tot" style="background:${th.soft};color:${th.dark}"><span>Total</span><b>${escapeHtml(settings.currency || '')} 1,000</b></div>
+      ${ok ? '' : '<div class="text-sm text-secondary mt-8">🔒 More styles are available on Pro.</div>'}
+    </div>`;
+  }
+  function securityHTML() {
+    const ok = window.HisablyFreemium && HisablyFreemium.hasFeature('passcode');
+    return `<div class="doc-card" style="margin-top:12px">
+      <div class="doc-label">App lock &amp; staff ${ok ? '' : '<span style="font-size:10px;background:var(--primary);color:#fff;border-radius:6px;padding:1px 6px;margin-left:6px">PRO</span>'}</div>
+      <div class="text-sm text-secondary mb-8">${settings.pinHash ? 'Lock is ON.' + (settings.staffHash ? ' Staff PIN is set.' : ' No staff PIN yet.') : 'Protect the app with a PIN and give your staff a limited login.'}</div>
+      <div class="flex gap-8" style="flex-wrap:wrap">
+        <button type="button" class="btn btn-secondary btn-sm" data-action="pin-set-owner">${settings.pinHash ? 'Change owner PIN' : 'Set owner PIN'}</button>
+        ${settings.pinHash ? `<button type="button" class="btn btn-secondary btn-sm" data-action="pin-set-staff">${settings.staffHash ? 'Change staff PIN' : 'Set staff PIN'}</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-action="pin-remove">Remove lock</button>` : ''}
+      </div></div>`;
+  }
+  function staffMoreHTML() {
+    return `<div class="fade-in">
+      <div class="card mb-16"><div class="text-sm text-secondary">Signed in as</div><div class="font-semibold" style="font-size:1.0625rem">Staff</div></div>
+      <div class="menu-list mb-16">
+        <button class="menu-item" data-view="customers">Customers<svg class="menu-item-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></button>
+        <button class="menu-item" data-action="cloud-sync">Sync now<svg class="menu-item-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></button>
+        <button class="menu-item" data-action="lock-now">Lock app<svg class="menu-item-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></button>
+      </div></div>`;
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { _lastHidden = Date.now(); return; }
+    if (lockEnabled() && _lastHidden && Date.now() - _lastHidden > 60000) showLock();
+  });
+
+  // ---------- Day Book / cash flow ----------
+  let dbRange = 'today', dbMode = 'all';
+  const PAY_MODES = ['Cash', 'Bank', 'Online', 'Cheque'];
+  function dayKey(iso) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(iso))) return iso;
+    const d = new Date(iso);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  function modeChips(id) {
+    return `<div class="chip-row mt-8" id="${id}">${PAY_MODES.map((m, i) => `<button type="button" class="cat-chip${i ? '' : ' active'}" data-action="rp-mode" data-mode="${m}">${m}</button>`).join('')}</div>`;
+  }
+  function pickedMode(id) {
+    const a = document.querySelector('#' + id + ' .cat-chip.active');
+    return a ? a.dataset.mode : 'Cash';
+  }
+  // Every rupee that actually moved: payments in, refunds / purchase payments / expenses out
+  function cashEntries() {
+    const out = [];
+    const split = (doc, label, dir, party) => {
+      const pays = (doc.meta && doc.meta.payments) || [];
+      const first = round2((doc.paidAmount || 0) - pays.reduce((s, p) => s + p.amount, 0));
+      if (first > 0.001) out.push({ date: doc.date, mode: (doc.meta && doc.meta.paymentMode) || 'Cash', dir, amount: first, text: `${label} ${doc.number}`, party });
+      pays.forEach(p => out.push({ date: p.date, mode: p.mode || 'Cash', dir, amount: p.amount, text: `${label} ${doc.number}${p.note ? ' · ' + p.note : ''}`, party }));
+    };
+    invoices.forEach(inv => {
+      const g = docSign(inv); if (!g) return;
+      if (g > 0) split(inv, 'Payment in', 'in', inv.customerName);
+      else split(inv, 'Refund', 'out', inv.customerName);
+    });
+    purchases.forEach(p => split(p, 'Paid for', 'out', p.supplierName));
+    expenses.forEach(e => out.push({ date: e.date, mode: 'Cash', dir: 'out', amount: e.amount || 0, text: 'Expense · ' + (e.title || e.category || ''), party: '' }));
+    out.forEach(r => { r.day = dayKey(r.date); r.t = /^\d{4}-\d{2}-\d{2}$/.test(String(r.date)) ? ts(r.date + 'T12:00:00') : ts(r.date); });
+    return out.filter(r => r.amount > 0).sort((a, b) => b.t - a.t);
+  }
+  function viewCashInHandOld() {
+    const cur = settings.currency || 'Rs';
+    const bal = cashInHandBalance();
+    // Recent cash transactions
+    let rows = [];
+    try {
+      rows = cashEntries().filter(r => (r.mode || 'Cash') === 'Cash')
+        .map(r => ({...r, _sort: new Date(r.date).getTime()}));
+      cashAdjustments().forEach(a => rows.push({
+        date: a.date, text: a.note || 'Cash Adjustment', amount: Math.abs(a.amount||0),
+        dir: (a.amount||0) >= 0 ? 'in' : 'out', party: '', _sort: new Date(a.date).getTime()
+      }));
+      rows.sort((a,b) => b._sort - a._sort);
+      rows = rows.slice(0, 30);
+    } catch (_) {}
+
+    return `<div class="fade-in">
+      <div style="margin:16px;background:linear-gradient(135deg,#D1FAE5,#A7F3D0);border-radius:16px;padding:20px;text-align:center">
+        <div style="font-size:0.8125rem;color:#065F46;font-weight:500">Current Cash Balance</div>
+        <div style="font-size:1.75rem;font-weight:700;color:#047857;margin-top:4px">${cur} ${money(bal)}</div>
+      </div>
+      <div class="section-title">Transaction Details</div>
+      ${rows.length === 0
+        ? `<div class="empty-state" style="padding:32px 16px"><p>No cash transactions yet</p></div>`
+        : rows.map(r => {
+            const sign = r.dir === 'in' ? '+' : '−';
+            const col = r.dir === 'in' ? 'var(--success)' : 'var(--danger)';
+            return `<div class="txn-card" style="cursor:default">
+              <div class="txn-top">
+                <div class="txn-party">${escapeHtml(r.text || (r.dir === 'in' ? 'Cash In' : 'Cash Out'))}</div>
+                <span style="font-weight:600;color:${col}">${sign}${cur} ${money(r.amount||0)}</span>
+              </div>
+              <div class="txn-meta">
+                <span>${formatDate(r.date)}${r.party ? ' · ' + escapeHtml(r.party) : ''}</span>
+                <span>Cash</span>
+              </div>
+            </div>`;
+          }).join('')}
+      <div style="display:flex;gap:10px;padding:16px;position:sticky;bottom:calc(var(--nav-height) + 8px);background:var(--bg)">
+        <button class="btn btn-outline btn-block" data-view="daybook" style="display:none">Day Book</button>
+        <button class="btn btn-outline btn-block" data-action="adjust-cash">Bank Transfer</button>
+        <button class="btn btn-primary btn-block" data-action="adjust-cash">Adjust Cash</button>
+      </div>
+      <div style="padding:0 16px 8px">
+        <button class="btn btn-ghost btn-block" data-action="db-full">View full Day Book / Cash Flow →</button>
+      </div>
+    </div>`;
+  }
+
+  function viewDayBook() {
+    const now = new Date();
+    const key = off => { const d = new Date(now); d.setDate(d.getDate() - off); return dayKey(d.toISOString()); };
+    const ranges = { today: [key(0), key(0)], yesterday: [key(1), key(1)], week: [key(6), key(0)], month: [key(29), key(0)], all: ['0000', '9999'] };
+    const [from, to] = ranges[dbRange] || ranges.today;
+    const all = cashEntries().filter(r => r.day >= from && r.day <= to);
+    const rows = all.filter(r => dbMode === 'all' || r.mode === dbMode);
+    const sum = (list, dir) => round2(list.filter(r => r.dir === dir).reduce((s, r) => s + r.amount, 0));
+    const inn = sum(rows, 'in'), outt = sum(rows, 'out'), net = round2(inn - outt);
+    const cur = settings.currency;
+    const rl = [['today', 'Today'], ['yesterday', 'Yesterday'], ['week', '7 days'], ['month', '30 days'], ['all', 'All']];
+    const modes = ['all'].concat(PAY_MODES);
+    const byMode = PAY_MODES.map(m => { const l = all.filter(r => r.mode === m); return { m, i: sum(l, 'in'), o: sum(l, 'out') }; }).filter(x => x.i || x.o);
+    const days = [];
+    rows.forEach(r => { let d = days[days.length - 1]; if (!d || d.day !== r.day) { d = { day: r.day, list: [] }; days.push(d); } d.list.push(r); });
+    return `<div class="fade-in">
+      <div class="cat-chips">${rl.map(r => `<button class="cat-chip${dbRange === r[0] ? ' active' : ''}" data-action="db-range" data-v="${r[0]}">${r[1]}</button>`).join('')}</div>
+      <div class="cat-chips">${modes.map(m => `<button class="cat-chip${dbMode === m ? ' active' : ''}" data-action="db-mode" data-v="${m}">${m === 'all' ? 'All modes' : m}</button>`).join('')}</div>
+      <div class="stats-grid" style="grid-template-columns:repeat(2,1fr)">
+        <div class="stat-card"><div class="stat-label">Money In</div><div class="stat-value success" style="font-size:1.125rem">${cur} ${money(inn)}</div></div>
+        <div class="stat-card"><div class="stat-label">Money Out</div><div class="stat-value danger" style="font-size:1.125rem">${cur} ${money(outt)}</div></div>
+      </div>
+      <div class="doc-card tot-row" style="margin-top:-4px"><span>Net cash flow</span><b style="color:var(--${net >= 0 ? 'success' : 'danger'})">${net < 0 ? '−' : ''}${cur} ${money(Math.abs(net))}</b></div>
+      ${byMode.length ? `<div class="doc-card"><div class="doc-label">By payment mode</div>${byMode.map(x => `
+        <div class="tot-row"><span>${x.m}</span><span class="text-sm"><span style="color:var(--success)">+${money(x.i)}</span> &nbsp; <span style="color:var(--danger)">−${money(x.o)}</span> &nbsp; <b>${money(round2(x.i - x.o))}</b></span></div>`).join('')}</div>` : ''}
+      ${days.length === 0 ? '<div class="doc-empty">No money moved in this period</div>' : days.map(d => {
+        const dn = round2(sum(d.list, 'in') - sum(d.list, 'out'));
+        return `<div class="section-header"><h2 class="section-title">${formatDate(d.day + 'T12:00:00')}</h2><span class="text-sm" style="color:var(--${dn >= 0 ? 'success' : 'danger'});font-weight:700">${dn < 0 ? '−' : ''}${money(Math.abs(dn))}</span></div>
+        <div class="list">${d.list.map(r => `
+          <div class="list-item"><div class="list-item-body"><div class="list-item-title">${escapeHtml(r.text)}</div>
+            <div class="list-item-sub">${escapeHtml(r.party || '')}${r.party ? ' · ' : ''}${escapeHtml(r.mode)}</div></div>
+            <div class="list-item-right"><div class="list-item-price" style="color:var(--${r.dir === 'in' ? 'success' : 'danger'})">${r.dir === 'in' ? '+' : '−'}${money(r.amount)}</div></div></div>`).join('')}</div>`;
+      }).join('')}
+    </div>`;
+  }
+
+  // ---------- Purchases & supplier payables ----------
+  function nextPurNumber() {
+    let mx = 1000;
+    purchases.forEach(p => { const m = String(p.number).match(/(\d+)\s*$/); if (m) mx = Math.max(mx, parseInt(m[1], 10)); });
+    return `PUR-${mx + 1}`;
+  }
+  function supplierOf(p) {
+    return suppliers.find(s => s.id === p.supplierId) || { id: p.supplierId, name: p.supplierName, phone: p.supplierPhone };
+  }
+  function supplierPurchases(sup) {
+    return purchases.filter(p => (sup.id && p.supplierId === sup.id) || (!p.supplierId && p.supplierName && p.supplierName.toLowerCase() === (sup.name || '').toLowerCase()));
+  }
+  function supplierBalance(sup) {
+    let total = 0, paid = 0;
+    supplierPurchases(sup).forEach(p => { total += p.total || 0; paid += p.paidAmount || 0; });
+    return { total, paid, due: Math.max(0, round2(total - paid)) };
+  }
+  function totalPayable() {
+    return round2(purchases.reduce((s, p) => s + Math.max(0, (p.total || 0) - (p.paidAmount || 0)), 0));
+  }
+
+  function listPurchase(p) {
+    const paid = p.paidAmount || 0, due = Math.max(0, (p.total || 0) - paid);
+    const badge = due <= 0.001 ? '<span class="list-item-badge badge-ok">Paid</span>'
+      : (paid > 0 ? `<span class="list-item-badge badge-low">Owe ${settings.currency} ${money(due)}</span>` : '<span class="list-item-badge badge-out">Unpaid</span>');
+    return `<div class="list-item" data-action="view-purchase" data-id="${p.id}">
+      <div class="list-item-icon">${initials(p.supplierName || 'S')}</div>
+      <div class="list-item-body">
+        <div class="list-item-title">${escapeHtml(p.supplierName || 'Unknown supplier')}</div>
+        <div class="list-item-sub">${escapeHtml(p.number)} · ${formatDate(p.date)} · ${p.items.length} item${p.items.length !== 1 ? 's' : ''}</div>
+        ${badge}${isOverdue(p) ? ' <span class="list-item-badge badge-out">Overdue</span>' : ''}
+      </div>
+      <div class="list-item-right"><div class="list-item-price">${settings.currency} ${money(p.total)}</div></div>
+    </div>`;
+  }
+  function viewPurchases() {
+    if (purchases.length === 0) {
+      return emptyState('box', 'No purchases yet', 'Record stock you buy from suppliers. Stock goes up and you can track what you owe.', 'Add Purchase', null, 'new-purchase');
+    }
+    const owe = totalPayable();
+    const list = [...purchases].sort((a, b) => ts(b.date) - ts(a.date));
+    return `<div class="fade-in">
+      <div class="stats-grid" style="grid-template-columns:repeat(2,1fr)">
+        <div class="stat-card"><div class="stat-label">Total Bought</div><div class="stat-value primary" style="font-size:1.125rem">${settings.currency} ${money(purchases.reduce((s, p) => s + (p.total || 0), 0))}</div></div>
+        <div class="stat-card"><div class="stat-label">To Pay</div><div class="stat-value ${owe > 0 ? 'danger' : 'success'}" style="font-size:1.125rem">${settings.currency} ${money(owe)}</div></div>
+      </div>
+      <div class="list">${list.map(listPurchase).join('')}</div></div>`;
+  }
+
+  function openPurchaseDetail(p) {
+    const paid = p.paidAmount || 0, due = Math.max(0, round2((p.total || 0) - paid));
+    const x = invExtraRows(p);
+    const pays = (p.meta && p.meta.payments) || [];
+    const first = round2(paid - pays.reduce((s, q) => s + q.amount, 0));
+    $('#modalRoot').innerHTML = `
+      <div class="modal-overlay"><div class="modal-sheet">
+        <div class="modal-handle"></div>
+        <div class="modal-header"><h3 class="modal-title">Purchase ${escapeHtml(p.number)}</h3>
+          <button class="modal-close" data-action="close-modal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+        <div class="mb-16"><div class="text-sm text-secondary">Supplier</div><div class="font-semibold">${escapeHtml(p.supplierName || 'Unknown')}</div>
+          <div class="text-sm text-secondary mt-8">${formatDate(p.date)}${p.meta && p.meta.billNo ? ' · Bill ' + escapeHtml(p.meta.billNo) : ''}</div></div>
+        <div class="invoice-summary">
+          ${p.items.map(it => `<div class="summary-row"><span>${escapeHtml(it.name)} × ${it.qty} @ ${money(it.price)}</span><span>${settings.currency} ${money(it.price * it.qty)}</span></div>`).join('')}
+          ${x.rows.length ? `<div class="summary-row"><span>Subtotal</span><span>${settings.currency} ${money(x.sub)}</span></div>` + x.rows.map(r => `<div class="summary-row"><span>${escapeHtml(r.label)}</span><span>${r.amt < 0 ? '−' : ''}${settings.currency} ${money(Math.abs(r.amt))}</span></div>`).join('') : ''}
+          <div class="summary-row total"><span>Total</span><span>${settings.currency} ${money(p.total)}</span></div>
+          <div class="summary-row"><span>Paid</span><span style="color:var(--success)">${settings.currency} ${money(paid)}</span></div>
+          <div class="summary-row"><span>Balance to pay</span><span style="color:${due > 0 ? 'var(--danger)' : 'var(--success)'}">${settings.currency} ${money(due)}</span></div>
+          ${p.meta && p.meta.dueDate ? `<div class="summary-row"><span>Due date</span><span${isOverdue(p) ? ' style="color:var(--danger);font-weight:600"' : ''}>${formatDate(p.meta.dueDate)}${isOverdue(p) ? ' · overdue' : ''}</span></div>` : ''}
+        </div>
+        ${(first > 0.001 || pays.length) ? `<div class="doc-label mt-16">Payments made</div>
+          ${first > 0.001 ? `<div class="summary-row"><span>${formatDate(p.date)}${p.meta && p.meta.paymentMode ? ' · ' + escapeHtml(p.meta.paymentMode) : ''}</span><span>${settings.currency} ${money(first)}</span></div>` : ''}
+          ${pays.map(q => `<div class="summary-row"><span>${formatDate(q.date)} · ${escapeHtml(q.mode || '')}${q.note ? ' · ' + escapeHtml(q.note) : ''}</span><span>${settings.currency} ${money(q.amount)}</span></div>`).join('')}` : ''}
+        ${due > 0.001 ? `
+        <div class="form-group mt-16"><label class="form-label">Record payment to supplier</label>
+          <div class="input-with-btn"><input type="number" class="form-input" id="recordPayInput" min="0" step="any" placeholder="Amount" />
+            <button type="button" class="btn btn-primary btn-sm" style="height:48px" data-action="purchase-pay" data-id="${p.id}">Add</button></div>${modeChips('rpMode')}</div>
+        <button class="btn btn-secondary btn-block mt-8" data-action="purchase-pay-full" data-id="${p.id}">Mark as Fully Paid</button>` : ''}
+      </div></div>`;
+  }
+
+  function openSupplierDetail(sup) {
+    const bal = supplierBalance(sup);
+    const list = supplierPurchases(sup).sort((a, b) => ts(b.date) - ts(a.date));
+    $('#modalRoot').innerHTML = `
+      <div class="modal-overlay"><div class="modal-sheet">
+        <div class="modal-handle"></div>
+        <div class="modal-header"><h3 class="modal-title">${escapeHtml(sup.name)}</h3>
+          <button class="modal-close" data-action="close-modal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+        <div class="text-sm text-secondary mb-8">${escapeHtml(sup.phone || 'No phone')}</div>
+        <div class="stats-grid mb-16">
+          <div class="stat-card"><div class="stat-label">Total Bought</div><div class="stat-value primary">${settings.currency} ${money(bal.total)}</div></div>
+          <div class="stat-card"><div class="stat-label">You Owe</div><div class="stat-value ${bal.due > 0 ? 'danger' : 'success'}">${settings.currency} ${money(bal.due)}</div></div>
+        </div>
+        <div class="section-header"><h2 class="section-title">Purchase history</h2></div>
+        ${list.length ? `<div class="list">${list.map(listPurchase).join('')}</div>` : '<div class="text-secondary text-sm">No purchases yet</div>'}
+        <div class="flex gap-8 mt-16">
+          ${bal.due > 0 ? `<button class="btn btn-primary" style="flex:1" data-action="pay-supplier" data-id="${sup.id}">Pay Supplier</button>` : ''}
+          <button class="btn btn-secondary" style="flex:1" data-action="edit-supplier" data-id="${sup.id}">Edit</button>
+        </div>
+      </div></div>`;
+  }
+
+  function openPaySupplierModal(sup) {
+    const bal = supplierBalance(sup);
+    const today = new Date().toISOString().slice(0, 10);
+    $('#modalRoot').innerHTML = `
+      <div class="modal-overlay"><div class="modal-sheet">
+        <div class="modal-handle"></div>
+        <div class="modal-header"><h3 class="modal-title">Pay Supplier</h3>
+          <button class="modal-close" data-action="close-modal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+        <div class="text-secondary text-sm mb-8">${escapeHtml(sup.name)} · You owe ${settings.currency} ${money(bal.due)}</div>
+        <form id="paySupForm" autocomplete="off">
+          <div class="form-group"><label class="form-label">Amount (${settings.currency})</label><input type="number" inputmode="decimal" class="form-input" id="psAmt" min="0" step="any" value="${bal.due}" /></div>
+          <div class="chip-row mb-8" id="psMode"><button type="button" class="cat-chip active" data-mode="Cash">Cash</button><button type="button" class="cat-chip" data-mode="Bank">Bank</button><button type="button" class="cat-chip" data-mode="Online">Online</button><button type="button" class="cat-chip" data-mode="Cheque">Cheque</button></div>
+          <div class="form-row"><div class="form-group"><label class="form-label">Date</label><input type="date" class="form-input" id="psDate" value="${today}" max="${today}" /></div>
+            <div class="form-group"><label class="form-label">Note</label><input type="text" class="form-input" id="psNote" maxlength="40" placeholder="Optional" /></div></div>
+          <div class="text-sm text-secondary">Settles the oldest unpaid purchases first.</div>
+          <button type="submit" class="btn btn-primary btn-block mt-16">Save Payment</button>
+        </form></div></div>`;
+    let mode = 'Cash';
+    document.querySelectorAll('#psMode .cat-chip').forEach(b => b.addEventListener('click', () => { mode = b.dataset.mode; document.querySelectorAll('#psMode .cat-chip').forEach(x => x.classList.toggle('active', x === b)); }));
+    document.getElementById('paySupForm').addEventListener('submit', e => {
+      e.preventDefault();
+      let amt = round2(parseFloat(document.getElementById('psAmt').value) || 0);
+      if (amt <= 0) { toast('Enter an amount'); return; }
+      if (amt > bal.due + 0.001) { toast(`You only owe ${settings.currency} ${money(bal.due)}`, 3500); return; }
+      const d = document.getElementById('psDate').value;
+      const dateIso = (d && d !== today) ? new Date(d + 'T12:00:00').toISOString() : new Date().toISOString();
+      const note = document.getElementById('psNote').value.trim();
+      let n = 0;
+      supplierPurchases(sup).filter(p => (p.total || 0) - (p.paidAmount || 0) > 0.001).sort((a, b) => ts(a.date) - ts(b.date)).forEach(p => {
+        if (amt <= 0.001) return;
+        const used = addPayment(p, amt, mode, note, dateIso); if (used > 0) { amt = round2(amt - used); n++; }
+      });
+      persist(); toast(`Payment saved · ${n} purchase${n !== 1 ? 's' : ''} updated`); render(); openSupplierDetail(sup);
+    });
+  }
+
+  // ---------- Create Invoice (Vyapar-style document form) ----------
+  // Totals math shared by the form, detail view, PDF, receipt and WhatsApp text.
+  function calcDoc(lines, o) {
+    o = o || {};
+    const sub = round2(lines.reduce((s, l) => s + (Number(l.price) || 0) * (Number(l.qty) || 0), 0));
+    let discount = o.discType === 'pct' ? sub * (Number(o.discValue) || 0) / 100 : (Number(o.discValue) || 0);
+    discount = round2(Math.min(Math.max(discount, 0), sub));
+    const taxable = round2(sub - discount);
+    const taxRate = Math.max(0, Number(o.taxRate) || 0);
+    const tax = round2(taxable * taxRate / 100);
+    const charges = round2(Math.max(0, Number(o.charges) || 0));
+    const raw = taxable + tax + charges;
+    const total = o.roundOff ? Math.round(raw) : round2(raw);
+    const roundOff = round2(total - raw);
+    return { sub, discount, taxable, taxRate, tax, charges, roundOff, total };
+  }
+  // Extra rows (discount/tax/charges/round-off) to show under the item list of a saved invoice
+  function invExtraRows(inv) {
+    const m = inv.meta || {};
+    const rows = [];
+    const itemsSub = round2((inv.items || []).reduce((s, i) => s + (i.price || 0) * (i.qty || 0), 0));
+    if (!(m.discount || m.tax || m.charges || m.roundOff)) return { sub: itemsSub, rows };
+    if (m.discount) rows.push({ label: 'Discount' + (m.discType === 'pct' && m.discValue ? ` (${m.discValue}%)` : ''), amt: -m.discount });
+    if (m.tax) rows.push({ label: `${m.taxName || 'Tax'} (${m.taxRate}%)`, amt: m.tax });
+    if (m.charges) rows.push({ label: m.chargeLabel || 'Additional charges', amt: m.charges });
+    if (m.roundOff) rows.push({ label: 'Round off', amt: m.roundOff });
+    return { sub: itemsSub, rows };
+  }
+
+  function viewCreateInvoice() {
+    const customerOptions = [
+      { value: '', label: 'Walk-in Customer' },
+      ...customers.map(c => {
+        const bal = customerBalance(c.id, c.name, c.phone);
+        const debt = bal.due > 0 ? ` · Due ${settings.currency} ${money(bal.due)}` : '';
+        return { value: c.id, label: c.name + (c.phone ? ' · ' + c.phone : ' · no phone') + debt };
+      })
+    ];
+    const today = new Date().toISOString().slice(0, 10);
+    const cur = settings.currency;
+    const isRet = docCtx.type === 'return';
+    const isEst = docCtx.type === 'estimate';
+    const isPur = docCtx.type === 'purchase';
+    const ref = docCtx.ref;
+    const numLabel = isPur ? 'Purchase No.' : isRet ? 'Credit Note No.' : (isEst ? 'Quotation No.' : 'Invoice No.');
+    const numText = isPur ? nextPurNumber() : isRet ? nextDocNumber('CN') : (isEst ? nextDocNumber('QT') : `${settings.invoicePrefix || 'INV'}-${invoiceCounter}`);
+    const supplierOptions = [{ value: '', label: 'Select supplier' }, ...suppliers.map(sp => {
+      const sb = supplierBalance(sp);
+      return { value: sp.id, label: sp.name + (sp.phone ? ' · ' + sp.phone : '') + (sb.due > 0 ? ` · You owe ${settings.currency} ${money(sb.due)}` : '') };
+    })];
+    const from = docCtx.from;
+    return `<div class="fade-in doc-form">
+      <form id="invoiceForm" autocomplete="off">
+        <div class="doc-card doc-head">
+          <div><div class="doc-label">${numLabel}</div><div class="doc-num">${escapeHtml(numText)}</div>${isRet && ref ? `<div class="text-sm text-secondary">Against ${escapeHtml(ref.number)}</div>` : ''}${from ? `<div class="text-sm text-secondary">From ${escapeHtml(from.number)}</div>` : ''}</div>
+          <div class="doc-date"><div class="doc-label">Date</div><input type="date" class="doc-date-input" name="docDate" value="${today}" max="${today}" /></div>
+        </div>
+
+        ${isPur ? `<div class="doc-card doc-head"><div class="doc-label" style="margin:0">Supplier bill no. (optional)</div><input type="text" class="doc-date-input" name="billNo" maxlength="20" style="max-width:150px;border-bottom:1px solid var(--border)" /></div>` : ''}
+        ${isEst ? `<div class="doc-card doc-head"><div class="doc-label" style="margin:0">Valid until (optional)</div><input type="date" class="doc-date-input" name="validUntil" /></div>` : ''}
+        <div class="doc-card">
+          <div class="doc-label">${isPur ? 'Supplier' : 'Bill to'}</div>
+          ${isPur ? customSelect('customerId', supplierOptions, '', 'Select supplier', true) : customSelect('customerId', customerOptions, '', 'Walk-in Customer', true)}
+          <div class="form-row mt-8">
+            <input type="text" class="form-input" name="customerName" id="customerNameInput" placeholder="${isPur ? 'Or type supplier name' : 'Or type customer name'}" />
+            <input type="tel" class="form-input" name="customerPhone" id="customerPhoneInput" placeholder="Phone (optional)" />
+          </div>
+        </div>
+
+        <div class="doc-card">
+          <div class="doc-card-head">
+            <span class="doc-label" style="margin:0">Items</span>
+            <span class="doc-actions">
+              <button type="button" class="chip-btn" data-action="scan-invoice-barcode">Scan</button>
+              <button type="button" class="chip-btn chip-btn-primary" id="addItemsBtn">+ Add Items</button>
+            </span>
+          </div>
+          <div id="docLines"></div>
+        </div>
+
+        <div class="doc-card" id="docTotals" style="display:none">
+          <div class="tot-row"><span>Subtotal</span><b id="tSub"></b></div>
+          <div class="tot-row tot-input">
+            <span>Discount</span>
+            <span class="tot-ctl">
+              <span class="seg" id="discSeg"><button type="button" data-dt="amt" class="on">${escapeHtml(cur)}</button><button type="button" data-dt="pct">%</button></span>
+              <input type="number" inputmode="decimal" min="0" step="any" id="discIn" placeholder="0" />
+            </span>
+          </div>
+          <div class="tot-row tot-input">
+            <span>Tax %</span>
+            <span class="tot-ctl"><input type="number" inputmode="decimal" min="0" step="any" id="taxIn" placeholder="0" value="${(isRet && ref && ref.meta && ref.meta.taxRate) ? ref.meta.taxRate : (from && from.meta && from.meta.taxRate != null ? (from.meta.taxRate || '') : (settings.taxRate ? settings.taxRate : ''))}" /></span>
+          </div>
+          <div class="tot-row tot-input">
+            <span><input type="text" id="chLabel" class="tot-label-in" placeholder="Additional charges" maxlength="30" /></span>
+            <span class="tot-ctl"><input type="number" inputmode="decimal" min="0" step="any" id="chIn" placeholder="0" /></span>
+          </div>
+          <label class="tot-row tot-check"><span>Round off</span><input type="checkbox" id="roundIn" /></label>
+          <div class="tot-sep"></div>
+          <div class="tot-row tot-grand"><span>Total</span><b id="tTotal"></b></div>
+        </div>
+
+        <div class="doc-card" id="docPay" style="display:none">
+          <div class="doc-card-head">
+            <span class="doc-label" style="margin:0">${isPur ? 'Paid to supplier' : isRet ? 'Refund paid to customer' : 'Payment received'}</span>
+            <label class="paid-toggle"><input type="checkbox" id="paidFull" /> <span>${isPur ? 'Paid in full' : isRet ? 'Refunded in full' : 'Received in full'}</span></label>
+          </div>
+          <input type="number" inputmode="decimal" min="0" step="any" class="form-input" id="paidIn" placeholder="0" name="paidAmount" />
+          <div class="chip-row mt-8" id="modeRow">
+            <button type="button" class="cat-chip active" data-mode="Cash">Cash</button>
+            <button type="button" class="cat-chip" data-mode="Bank">Bank</button>
+            <button type="button" class="cat-chip" data-mode="Online">Online</button>
+            <button type="button" class="cat-chip" data-mode="Cheque">Cheque</button>
+          </div>
+          <div class="tot-row mt-8"><span>${isPur ? 'Balance payable' : isRet ? 'Credit left with customer' : 'Balance due'}</span><b id="tDue"></b></div>
+          ${isRet ? '' : `<div class="tot-row tot-input"><span>Due date</span><span class="tot-ctl"><input type="date" id="dueIn" name="dueDate" min="${today}" style="width:150px" /></span></div>
+          <div class="chip-row"><button type="button" class="cat-chip" data-due="7">+7 days</button><button type="button" class="cat-chip" data-due="15">+15 days</button><button type="button" class="cat-chip" data-due="30">+30 days</button></div>`}
+        </div>
+
+        <div class="save-bar" id="saveBar">
+          <div><div class="doc-label" style="margin:0">Total</div><div class="save-total" id="saveTotal">${escapeHtml(cur)} 0</div></div>
+          <button type="submit" class="btn btn-primary" id="createInvoiceBtn" disabled>${isPur ? 'Save Purchase' : isRet ? 'Save Return' : (isEst ? 'Save Quotation' : 'Save Invoice')}</button>
+        </div>
+      </form>
+    </div>`;
+  }
+
+  function bindCreateInvoice() {
+    const cur = settings.currency;
+    const isRet = docCtx.type === 'return';
+    const isEst = docCtx.type === 'estimate';
+    const isPur = docCtx.type === 'purchase';
+    const ref = docCtx.ref || null;
+    const from = docCtx.from || null;          // quotation being converted to an invoice
+    const preLines = docCtx.posLines || null;
+    docCtx = {};                              // consumed: next visit starts a normal invoice
+    const lines = [];                         // { productId, name, price, cost, qty }
+    const st = { discType: 'amt', mode: 'Cash' };
+    // most units of a product this document may contain
+    const refQty = {};
+    if (isRet && ref) {
+      const done = returnedQty(ref.id);
+      (ref.items || []).forEach(it => { refQty[it.productId] = (refQty[it.productId] || 0) + it.qty; });
+      Object.keys(refQty).forEach(k => { refQty[k] = Math.max(0, refQty[k] - (done[k] || 0)); });
+    }
+    const capOf = p => (isEst || isPur) ? Infinity : (!isRet ? p.stock : (ref ? (refQty[p.id] || 0) : Infinity));
+    window._docIsReturn = isRet;
+    window._docLines = lines;
+
+    const val = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+    function opts() {
+      return { discType: st.discType, discValue: val('discIn'), taxRate: val('taxIn'),
+               charges: val('chIn'), roundOff: !!document.getElementById('roundIn')?.checked };
+    }
+    function recalc(fromPaid) {
+      const c = calcDoc(lines, opts());
+      const has = lines.length > 0;
+      const q = id => document.getElementById(id);
+      if (q('docTotals')) q('docTotals').style.display = has ? '' : 'none';
+      if (q('docPay')) q('docPay').style.display = (has && !isEst) ? '' : 'none';
+      if (q('tSub')) q('tSub').textContent = `${cur} ${money(c.sub)}`;
+      if (q('tTotal')) q('tTotal').textContent = `${cur} ${money(c.total)}`;
+      if (q('saveTotal')) q('saveTotal').textContent = `${cur} ${money(c.total)}`;
+      if (q('createInvoiceBtn')) q('createInvoiceBtn').disabled = !has;
+      if (q('paidFull') && q('paidFull').checked && q('paidIn')) q('paidIn').value = c.total || '';
+      const paid = Math.min(parseFloat(val('paidIn')) || 0, c.total);
+      if (q('tDue')) { q('tDue').textContent = `${cur} ${money(Math.max(0, round2(c.total - paid)))}`; }
+      return c;
+    }
+    function renderLines() {
+      const box = document.getElementById('docLines');
+      if (!box) return;
+      if (!lines.length) {
+        box.innerHTML = `<div class="doc-empty">No items yet. Tap <b>+ Add Items</b> to pick products.</div>`;
+      } else {
+        box.innerHTML = lines.map((l, i) => {
+          const p = products.find(x => x.id === l.productId);
+          const over = !isRet && !isEst && !isPur && p && l.qty > (p.stock || 0);
+          const oos = !isRet && !isEst && !isPur && p && (p.stock || 0) <= 0;
+          return `
+          <div class="line-card" data-i="${i}">
+            <div class="line-top"><span class="line-name">${escapeHtml(l.name)}${(oos || over) ? ' <span class="line-warn">' + (oos ? 'Out of stock' : 'Low stock') + '</span>' : ''}</span>
+              <button type="button" class="line-x" data-del="${i}" aria-label="Remove">✕</button></div>
+            <div class="line-grid">
+              <div class="qty-control"><button type="button" class="qty-btn" data-q="-1" data-i="${i}">−</button><span class="qty-value">${l.qty}</span><button type="button" class="qty-btn" data-q="1" data-i="${i}">+</button></div>
+              <div class="line-rate"><span>×</span><input type="number" inputmode="decimal" min="0" step="any" data-rate="${i}" value="${l.price}"${isStaff() ? ' readonly' : ''} /></div>
+              <div class="line-amt" id="la-${i}">${cur} ${money(l.price * l.qty)}</div>
+            </div>
+          </div>`;
+        }).join('');
+      }
+      recalc();
+    }
+    function addProduct(id, n) {
+      const p = products.find(x => x.id === id);
+      if (!p) return false;
+      let l = lines.find(x => x.productId === id);
+      const next = (l ? l.qty : 0) + (n || 1);
+      // Returns: hard cap to qty on original invoice
+      if (isRet && next > capOf(p)) { toast('More than was sold on that invoice'); return false; }
+      // Sales: allow oversell / zero stock with warning (still track negative stock)
+      if (!isRet && !isEst && !isPur && next > (p.stock || 0)) {
+        // allow, but flag
+      }
+      if (l) l.qty = next; else lines.push({ productId: p.id, name: p.name, price: isPur ? (p.cost || 0) : p.price, cost: p.cost || 0, qty: next });
+      if (!isRet && !isEst && !isPur && (p.stock || 0) < next) {
+        toast((p.stock || 0) <= 0 ? (p.name + ' is out of stock') : (p.name + ' — only ' + p.stock + ' in stock'), 2500);
+      }
+      renderLines();
+      return true;
+    }
+    window._docAdd = addProduct;
+    window._docRender = renderLines;
+    if (preLines && preLines.length) {
+      preLines.forEach(l => {
+        const existing = l.productId && lines.find(x => x.productId === l.productId);
+        if (existing) existing.qty += l.qty;
+        else lines.push({ productId: l.productId || null, name: l.name, price: l.price, cost: l.cost || 0, qty: l.qty, custom: l.custom || !l.productId || undefined });
+      });
+    }
+
+    const linesBox = document.getElementById('docLines');
+    linesBox.addEventListener('click', e => {
+      const q = e.target.closest('[data-q]'), d = e.target.closest('[data-del]');
+      if (q) {
+        const l = lines[+q.dataset.i]; if (!l) return;
+        const p = products.find(x => x.id === l.productId);
+        const n = l.qty + (+q.dataset.q);
+        if (n < 1) { lines.splice(+q.dataset.i, 1); }
+        else if (isRet && p && n > capOf(p)) { toast('More than was sold on that invoice'); return; }
+        else {
+          l.qty = n;
+          if (!isRet && !isEst && !isPur && p && n > (p.stock || 0)) {
+            toast((p.stock || 0) <= 0 ? (p.name + ' is out of stock') : (p.name + ' — only ' + p.stock + ' in stock'), 2500);
+          }
+        }
+        renderLines();
+      } else if (d) { lines.splice(+d.dataset.del, 1); renderLines(); }
+    });
+    linesBox.addEventListener('input', e => {
+      const r = e.target.closest('[data-rate]'); if (!r) return;
+      const l = lines[+r.dataset.rate]; if (!l) return;
+      l.price = Math.max(0, parseFloat(r.value) || 0);
+      const a = document.getElementById('la-' + r.dataset.rate);
+      if (a) a.textContent = `${cur} ${money(l.price * l.qty)}`;
+      recalc();
+    });
+
+    ['discIn', 'taxIn', 'chIn', 'roundIn', 'paidIn'].forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener(id === 'roundIn' ? 'change' : 'input', () => {
+        if (id === 'paidIn') { const f = document.getElementById('paidFull'); if (f) f.checked = false; }
+        recalc();
+      });
+    });
+    document.getElementById('paidFull').addEventListener('change', () => {
+      const f = document.getElementById('paidFull');
+      if (!f.checked) document.getElementById('paidIn').value = '';
+      recalc();
+    });
+    document.querySelectorAll('#discSeg button').forEach(b => b.addEventListener('click', () => {
+      st.discType = b.dataset.dt;
+      document.querySelectorAll('#discSeg button').forEach(x => x.classList.toggle('on', x === b));
+      recalc();
+    }));
+    document.querySelectorAll('[data-due]').forEach(b => b.addEventListener('click', () => {
+      const d = new Date(); d.setDate(d.getDate() + (+b.dataset.due));
+      const el = document.getElementById('dueIn'); if (el) el.value = d.toISOString().slice(0, 10);
+    }));
+    document.querySelectorAll('#modeRow .cat-chip').forEach(b => b.addEventListener('click', () => {
+      st.mode = b.dataset.mode;
+      document.querySelectorAll('#modeRow .cat-chip').forEach(x => x.classList.toggle('active', x === b));
+    }));
+
+    if (isStaff()) ['discIn', 'taxIn', 'chIn', 'chLabel', 'roundIn'].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = true; });
+    document.getElementById('addItemsBtn').addEventListener('click', () => openItemPicker(lines, addProduct, (isEst || isPur) ? (() => true) : isRet ? (ref ? (p => (refQty[p.id] || 0) > 0) : (() => true)) : null));
+    // prefill from the invoice being returned
+    if (isRet && ref) {
+      (ref.items || []).forEach(it => {
+        const left = refQty[it.productId] || 0;
+        if (left > 0 && products.some(p => p.id === it.productId)) lines.push({ productId: it.productId, name: it.name, price: it.price, cost: it.cost || 0, qty: left });
+      });
+      const sel = document.querySelector('[name="customerId"]'); if (sel && ref.customerId) { sel.value = ref.customerId; }
+      const nm = document.getElementById('customerNameInput'); if (nm && ref.customerName && ref.customerName !== 'Walk-in Customer') nm.value = ref.customerName;
+      const ph = document.getElementById('customerPhoneInput'); if (ph) ph.value = ref.customerPhone || '';
+      if (!lines.length) toast('Everything on that invoice was already returned');
+    }
+    // prefill from the quotation being converted
+    if (from) {
+      const m = from.meta || {};
+      (from.items || []).forEach(it => {
+        const p = products.find(x => x.id === it.productId);
+        if (!p) return;
+        const q = Math.min(it.qty, p.stock);
+        if (q > 0) lines.push({ productId: it.productId, name: it.name, price: it.price, cost: p.cost || it.cost || 0, qty: q });
+        if (q < it.qty) toast(`${it.name}: only ${p.stock} in stock`, 3500);
+      });
+      const sel = document.querySelector('[name="customerId"]'); if (sel && from.customerId) sel.value = from.customerId;
+      const nm = document.getElementById('customerNameInput'); if (nm && from.customerName && from.customerName !== 'Walk-in Customer') nm.value = from.customerName;
+      const ph = document.getElementById('customerPhoneInput'); if (ph) ph.value = from.customerPhone || '';
+      if (m.discValue) { document.getElementById('discIn').value = m.discValue; st.discType = m.discType || 'amt';
+        document.querySelectorAll('#discSeg button').forEach(x => x.classList.toggle('on', x.dataset.dt === st.discType)); }
+      if (m.charges) { document.getElementById('chIn').value = m.charges; document.getElementById('chLabel').value = m.chargeLabel || ''; }
+      if (m.roundOff) document.getElementById('roundIn').checked = true;
+    }
+    renderLines();
+
+    let submitting = false;
+    $('#invoiceForm').addEventListener('submit', e => {
+      e.preventDefault();
+      if (submitting) return;
+      if (!isPur && typeof enforceLimit === 'function' && !enforceLimit('invoices', invoices.length)) return;
+      const fd = new FormData(e.target);
+
+      // 1) Validate WITHOUT touching stock or counters
+      if (!lines.length) { toast('Add at least one item'); return; }
+      const short = [];
+      if (!isRet && !isEst && !isPur) lines.forEach(l => {
+        if (l.custom) return;
+        const p = products.find(x => x.id === l.productId);
+        if (!p || p.stock < l.qty) short.push(`${l.name} (stock ${p ? p.stock : 0}, selling ${l.qty})`);
+      });
+      if (short.length) {
+        const ok = confirm('Some items are out of stock or short:\n\n' + short.join('\n') + '\n\nSave invoice anyway? Stock will go negative.');
+        if (!ok) return;
+      }
+      const o = opts();
+      const c = calcDoc(lines, o);
+      if (c.total <= 0 && lines.some(l => l.price > 0)) { toast('Discount cannot be more than the bill'); return; }
+      let paidAmount = isEst ? 0 : round2(Math.min(Math.max(parseFloat(fd.get('paidAmount')) || 0, 0), c.total));
+      const paymentStatus = paidAmount >= c.total && c.total > 0 ? 'paid' : (paidAmount > 0 ? 'partial' : 'unpaid');
+
+      if (isPur) {
+        submitting = true;
+        const nowP = new Date().toISOString();
+        const pk = fd.get('docDate');
+        const pDate = (pk && pk !== nowP.slice(0, 10)) ? new Date(pk + 'T12:00:00').toISOString() : nowP;
+        const pnum = nextPurNumber();
+        let sid = fd.get('customerId') || '', sname = (fd.get('customerName') || '').trim(), sphone = (fd.get('customerPhone') || '').trim();
+        if (sid) { const sp = suppliers.find(x => x.id === sid); if (sp) { if (!sname) sname = sp.name; if (!sphone) sphone = sp.phone || ''; } }
+        if (!sname) { submitting = false; toast('Choose or type the supplier'); return; }
+        if (!sid) {
+          let sp = suppliers.find(x => x.name.toLowerCase() === sname.toLowerCase());
+          if (!sp) {
+            if (typeof enforceLimit === 'function' && !enforceLimit('suppliers', suppliers.length)) { submitting = false; return; }
+            sp = { id: uid(), name: sname, phone: sphone, notes: '' }; suppliers.push(sp);
+          } else if (sphone && !sp.phone) sp.phone = sphone;
+          sid = sp.id; sname = sp.name; sphone = sp.phone || sphone;
+        }
+        const pitems = lines.map(l => ({ productId: l.productId, name: l.name, price: l.price, qty: l.qty }));
+        pitems.forEach(it => {
+          const pr = products.find(x => x.id === it.productId);
+          if (!pr) return;
+          pr.stock += it.qty; if (it.price > 0) pr.cost = it.price;
+          stockMovements.unshift({ id: uid(), productId: it.productId, productName: it.name, type: 'in', qty: it.qty, date: nowP, note: `Purchase ${pnum}` });
+        });
+        const pmeta = { subtotal: c.sub, discount: c.discount, discType: o.discType, discValue: Number(o.discValue) || 0,
+          taxName: 'Tax', taxRate: c.taxRate, tax: c.tax, chargeLabel: (document.getElementById('chLabel')?.value || '').trim(), charges: c.charges,
+          roundOff: c.roundOff, paymentMode: paidAmount > 0 ? st.mode : '' };
+        const bn = (fd.get('billNo') || '').trim(); if (bn) pmeta.billNo = bn;
+        const dd = fd.get('dueDate'); if (dd && paymentStatus !== 'paid') pmeta.dueDate = dd;
+        const pur = { id: uid(), number: pnum, supplierId: sid, supplierName: sname, supplierPhone: sphone, items: pitems, total: c.total, paymentStatus, paidAmount, meta: pmeta, date: pDate };
+        purchases.unshift(pur);
+        persist();
+        toast('Purchase saved. Stock added.');
+        setView('purchases');
+        openPurchaseDetail(pur);
+        return;
+      }
+
+      // 2) Commit
+      submitting = true;
+      const nowIso = new Date().toISOString();
+      const pick = fd.get('docDate');
+      const dateIso = (pick && pick !== nowIso.slice(0, 10)) ? new Date(pick + 'T12:00:00').toISOString() : nowIso;
+      const invNumber = isRet ? nextDocNumber('CN') : isEst ? nextDocNumber('QT') : `${settings.invoicePrefix || 'INV'}-${invoiceCounter++}`;
+      const items = lines.map(l => ({ productId: l.productId, name: l.name, price: l.price, cost: l.cost, qty: l.qty, custom: l.custom ? true : undefined }));
+      if (!isEst) items.forEach(it => {
+        const p = products.find(x => x.id === it.productId);
+        if (!p) return;
+        p.stock += (isRet ? it.qty : -it.qty);
+        stockMovements.unshift({ id: uid(), productId: it.productId, productName: it.name, type: isRet ? 'in' : 'out', qty: it.qty, date: nowIso, note: `${isRet ? 'Return' : 'Invoice'} ${invNumber}` });
+      });
+
+      let customerId = fd.get('customerId') || '';
+      let customerName = (fd.get('customerName') || '').trim();
+      let customerPhone = (fd.get('customerPhone') || '').trim();
+      if (customerId) {
+        const cu = customers.find(x => x.id === customerId);
+        if (cu) { if (!customerName) customerName = cu.name; if (!customerPhone) customerPhone = cu.phone || ''; }
+      }
+      if (!customerName) { customerName = 'Walk-in Customer'; customerId = ''; }
+      if (customerName !== 'Walk-in Customer') {
+        const cu = findOrCreateCustomer(customerName, customerPhone);
+        if (cu) { customerId = cu.id; customerName = cu.name; if (!customerPhone) customerPhone = cu.phone || ''; }
+      }
+
+      const meta = {
+        subtotal: c.sub, discount: c.discount, discType: o.discType, discValue: Number(o.discValue) || 0,
+        taxName: 'Tax', taxRate: c.taxRate, tax: c.tax,
+        chargeLabel: (document.getElementById('chLabel')?.value || '').trim(), charges: c.charges,
+        roundOff: c.roundOff, paymentMode: paidAmount > 0 ? st.mode : ''
+      };
+      if (isRet && ref) { meta.refId = ref.id; meta.refNumber = ref.number; }
+      if (isEst) { const vu = fd.get('validUntil'); if (vu) meta.validUntil = vu; }
+      if (isStaff()) meta.by = 'Staff';
+      { const dd = fd.get('dueDate'); if (dd && !isRet && !isEst && paymentStatus !== 'paid') meta.dueDate = dd; }
+      if (from) { meta.fromId = from.id; meta.fromNumber = from.number; }
+      const inv = {
+        id: uid(), number: invNumber, docType: isRet ? 'return' : (isEst ? 'estimate' : 'sale'),
+        customerId: customerId || null, customerName, customerPhone,
+        items, total: c.total, paymentStatus, paidAmount, meta, date: dateIso
+      };
+      invoices.unshift(inv);
+      persist();
+      if (isRet) { toast('Return saved. Stock added back.'); setView('invoices'); openInvoiceDetail(inv); return; }
+      if (isEst) { toast('Quotation saved'); invFilter = 'estimate'; setView('invoices'); openInvoiceDetail(inv); return; }
+      if (from) { const q = invoices.find(x => x.id === from.id); if (q) { q.meta = Object.assign({}, q.meta, { convertedTo: inv.number, convertedId: inv.id }); q.updatedAt = new Date().toISOString(); persist(); } }
+      toast(paymentStatus === 'paid' ? 'Invoice saved (Paid)' : paymentStatus === 'partial' ? 'Invoice saved (Advance recorded)' : 'Invoice saved (Unpaid)');
+      setView('invoices');
+      openInvoiceDetail(inv);
+    });
+  }
+
+  // Product picker sheet: search + tap to add (count badge shows what is already on the bill)
+  function openItemPicker(lines, addProduct, allow) {
+    const cur = settings.currency;
+    function rows(q) {
+      q = (q || '').trim().toLowerCase();
+      const list = products.filter(p => !q || p.name.toLowerCase().includes(q) || (p.barcode || '').toLowerCase().includes(q));
+      if (!list.length) return '<div class="doc-empty">No products found</div>';
+      return list.map(p => {
+        const n = (lines.find(l => l.productId === p.id) || {}).qty || 0;
+        const blocked = allow ? !allow(p) : false; // return-only hard block
+        const low = !blocked && (p.stock == null ? false : p.stock <= 0);
+        const stockLabel = blocked ? 'Not on that invoice' : (low ? 'Out of stock' : ('Stock: ' + p.stock));
+        return `<div class="pick-row${blocked ? ' out' : ''}${low ? ' low-stock' : ''}" data-pid="${p.id}" data-low="${low ? '1' : '0'}">
+          <div class="pick-info">
+            <div class="pick-name">${escapeHtml(p.name)}</div>
+            <div class="pick-sub">${stockLabel}${p.barcode ? ' · ' + escapeHtml(p.barcode) : ''}</div>
+          </div>
+          <div class="pick-right">
+            <div class="pick-price">${cur} ${money(p.price)}</div>
+            ${low ? '<span class="pick-badge badge-out">Out</span>' : (n ? `<span class="pick-badge badge-ok">×${n}</span>` : '')}
+            ${blocked ? '' : '<span class="pick-add">+</span>'}
+          </div>
+        </div>`;
+      }).join('');
+    }
+    $('#modalRoot').innerHTML = `
+      <div class="modal-overlay" id="pickOverlay">
+        <div class="modal-sheet">
+          <div class="modal-handle"></div>
+          <div class="modal-header"><h3 class="modal-title">Add Items</h3>
+            <button class="modal-close" data-action="close-modal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+          <div class="search-wrap mb-8"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="search" class="search-input" id="pickSearch" placeholder="Search name or barcode" /></div>
+          <div id="pickList" class="pick-list">${rows('')}</div>
+          ${allow === null || allow === undefined ? `<div id="customBox"><button type="button" class="btn btn-outline btn-block mt-8" id="customToggle">+ Add custom item (not in catalogue)</button>
+            <form id="customForm" style="display:none" class="mt-8">
+              <input class="form-input mb-8" id="ciName" placeholder="Item / service name" maxlength="80" required />
+              <div class="form-row"><input class="form-input" id="ciQty" type="number" inputmode="decimal" min="0" step="any" value="1" placeholder="Qty" />
+              <input class="form-input" id="ciPrice" type="number" inputmode="decimal" min="0" step="any" placeholder="Price" required /></div>
+              <button type="submit" class="btn btn-secondary btn-block mt-8">Add to bill</button></form></div>` : ''}
+          <button type="button" class="btn btn-primary btn-block mt-12" data-action="close-modal">Done</button>
+        </div>
+      </div>`;
+    const list = document.getElementById('pickList'), s = document.getElementById('pickSearch');
+    s.addEventListener('input', () => { list.innerHTML = rows(s.value); });
+    const cT = document.getElementById('customToggle'), cF = document.getElementById('customForm');
+    if (cT && cF) {
+      cT.addEventListener('click', () => { cF.style.display = cF.style.display === 'none' ? '' : 'none'; });
+      cF.addEventListener('submit', e => {
+        e.preventDefault();
+        const name = document.getElementById('ciName').value.trim();
+        const qty = parseFloat(document.getElementById('ciQty').value) || 1;
+        const price = parseFloat(document.getElementById('ciPrice').value);
+        if (!name || !(price >= 0)) { toast('Enter name and price'); return; }
+        lines.push({ productId: null, custom: true, name, price, cost: 0, qty });
+        if (window._docRender) window._docRender();
+        toast('Added ' + name);
+        cF.reset(); document.getElementById('ciQty').value = 1; cF.style.display = 'none';
+      });
+    }
+    list.addEventListener('click', e => {
+      const r = e.target.closest('[data-pid]'); if (!r || r.classList.contains('out')) return;
+      const ok = addProduct(r.dataset.pid, 1);
+      if (ok) {
+        if (r.dataset.low === '1') toast('Added with warning: out of stock', 2500);
+        list.innerHTML = rows(s.value);
+      }
+    });
+  }
+
+  function addProductByBarcode(code) {
+    if (!code) return;
+    const p = products.find(x => (x.barcode || '').toLowerCase() === code.toLowerCase());
+    if (!p) { toast('Product not found for barcode'); return; }
+    if (window._docAdd && document.getElementById('docLines')) {
+      if (window._docAdd(p.id, 1)) {
+        if ((p.stock || 0) <= 0) toast('+1 ' + p.name + ' (out of stock)');
+        else toast('+1 ' + p.name);
+      }
+    } else toast('Open New Invoice first');
+  }
+
+  function viewCustomers() {
+    if (customers.length === 0) {
+      return emptyState('user', 'No customers yet', 'Save customer details for faster invoicing.', 'Add Customer', null, 'add-customer');
+    }
+    const sorted = [...customers].sort((a,b) => a.name.localeCompare(b.name));
+    return `<div class="fade-in">
+      <div class="search-wrap">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="search" class="search-input" id="customerSearch" placeholder="Search customers..." />
+      </div>
+      <div class="list" id="customerList">${sorted.map(c => {
+        const bal = customerBalance(c.id, c.name, c.phone);
+        const dueHtml = bal.due > 0
+          ? `<span class="list-item-badge badge-out">Due ${settings.currency} ${money(bal.due)}</span>`
+          : (bal.total > 0 ? `<span class="list-item-badge badge-ok">Clear</span>` : '');
+        return `
+        <div class="list-item" data-action="view-customer" data-id="${c.id}">
+          <div class="list-item-icon">${initials(c.name)}</div>
+          <div class="list-item-body">
+            <div class="list-item-title">${escapeHtml(c.name)}</div>
+            <div class="list-item-sub">${escapeHtml(c.phone || 'No phone')}</div>
+            ${dueHtml}
+          </div>
+          <div class="list-item-right">
+            <div class="list-item-price">${bal.total ? settings.currency + ' ' + money(bal.total) : '—'}</div>
+          </div>
+        </div>`;
+      }).join('')}</div>
+    </div>`;
+  }
+
+  function openCustomerDetail(cust) {
+    const bal = customerBalance(cust.id, cust.name, cust.phone);
+    const custInvoices = invoices.filter(inv =>
+      invoiceBelongsToCustomer(inv, cust.id, cust.name, cust.phone)
+    ).sort((a,b) => new Date(b.date) - new Date(a.date));
+
+    $('#modalRoot').innerHTML = `
+      <div class="modal-overlay">
+        <div class="modal-sheet">
+          <div class="modal-handle"></div>
+          <div class="modal-header">
+            <h3 class="modal-title">${escapeHtml(cust.name)}</h3>
+            <button class="modal-close" data-action="close-modal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+          </div>
+          <div class="text-sm text-secondary mb-8">${escapeHtml(cust.phone || '')}${cust.address ? ' · ' + escapeHtml(cust.address) : ''}</div>
+          <div class="stats-grid mb-16">
+            <div class="stat-card"><div class="stat-label">Total Sales</div><div class="stat-value primary">${settings.currency} ${money(bal.total)}</div></div>
+            <div class="stat-card"><div class="stat-label">${bal.credit > 0 ? 'Credit (we owe)' : 'Due'}</div><div class="stat-value ${bal.due > 0 ? 'danger' : 'success'}">${settings.currency} ${money(bal.credit > 0 ? bal.credit : bal.due)}</div></div>
+          </div>
+          <div class="section-header"><h2 class="section-title">Invoice history</h2></div>
+          ${custInvoices.length === 0 ? '<div class="text-secondary text-sm">No invoices yet</div>' :
+            `<div class="list">${custInvoices.map(inv => {
+              const due = Math.max(0, (inv.total||0) - (inv.paidAmount||0));
+              const st = due <= 0 ? 'Paid' : (inv.paidAmount > 0 ? 'Partial' : 'Unpaid');
+              return `<div class="list-item" data-action="view-invoice" data-id="${inv.id}">
+                <div class="list-item-body">
+                  <div class="list-item-title">${inv.docType === 'return' ? 'Return ' : ''}${escapeHtml(inv.number)}</div>
+                  <div class="list-item-sub">${formatDate(inv.date)} · ${st}</div>
+                </div>
+                <div class="list-item-right">
+                  <div class="list-item-price"${inv.docType === 'return' ? ' style="color:var(--danger)"' : ''}>${inv.docType === 'return' ? '−' : ''}${settings.currency} ${money(inv.total)}</div>
+                  ${due > 0 ? `<span class="list-item-badge badge-out">Due ${money(due)}</span>` : `<span class="list-item-badge badge-ok">Paid</span>`}
+                </div>
+              </div>`;
+            }).join('')}</div>`}
+          <div class="flex gap-8 mt-16" style="flex-wrap:wrap">
+            ${bal.due > 0 ? `<button class="btn btn-primary" style="flex:1" data-action="receive-payment" data-id="${cust.id}">Receive</button>` : ''}
+            <button class="btn btn-secondary" style="flex:1" data-action="open-statement" data-id="${cust.id}">Statement</button>
+            ${bal.due > 0 ? `<button class="btn btn-secondary" style="flex:1" data-action="remind-customer" data-id="${cust.id}">Remind</button>` : ''}
+          </div>
+          <div class="flex gap-12 mt-12">
+            <button class="btn btn-secondary btn-block" data-action="edit-customer" data-id="${cust.id}">Edit</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+
+  // ---------- Suppliers ----------
+  function viewSuppliers() {
+    if (suppliers.length === 0) {
+      return emptyState('truck', 'No suppliers yet', 'Track who you buy stock from.', 'Add Supplier', null, 'add-supplier');
+    }
+    const sorted = [...suppliers].sort((a,b) => a.name.localeCompare(b.name));
+    return `<div class="fade-in"><div class="list">${sorted.map(s => `
+      <div class="list-item" data-action="view-supplier" data-id="${s.id}">
+        <div class="list-item-icon">${initials(s.name)}</div>
+        <div class="list-item-body">
+          <div class="list-item-title">${escapeHtml(s.name)}</div>
+          <div class="list-item-sub">${escapeHtml(s.phone || 'No phone')}</div>
+          ${(() => { const b = supplierBalance(s); return b.due > 0 ? `<span class="list-item-badge badge-out">You owe ${settings.currency} ${money(b.due)}</span>` : (b.total > 0 ? '<span class="list-item-badge badge-ok">Clear</span>' : ''); })()}
+        </div>
+      </div>`).join('')}</div></div>`;
+  }
+
+  // ---------- Reports ----------
+  function viewReports() {
+    const totals = netTotals();
+    const revenue = totals.revenue || 0;
+    const cogs = totals.cogs || 0;
+    const receivable = totals.receivable || 0;
+    const totalExpenses = expenses.reduce((s, e) => s + (e.amount || 0), 0);
+    const profit = revenue - cogs - totalExpenses;
+    const cur = settings.currency || 'Rs';
+    const isPro = window.HisablyFreemium && ['pro','trial'].includes(HisablyFreemium.effectivePlan().key);
+    const crown = `<span class="premium-badge"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z"/></svg></span>`;
+
+    const sold = {};
+    invoices.forEach(inv => { const g = docSign(inv); if (g) (inv.items||[]).forEach(it => {
+      sold[it.name] = (sold[it.name] || 0) + g * it.qty;
+    }); });
+    const top = Object.entries(sold).filter(e => e[1] > 0).sort((a,b) => b[1] - a[1]).slice(0, 5);
+
+    return `<div class="fade-in">
+      <div class="list-group">
+        <div class="list-row" style="cursor:default;background:var(--primary-softer)">
+          <div class="list-row-left"><div class="list-row-label">Total Sales</div></div>
+          <div class="list-row-right font-semibold text-success">${cur} ${money(revenue)}</div>
+        </div>
+        <div class="list-row" style="cursor:default">
+          <div class="list-row-left"><div class="list-row-label">Net Profit</div></div>
+          <div class="list-row-right font-semibold ${profit>=0?'text-success':'text-danger'}">${cur} ${money(profit)}</div>
+        </div>
+        <div class="list-row" style="cursor:default">
+          <div class="list-row-left"><div class="list-row-label">You'll Get</div></div>
+          <div class="list-row-right text-success">${cur} ${money(receivable)}</div>
+        </div>
+      </div>
+
+      <div class="section-header">Transaction</div>
+      <div class="list-group">
+        <div class="list-row" data-action="report-sales"><div class="list-row-left"><div class="list-row-label">Sale Report</div></div><svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div>
+        <div class="list-row" data-view="purchases"><div class="list-row-left"><div class="list-row-label">Purchase Report</div></div><svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div>
+        <div class="list-row" data-view="daybook-detail"><div class="list-row-left"><div class="list-row-label">Day Book</div></div><svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div>
+        <div class="list-row" data-action="report-all-txn"><div class="list-row-left"><div class="list-row-label">All Transactions</div></div><svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div>
+        <div class="list-row" data-action="report-pl"><div class="list-row-left"><div class="list-row-label">Profit & Loss</div></div><svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div>
+        <div class="list-row" data-view="daybook-detail"><div class="list-row-left"><div class="list-row-label">Cashflow</div></div><svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div>
+        <div class="list-row" data-action="report-trial"><div class="list-row-left"><div class="list-row-label">Trial Balance</div></div><svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div>
+        <div class="list-row" data-action="report-balance-sheet"><div class="list-row-left"><div class="list-row-label">Balance Sheet</div></div><svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div>
+      </div>
+
+      <div class="section-header">Party reports</div>
+      <div class="list-group">
+        <div class="list-row" data-view="customers"><div class="list-row-left"><div class="list-row-label">Party Statement</div></div><svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div>
+        <div class="list-row" data-action="report-party-pl"><div class="list-row-left"><div class="list-row-label">Party Wise Profit & Loss ${crown}</div></div><svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div>
+        <div class="list-row" data-view="customers"><div class="list-row-left"><div class="list-row-label">All Parties Report</div></div><svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div>
+      </div>
+
+      <div class="section-header">Item / Stock reports</div>
+      <div class="list-group">
+        <div class="list-row" data-action="report-stock"><div class="list-row-left"><div class="list-row-label">Stock Summary Report</div></div><svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div>
+        <div class="list-row" data-action="report-low-stock"><div class="list-row-left"><div class="list-row-label">Low Stock Summary Report</div></div><svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div>
+        <div class="list-row" data-view="stock-history"><div class="list-row-left"><div class="list-row-label">Item Detail Report</div></div><svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div>
+        <div class="list-row" data-action="report-item-pl"><div class="list-row-left"><div class="list-row-label">Item Wise Profit & Loss</div></div><svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div>
+      </div>
+
+      <div class="section-header">Expense reports</div>
+      <div class="list-group">
+        <div class="list-row" data-view="expenses"><div class="list-row-left"><div class="list-row-label">Expense Transaction Report</div></div><svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div>
+        <div class="list-row" data-view="expenses"><div class="list-row-left"><div class="list-row-label">Expense Category Report</div></div><svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div>
+      </div>
+
+      <div class="section-header">Taxes</div>
+      <div class="list-group">
+        <div class="list-row" data-view="tax-settings"><div class="list-row-left"><div class="list-row-label">Tax Report / Rates</div></div><svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div>
+      </div>
+
+      ${top.length ? `
+      <div class="section-header">Top Selling Items</div>
+      <div class="list-group">
+        ${top.map(([name, qty], i) => `
+          <div class="list-row" style="cursor:default">
+            <div class="list-row-left"><div class="list-row-label">${i+1}. ${escapeHtml(name)}</div></div>
+            <div class="list-row-right">${qty} sold</div>
+          </div>`).join('')}
+      </div>` : ''}
+      <p class="text-sm text-secondary text-center" style="padding:16px">Net Profit = Sales − COGS − Expenses</p>
+    </div>`;
+  }
+
+
+  function viewSaleReport() {
+    invFilter = 'sale';
+    return viewInvoices();
+  }
+  function viewProfitLoss() {
+    const { revenue, cogs } = netTotals();
+    const totalExpenses = expenses.reduce((s, e) => s + (e.amount || 0), 0);
+    const gross = revenue - cogs;
+    const net = gross - totalExpenses;
+    const cur = settings.currency || 'Rs';
+    return `<div class="fade-in">
+      <div class="list-group">
+        <div class="list-row" style="cursor:default"><div class="list-row-left"><div class="list-row-label">Sales (Revenue)</div></div><div class="list-row-right text-success">${cur} ${money(revenue)}</div></div>
+        <div class="list-row" style="cursor:default"><div class="list-row-left"><div class="list-row-label">Cost of Goods</div></div><div class="list-row-right text-danger">− ${cur} ${money(cogs)}</div></div>
+        <div class="list-row" style="cursor:default"><div class="list-row-left"><div class="list-row-label">Gross Profit</div></div><div class="list-row-right font-semibold">${cur} ${money(gross)}</div></div>
+        <div class="list-row" style="cursor:default"><div class="list-row-left"><div class="list-row-label">Expenses</div></div><div class="list-row-right text-danger">− ${cur} ${money(totalExpenses)}</div></div>
+        <div class="list-row" style="cursor:default;background:var(--primary-softer)"><div class="list-row-left"><div class="list-row-label">Net Profit / Loss</div></div><div class="list-row-right font-semibold ${net>=0?'text-success':'text-danger'}">${cur} ${money(net)}</div></div>
+      </div>
+      <p class="text-sm text-secondary text-center" style="padding:16px">Set product cost prices for accurate COGS.</p>
+    </div>`;
+  }
+  function viewTrialBalance() {
+    const { revenue, cogs, receivable } = netTotals();
+    const payable = totalPayable ? totalPayable() : 0;
+    const totalExpenses = expenses.reduce((s, e) => s + (e.amount || 0), 0);
+    const cash = typeof cashInHandBalance === 'function' ? cashInHandBalance() : 0;
+    const cur = settings.currency || 'Rs';
+    const stockValue = products.reduce((s,p) => s + (Number(p.stock)||0) * (Number(p.cost)||Number(p.price)||0), 0);
+    const rows = [
+      ['Cash in hand', cash, 'debit'],
+      ['Stock value', stockValue, 'debit'],
+      ['Receivables (You will Get)', receivable, 'debit'],
+      ['Payables (You will Give)', payable, 'credit'],
+      ['Sales', revenue, 'credit'],
+      ['COGS', cogs, 'debit'],
+      ['Expenses', totalExpenses, 'debit'],
+    ];
+    return `<div class="fade-in">
+      <div class="list-group">
+        <div class="list-row" style="cursor:default;font-weight:600">
+          <div class="list-row-left"><div class="list-row-label">Account</div></div>
+          <div class="list-row-right">Debit / Credit</div>
+        </div>
+        ${rows.map(([name, amt, side]) => `
+          <div class="list-row" style="cursor:default">
+            <div class="list-row-left"><div class="list-row-label">${name}</div></div>
+            <div class="list-row-right ${side==='debit'?'':'text-danger'}">${side==='debit'?'Dr':'Cr'} ${cur} ${money(Math.abs(amt||0))}</div>
+          </div>`).join('')}
+      </div>
+    </div>`;
+  }
+  function viewStockSummary(lowOnly) {
+    let list = [...products];
+    if (lowOnly) list = list.filter(p => (Number(p.stock)||0) <= (Number(p.lowStock)||settings.lowStockDefault||5));
+    list.sort((a,b) => (a.name||'').localeCompare(b.name||''));
+    const cur = settings.currency || 'Rs';
+    if (!list.length) return emptyState('box', lowOnly ? 'No low stock items' : 'No products', lowOnly ? 'All items are above the low-stock level.' : 'Add products to see stock summary.', 'Go to Items', 'products');
+    return `<div class="fade-in">
+      <div class="list-group">
+        ${list.map(p => {
+          const st = Number(p.stock)||0;
+          const low = st <= (Number(p.lowStock)||settings.lowStockDefault||5);
+          return `<div class="list-row" data-action="edit-product" data-id="${p.id}">
+            <div class="list-row-left">
+              <div class="list-row-label">${escapeHtml(p.name)}</div>
+              <div class="list-row-sub">${cur} ${money(p.price)} · Cost ${money(p.cost||0)}</div>
+            </div>
+            <div class="list-row-right ${low?'text-danger font-semibold':''}">${st} ${escapeHtml(p.unit||'')}</div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+  }
+  function viewPartyPL() {
+    if (window.HisablyFreemium && !['pro','trial'].includes(HisablyFreemium.effectivePlan().key)) {
+      return `<div class="fade-in"><div class="empty-state"><h3>Pro feature</h3><p>Party-wise Profit & Loss is available on Pro / Lifetime.</p><button class="btn btn-primary" data-action="open-plans">Upgrade</button></div></div>`;
+    }
+    const map = {};
+    invoices.forEach(inv => {
+      if (docSign(inv) <= 0) return;
+      const name = inv.customerName || 'Walk-in';
+      if (!map[name]) map[name] = { sales: 0, cost: 0 };
+      map[name].sales += inv.total || 0;
+      (inv.items||[]).forEach(it => {
+        const prod = products.find(p => (p.id === it.productId || p.name === it.name));
+        const cost = prod ? (Number(prod.cost)||0) : 0;
+        map[name].cost += cost * (Number(it.qty)||0);
+      });
+    });
+    const rows = Object.entries(map).map(([name, v]) => ({ name, sales: v.sales, profit: v.sales - v.cost })).sort((a,b) => b.profit - a.profit);
+    const cur = settings.currency || 'Rs';
+    if (!rows.length) return emptyState('user', 'No sales yet', 'Create invoices to see party-wise profit.', 'Create Sale', 'create-invoice');
+    return `<div class="fade-in"><div class="list-group">${rows.map(r => `
+      <div class="list-row" style="cursor:default">
+        <div class="list-row-left">
+          <div class="list-row-label">${escapeHtml(r.name)}</div>
+          <div class="list-row-sub">Sales ${cur} ${money(r.sales)}</div>
+        </div>
+        <div class="list-row-right ${r.profit>=0?'text-success':'text-danger'} font-semibold">${cur} ${money(r.profit)}</div>
+      </div>`).join('')}</div></div>`;
+  }
+  function viewItemPL() {
+    const map = {};
+    invoices.forEach(inv => {
+      if (docSign(inv) <= 0) return;
+      (inv.items||[]).forEach(it => {
+        const name = it.name || 'Item';
+        if (!map[name]) map[name] = { qty: 0, sales: 0, cost: 0 };
+        map[name].qty += Number(it.qty)||0;
+        map[name].sales += (Number(it.price)||0) * (Number(it.qty)||0);
+        const prod = products.find(p => (p.id === it.productId || p.name === it.name));
+        map[name].cost += (prod ? (Number(prod.cost)||0) : 0) * (Number(it.qty)||0);
+      });
+    });
+    const rows = Object.entries(map).map(([name, v]) => ({ name, ...v, profit: v.sales - v.cost })).sort((a,b) => b.profit - a.profit);
+    const cur = settings.currency || 'Rs';
+    if (!rows.length) return emptyState('box', 'No sales yet', 'Sell items to see item-wise profit.', 'Go to Items', 'products');
+    return `<div class="fade-in"><div class="list-group">${rows.map(r => `
+      <div class="list-row" style="cursor:default">
+        <div class="list-row-left">
+          <div class="list-row-label">${escapeHtml(r.name)}</div>
+          <div class="list-row-sub">${r.qty} sold · Sales ${cur} ${money(r.sales)}</div>
+        </div>
+        <div class="list-row-right ${r.profit>=0?'text-success':'text-danger'} font-semibold">${cur} ${money(r.profit)}</div>
+      </div>`).join('')}</div></div>`;
+  }
+
+  function viewExpensesOld() {
+    if (expenses.length === 0) {
+      return emptyState('invoice', 'No expenses yet', 'Track rent, fuel, packaging, salaries and other costs.', 'Add Expense', null, 'add-expense');
+    }
+    const sorted = [...expenses].sort((a,b) => new Date(b.date) - new Date(a.date));
+    return `<div class="fade-in">
+      <div class="list">${sorted.map(e => `
+        <div class="list-item" data-action="edit-expense" data-id="${e.id}">
+          <div class="list-item-icon">${escapeHtml((e.category || 'E')[0])}</div>
+          <div class="list-item-body">
+            <div class="list-item-title">${escapeHtml(e.title || e.category || 'Expense')}</div>
+            <div class="list-item-sub">${escapeHtml(e.category || 'Other')} · ${formatDate(e.date)}</div>
+          </div>
+          <div class="list-item-right">
+            <div class="list-item-price" style="color:var(--danger)">${settings.currency} ${money(e.amount)}</div>
+          </div>
+        </div>`).join('')}
+      </div>
+    </div>`;
+  }
+
+  // ---------- More ----------
+  function viewStockHistory() {
+    if (stockMovements.length === 0) {
+      return emptyState('box', 'No stock movements yet', 'Stock in and sales will appear here.', 'Go to Products', 'products');
+    }
+    const sorted = [...stockMovements].sort((a,b) => new Date(b.date) - new Date(a.date)).slice(0, 100);
+    return `<div class="fade-in">
+      <div class="list">${sorted.map(m => `
+        <div class="list-item" style="cursor:default">
+          <div class="list-item-icon" style="background:${m.type === 'in' ? '#D1FAE5' : '#FEE2E2'};color:${m.type === 'in' ? '#065F46' : '#991B1B'}">${m.type === 'in' ? '+' : '−'}</div>
+          <div class="list-item-body">
+            <div class="list-item-title">${escapeHtml(m.productName)}</div>
+            <div class="list-item-sub">${formatDate(m.date)}${m.note ? ' · ' + escapeHtml(m.note) : ''}</div>
+          </div>
+          <div class="list-item-right">
+            <div class="list-item-price" style="color:${m.type === 'in' ? 'var(--success)' : 'var(--danger)'}">${m.type === 'in' ? '+' : '−'}${m.qty}</div>
+          </div>
+        </div>`).join('')}
+      </div>
+    </div>`;
+  }
+
+  function lastSyncLabel() {
+    const t = localStorage.getItem('billaura_last_sync');
+    return t ? ' · Last sync ' + new Date(t).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+  }
+
+  function viewMoreOld() {
+    if (isStaff()) return staffMoreHTML();
+    const biz = escapeHtml(settings.businessName || 'My Business');
+    const phone = settings.phone ? escapeHtml(settings.phone) : '';
+    const email = settings.email ? escapeHtml(settings.email) : '';
+    const crown = `<span class="premium-badge"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z"/></svg></span>`;
+
+    return `<div class="fade-in">
+      <div class="profile-card" data-view="business-profile" style="cursor:pointer">
+        <h2>${biz}</h2>
+        <div class="profile-info">
+          ${phone ? `<span>📞 ${phone}</span>` : ''}
+          ${email ? `<span>✉️ ${email}</span>` : ''}
+          ${settings.address ? `<span>📍 ${escapeHtml(settings.address)}</span>` : '<span style="opacity:0.7">Tap to complete profile</span>'}
+        </div>
+        <div class="profile-progress"><div class="profile-progress-bar" style="width:${profileCompleteness()}%"></div></div>
+        <div style="font-size:0.75rem;margin-top:6px;opacity:0.85">Profile ${profileCompleteness()}% complete</div>
+      </div>
+
+      <div class="section-header">My Business</div>
+      <div class="list-group">
+        <div class="list-row" data-view="pos">
+          <div class="list-row-left">
+            <div class="list-row-icon" style="background:#FEE2E2;color:#E11D48"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/></svg></div>
+            <div><div class="list-row-label">Quick Sale (POS)</div></div>
+          </div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="list-row" data-view="create-invoice">
+          <div class="list-row-left">
+            <div class="list-row-icon" style="background:#FEE2E2;color:#E11D48"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+            <div><div class="list-row-label">Sale</div></div>
+          </div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="list-row" data-action="new-purchase">
+          <div class="list-row-left">
+            <div class="list-row-icon" style="background:#FEF3C7;color:#D97706"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.7 13.4a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6L23 6H6"/></svg></div>
+            <div><div class="list-row-label">Purchase</div></div>
+          </div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="list-row" data-view="expenses">
+          <div class="list-row-left">
+            <div class="list-row-icon" style="background:#EDE9FE;color:#7C3AED"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg></div>
+            <div><div class="list-row-label">Expenses</div></div>
+          </div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="list-row" data-view="reports">
+          <div class="list-row-left">
+            <div class="list-row-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg></div>
+            <div><div class="list-row-label">Reports</div></div>
+          </div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+      </div>
+
+      <div class="section-header">Cash & Bank</div>
+      <div class="list-group">
+        <div class="list-row" data-view="daybook">
+          <div class="list-row-left">
+            <div class="list-row-icon" style="background:#D1FAE5;color:#059669"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M12 8v8"/><path d="M8 12h8"/></svg></div>
+            <div><div class="list-row-label">Cash In-Hand</div></div>
+          </div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="list-row" data-view="purchases">
+          <div class="list-row-left">
+            <div class="list-row-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
+            <div><div class="list-row-label">Bank Accounts</div></div>
+          </div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="list-row" data-view="loans">
+          <div class="list-row-left">
+            <div class="list-row-icon" style="background:#FEF3C7;color:#D97706"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div>
+            <div><div class="list-row-label">Loan Accounts</div></div>
+          </div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+      </div>
+
+      ${(() => { const low = typeof lowStockProducts==='function'?lowStockProducts():[]; if(!low.length) return '';
+        return `<div class="section-header">Stock alerts</div>
+        <div class="list-group" id="lowStockHome">
+          ${low.slice(0,5).map(p => `<div class="list-row" data-view="products">
+            <div class="list-row-left"><div class="list-row-label">${escapeHtml(p.name)}</div>
+            <div class="list-row-sub text-danger">Only ${p.stock||0} left</div></div>
+            <div class="list-row-right text-danger font-semibold">${p.stock||0}</div>
+          </div>`).join('')}
+          ${low.length>5?`<div class="list-row" data-action="report-low-stock"><div class="list-row-left"><div class="list-row-label">View all low stock (${low.length})</div></div></div>`:''}
+        </div>`; })()}
+      <div class="section-header">Parties & Items</div>
+      <div class="list-group">
+        <div class="list-row" data-view="customers">
+          <div class="list-row-left">
+            <div class="list-row-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+            <div><div class="list-row-label">Parties (Customers)</div></div>
+          </div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="list-row" data-view="suppliers">
+          <div class="list-row-left">
+            <div class="list-row-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg></div>
+            <div><div class="list-row-label">Suppliers</div></div>
+          </div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="list-row" data-view="products">
+          <div class="list-row-left">
+            <div class="list-row-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg></div>
+            <div><div class="list-row-label">Items</div></div>
+          </div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="list-row" data-view="stock-history">
+          <div class="list-row-left">
+            <div class="list-row-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
+            <div><div class="list-row-label">Stock History</div></div>
+          </div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+      </div>
+
+      <div class="section-header">Grow</div>
+      <div class="list-group">
+        <div class="list-row" data-view="multi-currency">
+          <div class="list-row-left">
+            <div class="list-row-icon" style="background:#FEF3C7;color:#D97706"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v12M8 10h8M8 14h8"/></svg></div>
+            <div><div class="list-row-label">Multi-Currency</div></div>
+          </div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="list-row" data-view="reminders">
+          <div class="list-row-left">
+            <div class="list-row-icon" style="background:#DBEAFE;color:#2563EB"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div>
+            <div><div class="list-row-label">Reminders</div></div>
+          </div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="list-row" data-view="online-store">
+          <div class="list-row-left">
+            <div class="list-row-icon" style="background:#EDE9FE;color:#7C3AED"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
+            <div><div class="list-row-label">My Online Store</div></div>
+          </div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="list-row" data-action="open-shopify">
+          <div class="list-row-left">
+            <div class="list-row-icon" style="background:#D1FAE5;color:#059669"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h10"/></svg></div>
+            <div><div class="list-row-label">Shopify Sync <span class="premium-badge"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z"/></svg></span></div></div>
+          </div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+      </div>
+
+      <div class="section-header">Utilities</div>
+      <div class="list-group">
+
+        <div class="list-row" data-view="stock-adjust">
+          <div class="list-row-left">
+            <div class="list-row-icon" style="background:#FFEDD5;color:#C2410C"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M5 12h14"/></svg></div>
+            <div><div class="list-row-label">Stock Adjustment</div></div>
+          </div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="list-row" data-view="barcode-gen">
+          <div class="list-row-left">
+            <div class="list-row-icon" style="background:#F3E8FF;color:#7C3AED"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 5v14M7 5v14M10 5v14M14 5v14M17 5v14M21 5v14"/></svg></div>
+            <div><div class="list-row-label">Barcode Generator</div></div>
+          </div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="list-row" data-view="other-income">
+          <div class="list-row-left">
+            <div class="list-row-icon" style="background:#D1FAE5;color:#059669"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg></div>
+            <div><div class="list-row-label">Other Income</div></div>
+          </div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="list-row" data-view="settings">
+          <div class="list-row-left">
+            <div class="list-row-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></svg></div>
+            <div><div class="list-row-label">Settings</div></div>
+          </div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="list-row" data-action="export-backup">
+          <div class="list-row-left">
+            <div class="list-row-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></div>
+            <div><div class="list-row-label">Backup / Restore</div></div>
+          </div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+      </div>
+
+      <div style="text-align:center;padding:24px 16px;color:var(--text-muted);font-size:0.75rem">
+        Billaura v2 · Smart Billing & Business
+      </div>
+    </div>`;
+  }
+
+  function emptyState(icon, title, sub, btnLabel, view, action) {
+    const icons = {
+      box: '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>',
+      invoice: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
+      user: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>',
+      truck: '<rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>'
+    };
+    const path = icons[icon] || icons.box;
+    const btnAttr = view ? `data-view="${view}"` : (action ? `data-action="${action}"` : '');
+    return `<div class="empty-state">
+      <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">${path}</svg>
+      <h3>${title}</h3>
+      <p>${sub}</p>
+      ${btnLabel ? `<button class="btn btn-primary" ${btnAttr}>${btnLabel}</button>` : ''}
+    </div>`;
+  }
+
+  function cashAdjustments() {
+    return settings.cashAdjustments || [];
+  }
+  function cashInHandBalance() {
+    let bal = 0;
+    try {
+      cashEntries().forEach(r => {
+        if ((r.mode || 'Cash') === 'Cash') bal += (r.dir === 'in' ? 1 : -1) * (r.amount || 0);
+      });
+      cashAdjustments().forEach(a => { bal += (a.amount || 0); });
+    } catch (_) {}
+    return round2(bal);
+  }
+
+  function profileCompleteness() {
+    let score = 20;
+    if (settings.businessName && settings.businessName !== 'My Business') score += 20;
+    if (settings.phone) score += 15;
+    if (settings.email) score += 10;
+    if (settings.address) score += 15;
+    if (settings.logo) score += 10;
+    if (settings.taxId) score += 10;
+    return Math.min(100, score);
+  }
+
+  function viewSettings() {
+    const crown = `<span class="premium-badge"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z"/></svg></span>`;
+    return `<div class="fade-in">
+      <div class="list-group">
+        <div class="list-row" data-view="business-profile">
+          <div class="list-row-left"><div class="list-row-label">Business Profile</div></div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="list-row" data-action="open-txn-settings">
+          <div class="list-row-left"><div class="list-row-label">Transaction</div></div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="list-row" data-action="open-print-settings">
+          <div class="list-row-left"><div class="list-row-label">Invoice Print</div></div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="list-row" data-action="open-tax-settings">
+          <div class="list-row-left"><div class="list-row-label">Taxes</div></div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="list-row" data-action="open-item-settings">
+          <div class="list-row-left"><div class="list-row-label">Item Settings ${crown}</div></div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="list-row" data-action="open-party-settings">
+          <div class="list-row-left"><div class="list-row-label">Party Settings</div></div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="list-row" data-action="open-general-settings">
+          <div class="list-row-left"><div class="list-row-label">General</div></div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  function viewBusinessProfile() {
+    const themes = [
+      { id: 'royal', name: 'Royal Blue', color: 'linear-gradient(135deg,#1E40AF,#3B82F6)' },
+      { id: 'teal', name: 'Teal', color: 'linear-gradient(135deg,#0F766E,#14B8A6)' },
+      { id: 'emerald', name: 'Emerald', color: 'linear-gradient(135deg,#047857,#34D399)' },
+      { id: 'crimson', name: 'Crimson', color: 'linear-gradient(135deg,#BE123C,#FB7185)' },
+      { id: 'slate', name: 'Slate', color: 'linear-gradient(135deg,#334155,#94A3B8)' },
+      { id: 'amber', name: 'Amber', color: 'linear-gradient(135deg,#B45309,#FBBF24)' }
+    ];
+    const curTheme = settings.invoiceTheme || 'royal';
+    const cardStyle = settings.businessCardStyle || 'modern';
+    const bpKeys = ['businessName','phone','email','address','city','taxId','ownerName','logo','signature','businessDesc'];
+    const bpPct = Math.round(bpKeys.filter(k => settings[k]).length / bpKeys.length * 100);
+    return `<div class="fade-in" style="padding:16px 16px 32px">
+      <div style="font-weight:700;margin-bottom:2px">Profile completeness: ${bpPct}%</div><div class="prog" style="margin:6px 0 4px"><div style="width:${bpPct}%"></div></div>
+      <div class="section-label">Business details</div>
+      <div class="field has-value">
+        <input type="text" id="bpName" value="${escapeHtml(settings.businessName||'')}" placeholder=" " />
+        <label>Business Name</label>
+      </div>
+      <div class="field ${settings.phone?'has-value':''}">
+        <input type="tel" id="bpPhone" value="${escapeHtml(settings.phone||'')}" placeholder=" " />
+        <label>Phone Number</label>
+      </div>
+      <div class="field ${settings.email?'has-value':''}">
+        <input type="email" id="bpEmail" value="${escapeHtml(settings.email||'')}" placeholder=" " />
+        <label>Email ID</label>
+      </div>
+      <div class="field ${settings.address?'has-value':''}">
+        <input type="text" id="bpAddress" value="${escapeHtml(settings.address||'')}" placeholder=" " />
+        <label>Business Address</label>
+      </div>
+      <div class="field ${settings.city?'has-value':''}">
+        <input type="text" id="bpCity" value="${escapeHtml(settings.city||'')}" placeholder=" " />
+        <label>City / Pincode</label>
+      </div>
+      <div class="field ${settings.taxId?'has-value':''}">
+        <input type="text" id="bpTax" value="${escapeHtml(settings.taxId||'')}" placeholder=" " />
+        <label>Tax ID / NTN / GSTIN</label>
+      </div>
+      <div class="field ${settings.phone2?'has-value':''}">
+        <input type="tel" id="bpPhone2" value="${escapeHtml(settings.phone2||'')}" placeholder=" " />
+        <label>Second Phone Number</label>
+      </div>
+      <div class="field ${settings.businessDesc?'has-value':''}">
+        <input type="text" id="bpDesc" value="${escapeHtml(settings.businessDesc||'')}" placeholder=" " />
+        <label>Business Description / Tagline</label>
+      </div>
+      <div class="field ${settings.ownerName?'has-value':''}">
+        <input type="text" id="bpOwner" value="${escapeHtml(settings.ownerName||'')}" placeholder=" " />
+        <label>Owner Name</label>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Currency</label>
+        <select class="form-select" id="bpCurrency">
+          ${['PKR','INR','BDT','USD','AED','SAR','GBP','EUR'].map(c => `<option value="${c}" ${settings.currency===c?'selected':''}>${c}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Invoice Prefix</label>
+        <input class="form-input" id="bpPrefix" value="${escapeHtml(settings.invoicePrefix||'INV')}" />
+      </div>
+
+      <div class="section-label">Branding</div>
+      <div class="brand-card">
+        <h4>Business Logo</h4>
+        <div class="brand-row">
+          <div class="brand-preview" id="logoPreview">${settings.logo ? `<img src="${settings.logo}" alt="Logo"/>` : 'No logo'}</div>
+          <div class="brand-actions">
+            <input type="file" id="logoFile" accept="image/*" hidden />
+            <button type="button" class="btn btn-outline btn-sm" data-action="pick-logo">Upload Logo</button>
+            ${settings.logo ? `<button type="button" class="btn btn-ghost btn-sm" data-action="remove-logo">Remove</button>` : ''}
+          </div>
+        </div>
+      </div>
+      <div class="brand-card">
+        <h4>Signature</h4>
+        <div class="brand-row">
+          <div class="brand-preview sig" id="sigPreview">${settings.signature ? `<img src="${settings.signature}" alt="Sign"/>` : 'No signature'}</div>
+          <div class="brand-actions">
+            <input type="file" id="sigFile" accept="image/*" hidden />
+            <button type="button" class="btn btn-outline btn-sm" data-action="draw-signature">Draw Signature</button>
+            <button type="button" class="btn btn-outline btn-sm" data-action="pick-signature">Upload</button>
+            ${settings.signature ? `<button type="button" class="btn btn-ghost btn-sm" data-action="remove-signature">Remove</button>` : ''}
+          </div>
+        </div>
+      </div>
+      <div class="brand-card">
+        <h4>Company Stamp / Seal</h4>
+        <div class="brand-row">
+          <div class="brand-preview" id="stampPreview">${settings.stamp ? `<img src="${settings.stamp}" alt="Stamp"/>` : 'No stamp'}</div>
+          <div class="brand-actions">
+            <input type="file" id="stampFile" accept="image/*" hidden />
+            <button type="button" class="btn btn-outline btn-sm" data-action="pick-stamp">Upload Stamp</button>
+            ${settings.stamp ? `<button type="button" class="btn btn-ghost btn-sm" data-action="remove-stamp">Remove</button>` : ''}
+          </div>
+        </div>
+      </div>
+      <div class="brand-card">
+        <h4>Payment QR (optional)</h4>
+        <div class="brand-row">
+          <div class="brand-preview" id="qrPreview">${settings.paymentQr ? `<img src="${settings.paymentQr}" alt="QR"/>` : 'No QR'}</div>
+          <div class="brand-actions">
+            <input type="file" id="qrFile" accept="image/*" hidden />
+            <button type="button" class="btn btn-outline btn-sm" data-action="pick-qr">Upload QR</button>
+            ${settings.paymentQr ? `<button type="button" class="btn btn-ghost btn-sm" data-action="remove-qr">Remove</button>` : ''}
+          </div>
+        </div>
+      </div>
+
+      <div class="section-label">Invoice theme</div>
+      <button class="btn btn-outline btn-block" data-action="open-theme">Change Invoice Theme &amp; Colours</button>
+
+      <div class="section-label">Business card</div>
+      ${(function(){ const T=window.BillauraTemplates; if(!T) return ''; const cur=settings.businessCardTpl||'classic';
+        return `<div class="bc-strip" style="margin:0 -16px">${T.CARD_TEMPLATES.map(c=>`<div class="bc-item ${cur===c.id?'active':''}" data-action="set-card-tpl" data-value="${c.id}"><div class="bc-scale">${T.cardHTML(settings,c.id)}</div></div>`).join('')}</div>`; })()}
+      <div style="display:flex;gap:10px;margin-top:4px">
+        <button class="btn btn-outline" style="flex:1" data-action="preview-business-card">Preview</button>
+        <button class="btn btn-primary" style="flex:1" data-action="share-business-card">Share Card</button>
+      </div>
+
+      <button class="btn btn-primary btn-lg btn-block" style="margin-top:20px" data-action="save-business-profile">Save Profile</button>
+    </div>`;
+  }
+
+  // ---------- Toggle row helper ----------
+  function toggleRow(label, key, opts = {}) {
+    const on = !!settings[key];
+    const info = opts.info ? ` <svg class="info-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>` : '';
+    const crown = opts.premium ? ` <span class="premium-badge"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z"/></svg></span>` : '';
+    return `<div class="list-row" data-action="toggle-setting" data-key="${key}" style="cursor:pointer">
+      <div class="list-row-left">
+        <div class="list-row-label">${label}${info}${crown}</div>
+      </div>
+      <div class="list-row-right">
+        <label class="toggle" onclick="event.stopPropagation()">
+          <input type="checkbox" ${on ? 'checked' : ''} data-action="toggle-setting" data-key="${key}" />
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+    </div>`;
+  }
+
+  function stepperRow(label, key, min = 0, max = 4) {
+    const val = Number(settings[key]) || 0;
+    return `<div class="list-row" style="cursor:default">
+      <div class="list-row-left"><div class="list-row-label">${label}</div></div>
+      <div class="list-row-right">
+        <div class="stepper">
+          <button type="button" data-action="step-setting" data-key="${key}" data-delta="-1">−</button>
+          <span>${val}</span>
+          <button type="button" data-action="step-setting" data-key="${key}" data-delta="1">+</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  function navRow(label, actionOrView, isView = false) {
+    const attr = isView ? `data-view="${actionOrView}"` : `data-action="${actionOrView}"`;
+    return `<div class="list-row" ${attr}>
+      <div class="list-row-left"><div class="list-row-label">${label}</div></div>
+      <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+    </div>`;
+  }
+
+  function viewItemSettings() {
+    return `<div class="fade-in">
+      <div class="list-group">
+        ${toggleRow('Enable Item', 'enableStock', { info: true })}
+        <div class="list-row" style="cursor:default">
+          <div class="list-row-left"><div class="list-row-label">Item Type</div></div>
+          <div class="list-row-right text-secondary" style="font-size:0.875rem">Products and Services</div>
+        </div>
+        ${toggleRow('Barcode scanning for items', 'enableBarcode', { info: true })}
+        ${toggleRow('Stock maintenance', 'enableStock', { info: true })}
+        ${toggleRow('Manufacturing', 'enableManufacturing', { info: true, premium: true })}
+        ${toggleRow('Item Units', 'enableItemUnits', { info: true })}
+        ${toggleRow('Default Unit', 'enableDefaultUnit', { info: true })}
+        ${toggleRow('Item Category', 'enableItemCategory', { info: true })}
+        ${toggleRow('Party wise item rate', 'enablePartyRate', { info: true, premium: true })}
+        ${toggleRow('Wholesale Price', 'enableWholesale', { info: true, premium: true })}
+        ${stepperRow('Quantity (Upto Decimal places)', 'qtyDecimals')}
+        ${toggleRow('Item wise tax', 'enableItemTax', { info: true })}
+        ${toggleRow('Item wise discount', 'enableItemDiscount', { info: true })}
+        ${toggleRow('Update Sale Price from TXN', 'enableUpdateSalePrice', { info: true })}
+        ${navRow('Additional Item Fields', 'open-item-fields')}
+        ${navRow('Item Custom Fields', 'open-item-custom')}
+        ${toggleRow('Description', 'enableItemDescription', { info: true })}
+      </div>
+    </div>`;
+  }
+
+  function viewPartySettings() {
+    return `<div class="fade-in">
+      <div class="list-group">
+        ${toggleRow('TIN number', 'enablePartyTIN', { info: true })}
+        ${toggleRow('Party Grouping', 'enablePartyGrouping', { info: true })}
+        ${navRow('Party Additional Fields', 'open-party-fields')}
+        ${toggleRow('Party Shipping Address', 'enablePartyShipping', { info: true })}
+        ${toggleRow('Invite parties to add themselves', 'enablePartyInvite', { info: true })}
+        ${toggleRow('Loyalty Points', 'enableLoyalty', { info: true, premium: true })}
+      </div>
+    </div>`;
+  }
+
+  function viewTxnSettings() {
+    return `<div class="fade-in">
+      <div class="section-title">Transaction Header</div>
+      <div class="list-group">
+        ${toggleRow('Invoice/Bill Number', 'enableInvoiceNumber', { info: true })}
+        ${toggleRow('Cash Sale by default', 'enableCashSaleDefault', { info: true })}
+        ${toggleRow('Billing name of Parties', 'enableBillingName', { info: true })}
+        ${toggleRow('PO Details (of customer)', 'enablePODetails', { info: true })}
+        ${toggleRow('Add Time On Transactions', 'enableTxnTime', { info: true })}
+      </div>
+      <div class="section-title">Items Table</div>
+      <div class="list-group">
+        ${toggleRow('Allow Inclusive/Exclusive tax on Rate', 'enableInclusiveTax', { info: true })}
+        ${toggleRow('Display Purchase Price', 'enableDisplayPurchasePrice', { info: true })}
+        ${toggleRow('Show Last 5 Sale Price of Items', 'enableLastSalePrice', { info: true })}
+        ${toggleRow('Free Item quantity', 'enableFreeQty', { info: true })}
+        ${toggleRow('Barcode scanning for items', 'enableBarcode', { info: true })}
+      </div>
+      <div class="section-title">Taxes, Discount & Total</div>
+      <div class="list-group">
+        ${toggleRow('Transaction wise Tax', 'enableTxnTax', { info: true })}
+        ${toggleRow('Transaction wise Discount', 'enableTxnDiscount', { info: true })}
+        ${toggleRow('Round Off Transaction amount', 'enableRoundOff', { info: true })}
+      </div>
+      <div class="section-title">More Transaction Features</div>
+      <div class="list-group">
+        ${toggleRow('Enable Invoice Preview', 'enableInvoicePreview', { info: true })}
+        ${toggleRow('Terms & Conditions', 'enableTerms', { info: true })}
+        ${navRow('Set Terms & Conditions', 'open-terms')}
+        ${navRow('Due Dates and Payment terms', 'open-due-dates')}
+        ${navRow('Additional Fields', 'open-txn-fields')}
+      </div>
+    </div>`;
+  }
+
+
+  function sampleInvoice() {
+    return { id: 'sample', number: 'INV-0001', docType: 'sale', date: new Date().toISOString(), customerName: 'Sample Customer', customerPhone: '03001234567',
+      items: [{ name: 'Sample Item A', qty: 2, price: 500 }, { name: 'Sample Item B', qty: 1, price: 1250 }], total: 2250, paidAmount: 1000, meta: {} };
+  }
+  function viewInvoiceTheme() {
+    const T = window.BillauraTemplates; if (!T) return '<div class="doc-empty">Template module not loaded</div>';
+    const cur = settings.invoiceTemplate || 'modern', col = settings.invoiceColor || T.COLORS[0];
+    const inv = invoices[0] || sampleInvoice();
+    const seg = (key, def, opts) => `<div class="seg">${opts.map(o => `<button class="seg-b ${(settings[key]||def)===o[0]?'active':''}" data-action="${o[2]}" data-value="${o[0]}">${o[1]}</button>`).join('')}</div>`;
+    let prev = '';
+    try { prev = T.docHTML(inv, tplCtx(), {}); } catch (e) { console.error(e); }
+    const orient = T.optsFrom(settings, {}).template === 'landscape';
+    return `<div class="fade-in">
+      <div class="section-title">Invoice themes</div>
+      <div class="tpl-strip">${T.INVOICE_TEMPLATES.map(t => `<button class="tpl-card ${cur===t.id?'active':''}" data-action="set-inv-template" data-value="${t.id}"><span class="tpl-mini tpl-${t.id}" style="--c:${col}"><i></i><i></i><i></i><i></i></span><span class="tpl-name">${t.name}</span>${cur===t.id?'<span class="tpl-tick">✓</span>':''}</button>`).join('')}</div>
+      <div class="section-title">Theme colour</div>
+      <div class="swatches">${T.COLORS.map(c => `<button class="sw ${col===c?'active':''}" style="background:${c}" data-action="set-inv-color" data-value="${c}" aria-label="${c}"></button>`).join('')}</div>
+      <div class="section-title">Text size</div>
+      <div style="padding:0 16px">${seg('printTextSize','medium',[['small','Small','set-print-text'],['medium','Medium','set-print-text'],['large','Large','set-print-text']])}</div>
+      <div class="section-title">Page size</div>
+      <div style="padding:0 16px">${seg('printPageSize','A4',[['A4','A4','set-page-size'],['A5','A5','set-page-size'],['Letter','Letter','set-page-size']])}</div>
+      <div class="section-title">Orientation</div>
+      <div style="padding:0 16px">${seg('printOrientation','portrait',[['portrait','Portrait','set-orient'],['landscape','Landscape','set-orient']])}</div>
+      <div class="section-title">Preview</div>
+      <div class="tpl-preview" style="height:${Math.round(1123*Math.min(1,(Math.min(window.innerWidth,520)-32)/794))}px"><iframe sandbox="allow-same-origin" scrolling="no" srcdoc="${escapeHtml(prev)}" style="width:794px;height:1123px;border:0;transform-origin:0 0;transform:scale(${Math.min(1, (Math.min(window.innerWidth,520)-32)/794).toFixed(3)});pointer-events:none"></iframe></div>
+      <div style="padding:12px 16px 24px"><button class="btn btn-primary btn-block" data-action="preview-invoice-template">Print / Save as PDF preview</button></div>
+    </div>`;
+  }
+
+  function viewPrintSettings() {
+    const tab = settings._printTab || 'regular';
+    const wordsFmt = settings.amountWordsFormat || 'indian';
+    const paper = settings.thermalPageSize || '80';
+    return `<div class="fade-in">
+      <div class="tabs" style="position:static;margin:0 16px">
+        <button class="tab ${tab==='regular'?'active':''}" data-action="print-tab" data-tab="regular">Regular</button>
+        <button class="tab ${tab==='thermal'?'active':''}" data-action="print-tab" data-tab="thermal">Thermal</button>
+      </div>
+      ${tab === 'thermal' ? `
+      <div class="section-title">Thermal printer</div>
+      <div class="list-group">
+        <div class="list-row" style="cursor:default">
+          <div class="list-row-left"><div class="list-row-label">Page size</div></div>
+          <div class="list-row-right text-secondary" style="font-size:0.875rem">${paper === '58' ? '2 inch (58mm)' : paper === '88' ? '3.5 inch (88mm)' : '3 inch (80mm)'}</div>
+        </div>
+        <div class="list-row" data-action="set-thermal-size" data-value="58"><div class="list-row-left"><div class="list-row-label">58 mm</div></div>${paper==='58'?'<span class="chip">Selected</span>':''}</div>
+        <div class="list-row" data-action="set-thermal-size" data-value="80"><div class="list-row-left"><div class="list-row-label">80 mm</div></div>${paper==='80'?'<span class="chip">Selected</span>':''}</div>
+        <div class="list-row" data-action="set-thermal-size" data-value="88"><div class="list-row-left"><div class="list-row-label">88 mm</div></div>${paper==='88'?'<span class="chip">Selected</span>':''}</div>
+        ${stepperRow('Copies', 'printCopies')}
+        ${toggleRow('Text styling (bold headers)', 'printTextStyle', { info: true })}
+        ${toggleRow('Print logo on thermal', 'printLogo', { info: true })}
+        ${toggleRow('Print phone', 'printPhone', { info: true })}
+        ${toggleRow('Amount in words', 'printAmountInWords', { info: true })}
+      </div>
+      <div class="section-title">Footer</div>
+      <div class="list-group">
+        ${toggleRow('Terms & Conditions', 'printTerms', { info: true })}
+        ${toggleRow('Print Signature Text', 'printSignature', { info: true })}
+        ${toggleRow('Received / Delivered by', 'printReceivedBy', { info: true })}
+      </div>
+      ` : `
+      <div class="section-title">Themes</div>
+      <div class="list-group">
+        <div class="list-row" data-action="open-theme">
+          <div class="list-row-left"><div class="list-row-label">Change Theme and Colors</div></div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="list-row" data-action="cycle-print-text">
+          <div class="list-row-left"><div class="list-row-label">Print text size</div></div>
+          <div class="list-row-right text-secondary" style="font-size:0.875rem;text-transform:capitalize">${settings.printTextSize || 'medium'}</div>
+        </div>
+        <div class="list-row" data-action="cycle-page-size">
+          <div class="list-row-left"><div class="list-row-label">Page size</div></div>
+          <div class="list-row-right text-secondary" style="font-size:0.875rem">${settings.printPageSize || 'A4'}</div>
+        </div>
+      </div>
+      <div class="section-title">Print Company Info / Header</div>
+      <div class="list-group">
+        ${toggleRow('Print Company Name', 'printCompanyName', { info: true })}
+        ${toggleRow('Company logo', 'printLogo', { info: true })}
+        ${toggleRow('Address', 'printAddress', { info: true })}
+        ${toggleRow('Email', 'printEmail', { info: true })}
+        ${toggleRow('Phone number', 'printPhone', { info: true })}
+        ${toggleRow('TIN on Sale', 'printTIN', { info: true })}
+      </div>
+      <div class="section-title">Item Table</div>
+      <div class="list-group">
+        ${toggleRow('S.No', 'printSNo', { info: true })}
+        ${toggleRow('Units of Measurement', 'printUOM', { info: true })}
+        ${toggleRow('MRP', 'printMRP', { info: true })}
+        ${toggleRow('Description', 'printItemDesc', { info: true })}
+      </div>
+      <div class="section-title">Totals & Taxes</div>
+      <div class="list-group">
+        ${toggleRow('Total Item Quantity', 'printTotalQty', { info: true })}
+        ${toggleRow('Amount with Decimal', 'printDecimalAmt', { info: true })}
+        ${toggleRow('Received amount', 'printReceivedAmount', { info: true })}
+        ${toggleRow('Balance amount', 'printBalanceAmount', { info: true })}
+        ${toggleRow('Tax details', 'printTaxDetails', { info: true })}
+        ${toggleRow('Amount Grouping', 'printAmountGrouping', { info: true })}
+        <div class="list-row" data-action="toggle-words-format">
+          <div class="list-row-left"><div class="list-row-label">Amount in words format</div></div>
+          <div class="list-row-right text-secondary" style="font-size:0.8125rem">${wordsFmt === 'indian' ? 'Indian' : 'International'}</div>
+        </div>
+        ${toggleRow('You Saved', 'printYouSaved', { info: true })}
+      </div>
+      <div class="section-title">Footer</div>
+      <div class="list-group">
+        ${toggleRow('Print description', 'printFooterDesc', { info: true })}
+        ${toggleRow('Terms & Conditions', 'printTerms', { info: true })}
+        ${toggleRow('Print Signature Text', 'printSignature', { info: true })}
+        ${toggleRow('Payment mode', 'printPaymentMode', { info: true })}
+        ${toggleRow('Print Page Numbers', 'printPageNumbers', { info: true })}
+      </div>
+      `}
+    </div>`;
+  }
+
+  function viewTaxSettings() {
+    const tab = settings._taxTab || 'rates';
+    const rates = settings.taxRates || [];
+    const groups = settings.taxGroups || [];
+    return `<div class="fade-in">
+      <div class="tabs" style="position:static;margin:0 16px">
+        <button class="tab ${tab==='rates'?'active':''}" data-action="tax-tab" data-tab="rates">TAX RATES</button>
+        <button class="tab ${tab==='groups'?'active':''}" data-action="tax-tab" data-tab="groups">TAX GROUPS</button>
+      </div>
+      ${tab === 'groups' ? `
+        ${groups.length === 0 ? `<div class="empty-state">
+          <h3>No tax groups yet</h3>
+          <p>Group multiple tax rates (e.g. CGST + SGST)</p>
+          <button class="btn btn-primary" data-action="add-tax-group">+ Add Tax Group</button>
+        </div>` : `<div class="list-group">${groups.map((g,i) => `
+          <div class="list-row" style="cursor:default">
+            <div class="list-row-left">
+              <div class="list-row-label">${escapeHtml(g.name)}</div>
+              <div class="list-row-sub">${(g.rates||[]).join(' + ') || g.rate + '%'}</div>
+            </div>
+            <button class="btn btn-ghost btn-sm" data-action="remove-tax-group" data-idx="${i}">Remove</button>
+          </div>`).join('')}</div>
+          <div style="padding:16px"><button class="btn btn-primary btn-block" data-action="add-tax-group">+ Add Tax Group</button></div>`}
+      ` : `
+        ${rates.length === 0 ? `<div class="empty-state">
+          <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          <h3>No tax rates yet</h3>
+          <p>Add GST, VAT or custom tax rates for your invoices</p>
+          <button class="btn btn-primary" data-action="add-tax-rate">+ Add Tax Rate</button>
+        </div>` : `<div class="list-group">${rates.map((r,i) => `
+          <div class="list-row" style="cursor:default">
+            <div class="list-row-left">
+              <div class="list-row-label">${escapeHtml(r.name)}</div>
+              <div class="list-row-sub">${r.rate}%</div>
+            </div>
+            <button class="btn btn-ghost btn-sm" data-action="remove-tax-rate" data-idx="${i}">Remove</button>
+          </div>`).join('')}</div>
+          <div style="padding:16px"><button class="btn btn-primary btn-block" data-action="add-tax-rate">+ Add Tax Rate</button></div>`}
+        <div class="list-group" style="margin-top:8px">
+          <div class="list-row" style="cursor:default">
+            <div class="list-row-left"><div class="list-row-label">Default Tax Rate</div></div>
+            <div class="list-row-right font-semibold">${settings.taxRate || 0}%</div>
+          </div>
+          ${toggleRow('Transaction wise Tax', 'enableTxnTax', { info: true })}
+          ${toggleRow('Item wise tax', 'enableItemTax', { info: true })}
+        </div>
+      `}
+    </div>`;
+  }
+
+  function viewGeneralSettings() {
+    return `<div class="fade-in">
+      <div class="section-title">Application</div>
+      <div class="list-group">
+        <div class="list-row" style="cursor:default">
+          <div class="list-row-left"><div class="list-row-label">App Language</div></div>
+          <div class="list-row-right text-secondary">English</div>
+        </div>
+        <div class="list-row" style="cursor:default">
+          <div class="list-row-left"><div class="list-row-label">Business Currency</div></div>
+          <div class="list-row-right text-secondary">${settings.currency || 'Rs'}</div>
+        </div>
+        ${stepperRow('Decimal Places', 'decimalPlaces')}
+        <div class="list-row" style="cursor:default">
+          <div class="list-row-left"><div class="list-row-label">Date Format</div></div>
+          <div class="list-row-right text-secondary">${settings.dateFormat || 'dd/MM/yyyy'}</div>
+        </div>
+        ${toggleRow('Show warning for unsaved changes', 'warnUnsaved')}
+      </div>
+      <div class="section-title">Security</div>
+      <div class="list-group">
+        ${toggleRow('Passcode / FingerPrint', 'enablePasscode', { info: true })}
+      </div>
+      <div class="section-title">More Transactions</div>
+      <div class="list-group">
+        ${toggleRow('Estimate / Quotation', 'enableEstimate', { info: true })}
+        ${toggleRow('Sale / Purchase Order', 'enableOrders', { info: true })}
+        ${toggleRow('Delivery Note', 'enableDeliveryNote', { info: true })}
+        ${toggleRow('Goods Return on Delivery Note', 'enableGoodsReturn', { info: true })}
+      </div>
+      <div class="section-title">Backup</div>
+      <div class="list-group">
+        ${navRow('Backup Settings', 'export-backup')}
+      </div>
+    </div>`;
+  }
+
+
+  function viewMultiCurrency() {
+    const base = settings.baseCurrency || settings.currency || 'PKR';
+    const list = settings.currencies || [];
+    const all = ['PKR','INR','BDT','USD','AED','SAR','GBP','EUR','CNY'];
+    return `<div class="fade-in">
+      <div style="margin:16px;background:#FEF3C7;border-radius:12px;padding:14px;font-size:0.875rem;color:#92400E">
+        ✨ Billaura supports Multi-Currency — manage bills & transactions in any currency you need.
+      </div>
+      <div class="list-group">
+        <div class="list-row" style="cursor:default">
+          <div class="list-row-left"><div class="list-row-label">Base Currency</div></div>
+          <div class="list-row-right font-semibold">${base}</div>
+        </div>
+      </div>
+      ${list.length === 0 ? `
+        <div class="empty-state">
+          <div style="font-size:3rem;margin-bottom:8px">✈️</div>
+          <h3>No Currencies to show</h3>
+          <p>Add your Base currency to start adding more currencies.</p>
+          <button class="btn btn-primary" data-action="set-base-currency">+ Add Base Currency</button>
+        </div>` : `
+        <div class="section-title">Other Currencies</div>
+        <div class="list-group">
+          ${list.map(c => `
+            <div class="list-row" style="cursor:default">
+              <div class="list-row-left"><div class="list-row-label">${c.code}</div>
+                <div class="list-row-sub">1 ${base} = ${c.rate} ${c.code}</div>
+              </div>
+              <button class="btn btn-ghost btn-sm" data-action="remove-currency" data-code="${c.code}">Remove</button>
+            </div>`).join('')}
+        </div>
+        <div style="padding:16px">
+          <button class="btn btn-primary btn-block" data-action="add-currency">+ Add Currency</button>
+        </div>`}
+      <div class="section-title">Quick set base</div>
+      <div class="list-group">
+        ${all.map(c => `
+          <div class="list-row" data-action="pick-base-currency" data-code="${c}">
+            <div class="list-row-left"><div class="list-row-label">${c}</div></div>
+            ${base === c ? '<span class="chip">Base</span>' : '<svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>'}
+          </div>`).join('')}
+      </div>
+    </div>`;
+  }
+
+  function viewReminders() {
+    return `<div class="fade-in">
+      <div class="list-group">
+        <div class="list-row" data-action="open-payment-reminders">
+          <div class="list-row-left"><div class="list-row-label">Payment Reminders</div></div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="list-row" data-action="open-service-reminders">
+          <div class="list-row-left"><div class="list-row-label">Service Reminders <span class="premium-badge"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z"/></svg></span></div></div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+      </div>
+      <div class="dash-card">
+        <div class="dash-card-title">Benefits of Service Reminders</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;text-align:center;padding:8px 0">
+          <div><div style="font-size:1.5rem">🔔</div><div class="text-sm text-secondary">Remind your parties</div></div>
+          <div><div style="font-size:1.5rem">👥</div><div class="text-sm text-secondary">Don't lose customers</div></div>
+          <div><div style="font-size:1.5rem">📈</div><div class="text-sm text-secondary">Grow your business</div></div>
+        </div>
+      </div>
+      <div class="section-title">Overdue parties</div>
+      ${(() => {
+        const overdue = customers.map(c => {
+          const b = customerBalance(c.id, c.name, c.phone);
+          return { c, due: b.due };
+        }).filter(x => x.due > 0).sort((a,b) => b.due - a.due).slice(0, 20);
+        if (!overdue.length) return `<div class="empty-state"><p>No overdue balances — great job!</p></div>`;
+        const cur = settings.currency || 'Rs';
+        return `<div class="list-group">${overdue.map(({c, due}) => `
+          <div class="list-row" data-action="remind-customer" data-id="${c.id}">
+            <div class="list-row-left">
+              <div class="list-row-label">${escapeHtml(c.name)}</div>
+              <div class="list-row-sub">Due ${cur} ${money(due)}</div>
+            </div>
+            <button class="btn btn-primary btn-sm" data-action="remind-customer" data-id="${c.id}">Remind</button>
+          </div>`).join('')}</div>`;
+      })()}
+    </div>`;
+  }
+
+
+  function bankBalance(bankId) {
+    let bal = 0;
+    const b = banks.find(x => x.id === bankId);
+    if (b) bal = Number(b.opening) || 0;
+    bankTxns.filter(t => t.bankId === bankId).forEach(t => {
+      bal += (t.dir === 'in' ? 1 : -1) * (Number(t.amount) || 0);
+    });
+    return round2(bal);
+  }
+
+  function viewBanks() {
+    const cur = settings.currency || 'Rs';
+    if (!banks.length) {
+      return `<div class="fade-in">${emptyState('invoice', 'No bank accounts', 'Add HBL, Meezan, JazzCash bank accounts and track transfers.', 'Add Bank', null, 'add-bank')}
+        <div style="padding:0 16px 16px"><button class="btn btn-outline btn-block" data-action="add-bank">+ Add Bank Account</button></div></div>`;
+    }
+    return `<div class="fade-in">
+      <div class="list-group">
+        ${banks.map(b => `
+          <div class="list-row" data-action="open-bank-ledger" data-id="${b.id}">
+            <div class="list-row-left">
+              <div class="list-row-label">${escapeHtml(b.name)}</div>
+              <div class="list-row-sub">${escapeHtml(b.accountNo || b.type || 'Bank')}</div>
+            </div>
+            <div class="list-row-right font-semibold">${cur} ${money(bankBalance(b.id))}</div>
+          </div>`).join('')}
+      </div>
+      <div style="padding:16px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-primary" data-action="add-bank">+ Add Bank</button>
+        <button class="btn btn-outline" data-action="bank-transfer">Transfer</button>
+        <button class="btn btn-outline" data-action="bank-adjust">Deposit / Withdraw</button>
+      </div>
+    </div>`;
+  }
+
+  function viewBankLedger() {
+    const id = settings._bankId;
+    const b = banks.find(x => x.id === id);
+    if (!b) return emptyState('invoice', 'Bank not found', '', 'Back', 'banks');
+    const cur = settings.currency || 'Rs';
+    const rows = bankTxns.filter(t => t.bankId === id).sort((a,c) => new Date(c.date) - new Date(a.date));
+    return `<div class="fade-in">
+      <div style="margin:16px;background:linear-gradient(135deg,#DBEAFE,#93C5FD);border-radius:16px;padding:20px;text-align:center">
+        <div class="text-sm" style="color:#1E40AF">${escapeHtml(b.name)}</div>
+        <div style="font-size:1.5rem;font-weight:700;color:#1D4ED8">${cur} ${money(bankBalance(id))}</div>
+        <div class="text-sm text-secondary">${escapeHtml(b.accountNo || '')}</div>
+      </div>
+      <div class="section-title">Ledger</div>
+      ${rows.length === 0 ? '<div class="empty-state"><p>No transactions yet</p></div>' :
+        rows.map(t => {
+          const col = t.dir === 'in' ? 'var(--success)' : 'var(--danger)';
+          const sign = t.dir === 'in' ? '+' : '−';
+          return `<div class="txn-card" style="cursor:default">
+            <div class="txn-top"><div class="txn-party">${escapeHtml(t.note || (t.dir==='in'?'Deposit':'Withdrawal'))}</div>
+            <span style="font-weight:600;color:${col}">${sign}${cur} ${money(t.amount)}</span></div>
+            <div class="txn-meta"><span>${formatDate(t.date)}</span><span>${escapeHtml(t.mode||'Bank')}</span></div>
+          </div>`;
+        }).join('')}
+      <div style="padding:16px;display:flex;gap:8px">
+        <button class="btn btn-primary btn-block" data-action="bank-adjust" data-id="${id}">Deposit / Withdraw</button>
+        <button class="btn btn-outline btn-block" data-action="bank-transfer" data-id="${id}">Transfer</button>
+      </div>
+    </div>`;
+  }
+
+  function viewLoans() {
+    const cur = settings.currency || 'Rs';
+    if (!loans.length) {
+      return emptyState('invoice', 'No loan accounts', 'Track business loans and EMIs.', 'Add Loan', null, 'add-loan');
+    }
+    return `<div class="fade-in"><div class="list-group">${loans.map(l => `
+      <div class="list-row" style="cursor:default">
+        <div class="list-row-left">
+          <div class="list-row-label">${escapeHtml(l.name)}</div>
+          <div class="list-row-sub">${escapeHtml(l.lender || '')} · ${formatDate(l.date)}</div>
+        </div>
+        <div class="list-row-right text-danger font-semibold">${cur} ${money(l.balance != null ? l.balance : l.amount)}</div>
+      </div>`).join('')}</div>
+      <div style="padding:16px"><button class="btn btn-primary btn-block" data-action="add-loan">+ Add Loan</button></div></div>`;
+  }
+
+  function viewOtherIncome() {
+    const cur = settings.currency || 'Rs';
+    const total = otherIncome.reduce((s,x) => s + (Number(x.amount)||0), 0);
+    return `<div class="fade-in">
+      <div class="list-group">
+        <div class="list-row" style="cursor:default;background:var(--success-soft)">
+          <div class="list-row-left"><div class="list-row-label">Total Other Income</div></div>
+          <div class="list-row-right text-success font-semibold">${cur} ${money(total)}</div>
+        </div>
+      </div>
+      ${otherIncome.length === 0 ? emptyState('invoice', 'No other income', 'Record interest, rent received, etc.', 'Add Income', null, 'add-other-income') :
+        `<div class="list-group">${otherIncome.slice().sort((a,b)=>new Date(b.date)-new Date(a.date)).map(x => `
+          <div class="list-row" style="cursor:default">
+            <div class="list-row-left">
+              <div class="list-row-label">${escapeHtml(x.title || x.category || 'Income')}</div>
+              <div class="list-row-sub">${escapeHtml(x.category||'')} · ${formatDate(x.date)}</div>
+            </div>
+            <div class="list-row-right text-success">${cur} ${money(x.amount)}</div>
+          </div>`).join('')}</div>`}
+      <div style="padding:16px"><button class="btn btn-primary btn-block" data-action="add-other-income">+ Add Other Income</button></div>
+    </div>`;
+  }
+
+  function viewBarcodeGen() {
+    const list = products.filter(p => p.name);
+    return `<div class="fade-in">
+      <div class="section-title">Generate barcodes for items</div>
+      <div class="list-group">
+        ${list.length === 0 ? '<div class="list-row" style="cursor:default"><div class="list-row-label">Add products first</div></div>' :
+          list.map(p => {
+            const code = p.barcode || ('BIL' + String(p.id).replace(/\W/g,'').slice(-8).toUpperCase());
+            return `<div class="list-row" data-action="gen-barcode" data-id="${p.id}" data-code="${escapeHtml(code)}">
+              <div class="list-row-left">
+                <div class="list-row-label">${escapeHtml(p.name)}</div>
+                <div class="list-row-sub">${escapeHtml(code)}</div>
+              </div>
+              <button class="btn btn-outline btn-sm" data-action="gen-barcode" data-id="${p.id}" data-code="${escapeHtml(code)}">Generate</button>
+            </div>`;
+          }).join('')}
+      </div>
+      <div id="barcodePreview" style="padding:16px;text-align:center"></div>
+      <p class="text-sm text-secondary text-center" style="padding:0 16px 16px">Tap Generate to create a barcode label. Print from the browser print dialog.</p>
+    </div>`;
+  }
+
+  function viewBalanceSheet() {
+    const { revenue, cogs, receivable } = netTotals();
+    const payable = totalPayable ? totalPayable() : 0;
+    const totalExpenses = expenses.reduce((s, e) => s + (e.amount || 0), 0);
+    const incomeExtra = otherIncome.reduce((s,x) => s + (Number(x.amount)||0), 0);
+    const cash = typeof cashInHandBalance === 'function' ? cashInHandBalance() : 0;
+    const bankTotal = banks.reduce((s,b) => s + bankBalance(b.id), 0);
+    const stockValue = products.reduce((s,p) => s + (Number(p.stock)||0) * (Number(p.cost)||Number(p.price)||0), 0);
+    const loanBal = loans.reduce((s,l) => s + (Number(l.balance != null ? l.balance : l.amount)||0), 0);
+    const assets = cash + bankTotal + stockValue + receivable;
+    const liabilities = payable + loanBal;
+    const equity = assets - liabilities;
+    const cur = settings.currency || 'Rs';
+    const row = (l, v, cls='') => `<div class="list-row" style="cursor:default"><div class="list-row-left"><div class="list-row-label">${l}</div></div><div class="list-row-right ${cls}">${cur} ${money(v)}</div></div>`;
+    return `<div class="fade-in">
+      <div class="section-title">Assets</div>
+      <div class="list-group">
+        ${row('Cash in hand', cash)}
+        ${row('Bank accounts', bankTotal)}
+        ${row('Stock value', stockValue)}
+        ${row('Receivables', receivable, 'text-success')}
+        ${row('Total Assets', assets, 'font-semibold')}
+      </div>
+      <div class="section-title">Liabilities</div>
+      <div class="list-group">
+        ${row('Payables', payable, 'text-danger')}
+        ${row('Loans', loanBal, 'text-danger')}
+        ${row('Total Liabilities', liabilities, 'font-semibold')}
+      </div>
+      <div class="section-title">Equity</div>
+      <div class="list-group">
+        ${row('Owner equity (Assets − Liabilities)', equity, equity>=0?'text-success font-semibold':'text-danger font-semibold')}
+        ${row('YTD Sales', revenue)}
+        ${row('YTD Other Income', incomeExtra)}
+        ${row('YTD Expenses + COGS', totalExpenses + cogs, 'text-danger')}
+      </div>
+    </div>`;
+  }
+
+
+  function viewPOS() {
+    const cur = settings.currency || 'Rs';
+    const favIds = settings.favourites || [];
+    const favs = favIds.map(id => products.find(p => p.id === id)).filter(Boolean);
+    const top = [...products].sort((a,b) => (b.stock||0)-(a.stock||0)).slice(0, 24);
+    const list = favs.length ? favs : top;
+    return `<div class="fade-in pos-screen">
+      <div class="pos-bar">
+        <input type="search" class="search-input" id="posSearch" placeholder="Search or scan barcode..." />
+        <button type="button" class="btn btn-outline btn-sm" data-action="scan-pos-barcode">Scan</button>
+      </div>
+      <div class="pos-chips">
+        <button type="button" class="cat-chip active" data-pos-filter="fav">Favourites</button>
+        <button type="button" class="cat-chip" data-pos-filter="all">All items</button>
+      </div>
+      <div class="pos-grid" id="posGrid">
+        ${list.length ? list.map(p => {
+          const isFav = favIds.includes(p.id);
+          const oos = (p.stock||0) <= 0;
+          return `<button type="button" class="pos-tile${oos?' oos':''}" data-action="pos-add" data-id="${p.id}">
+            <span class="pos-fav" data-action="toggle-fav" data-id="${p.id}">${isFav?'★':'☆'}</span>
+            <span class="pos-name">${escapeHtml(p.name)}</span>
+            <span class="pos-price">${cur} ${money(p.price)}</span>
+            <span class="pos-stock">${oos?'Out':('Stock '+p.stock)}</span>
+          </button>`;
+        }).join('') : '<div class="doc-empty" style="padding:24px">Add products to use POS</div>'}
+      </div>
+      <div class="pos-cart" id="posCart">
+        <div class="pos-cart-info"><span id="posCount">0 items</span><strong id="posTotal">${cur} 0</strong></div>
+        <button type="button" class="btn btn-primary" data-action="pos-checkout" disabled id="posCheckout">Charge</button>
+      </div>
+    </div>`;
+  }
+
+  function bindPOS() {
+    window._posLines = window._posLines || [];
+    const cur = settings.currency || 'Rs';
+    const favIds = () => settings.favourites || [];
+    function renderCart() {
+      const lines = window._posLines;
+      const n = lines.reduce((s,l)=>s+l.qty,0);
+      const tot = lines.reduce((s,l)=>s+l.qty*l.price,0);
+      const c = document.getElementById('posCount');
+      const t = document.getElementById('posTotal');
+      const b = document.getElementById('posCheckout');
+      if (c) c.textContent = n + (n===1?' item':' items');
+      if (t) t.textContent = cur + ' ' + money(tot);
+      if (b) b.disabled = n === 0;
+    }
+    function renderGrid(filter, q) {
+      q = (q||'').toLowerCase();
+      let list = products.slice();
+      if (filter === 'fav') {
+        const f = favIds();
+        list = f.map(id => products.find(p=>p.id===id)).filter(Boolean);
+        if (!list.length) list = products.slice(0, 24);
+      }
+      if (q) list = products.filter(p => p.name.toLowerCase().includes(q) || (p.barcode||'').toLowerCase().includes(q));
+      const grid = document.getElementById('posGrid');
+      if (!grid) return;
+      grid.innerHTML = list.map(p => {
+        const isFav = favIds().includes(p.id);
+        const oos = (p.stock||0) <= 0;
+        return `<button type="button" class="pos-tile${oos?' oos':''}" data-action="pos-add" data-id="${p.id}">
+          <span class="pos-fav" data-action="toggle-fav" data-id="${p.id}">${isFav?'★':'☆'}</span>
+          <span class="pos-name">${escapeHtml(p.name)}</span>
+          <span class="pos-price">${cur} ${money(p.price)}</span>
+          <span class="pos-stock">${oos?'Out':('Stock '+p.stock)}</span>
+        </button>`;
+      }).join('') || '<div class="doc-empty">No items</div>';
+    }
+    window._posFilter = 'fav';
+    window._posRenderGrid = renderGrid;
+    window._posRenderCart = renderCart;
+    const s = document.getElementById('posSearch');
+    if (s) s.addEventListener('input', () => renderGrid(window._posFilter, s.value));
+    // barcode enter
+    if (s) s.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        const code = s.value.trim();
+        if (!code) return;
+        const p = products.find(x => (x.barcode||'').toLowerCase() === code.toLowerCase());
+        if (p) { document.querySelector(`[data-action="pos-add"][data-id="${p.id}"]`)?.dispatchEvent(new Event('click',{bubbles:true})); posAdd(p.id); s.value=''; renderGrid(window._posFilter,''); }
+        else toast('Not found');
+      }
+    });
+    renderCart();
+  }
+
+  function posAdd(id) {
+    const p = products.find(x => x.id === id);
+    if (!p) return;
+    window._posLines = window._posLines || [];
+    let l = window._posLines.find(x => x.productId === id);
+    if (l) l.qty += 1;
+    else window._posLines.push({ productId: p.id, name: p.name, price: p.price, cost: p.cost||0, qty: 1 });
+    if ((p.stock||0) <= 0) toast(p.name + ' is out of stock');
+    if (window._posRenderCart) window._posRenderCart();
+  }
+
+  function viewStockAdjust() {
+    const cur = settings.currency || 'Rs';
+    return `<div class="fade-in" style="padding:16px">
+      <p class="text-sm text-secondary mb-16">Record damage, loss, found stock, or corrections. This updates quantity only.</p>
+      <div class="form-group"><label class="form-label">Product</label>
+        <select class="form-select" id="saProduct">
+          <option value="">Select item</option>
+          ${products.map(p => `<option value="${p.id}">${escapeHtml(p.name)} (stock ${p.stock||0})</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group"><label class="form-label">Adjustment</label>
+        <div class="chip-row" id="saDir">
+          <button type="button" class="cat-chip active" data-dir="out">Stock out (−)</button>
+          <button type="button" class="cat-chip" data-dir="in">Stock in (+)</button>
+          <button type="button" class="cat-chip" data-dir="set">Set exact qty</button>
+        </div>
+      </div>
+      <div class="form-group"><label class="form-label">Quantity</label>
+        <input type="number" class="form-input" id="saQty" min="0" step="any" placeholder="0" />
+      </div>
+      <div class="form-group"><label class="form-label">Reason</label>
+        <select class="form-select" id="saReason">
+          <option>Damage</option><option>Lost / theft</option><option>Found / excess</option>
+          <option>Opening stock</option><option>Correction</option><option>Other</option>
+        </select>
+      </div>
+      <div class="form-group"><label class="form-label">Note (optional)</label>
+        <input type="text" class="form-input" id="saNote" placeholder="Details" />
+      </div>
+      <button class="btn btn-primary btn-lg btn-block" data-action="save-stock-adjust">Save Adjustment</button>
+    </div>`;
+  }
+
+  function viewOnlineStore() {
+    const planKey = (window.HisablyFreemium && HisablyFreemium.effectivePlan) ? HisablyFreemium.effectivePlan().key : 'free';
+    const isPro = planKey === 'pro' || planKey === 'trial';
+    if (!products.length) {
+      return `<div class="fade-in">
+        <div class="empty-state" style="padding-top:48px">
+          <h3>Start Selling Online instantly</h3>
+          <p>Please add an Item before proceeding.</p>
+          <button class="btn btn-primary" data-view="products">Add Item</button>
+        </div>
+      </div>`;
+    }
+    const storeUrl = (location.origin + location.pathname.replace(/index\.html?$/i, '') + 'store.html');
+    const published = !!localStorage.getItem('billaura_public_store');
+    return `<div class="fade-in">
+      <div style="margin:16px;background:linear-gradient(135deg,#1E40AF,#3B82F6);border-radius:16px;padding:24px;color:white;text-align:center">
+        <div style="font-size:1.25rem;font-weight:700;margin-bottom:8px">Your public product page</div>
+        <div style="opacity:0.9;font-size:0.875rem;margin-bottom:12px">Share a link customers can open in any browser</div>
+        <div style="font-size:0.75rem;opacity:0.85;word-break:break-all">${escapeHtml(storeUrl)}</div>
+      </div>
+      ${isPro ? `
+        <div class="list-group">
+          <div class="list-row" style="cursor:default">
+            <div class="list-row-left"><div class="list-row-label">Catalog items</div></div>
+            <div class="list-row-right">${products.length}</div>
+          </div>
+          <div class="list-row" style="cursor:default">
+            <div class="list-row-left"><div class="list-row-label">Store status</div></div>
+            <div class="list-row-right ${published?'text-success':'text-secondary'}">${published ? 'Published' : 'Not published yet'}</div>
+          </div>
+        </div>
+        <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
+          <button class="btn btn-primary btn-lg btn-block" data-action="publish-store-page">Publish / Update Store Page</button>
+          <button class="btn btn-outline btn-block" data-action="open-store-page">Open Store Page</button>
+          <button class="btn btn-outline btn-block" data-action="share-store-link">Share Link (WhatsApp)</button>
+          <button class="btn btn-ghost btn-block" data-action="publish-store">Share catalog list only</button>
+        </div>` : `
+        <div class="dash-card" style="text-align:center">
+          <h3 style="margin-bottom:8px">Upgrade your Plan</h3>
+          <p class="text-secondary text-sm mb-3">Online Store is a Premium Feature.</p>
+          <button class="btn btn-primary" data-action="open-plans">Get Billaura Premium</button>
+        </div>`}
+    </div>`;
+  }
+
+
+  function openSettingsModal() {
+    $('#modalRoot').innerHTML = `
+      <div class="modal-overlay">
+        <div class="modal-sheet">
+          <div class="modal-handle"></div>
+          <div class="modal-header">
+            <h3 class="modal-title">Business Settings</h3>
+            <button class="modal-close" data-action="close-modal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+          </div>
+          <form id="settingsForm">
+            <div class="form-group"><label class="form-label">Business Name *</label><input class="form-input" name="businessName" required value="${escapeHtml(settings.businessName)}" /></div>
+            <div class="form-group">
+              <label class="form-label">Logo</label>
+              <div class="logo-upload-row">
+                <div class="logo-preview" id="logoPreview">${settings.logo ? `<img src="${settings.logo}" alt="Logo" />` : '<span>No logo</span>'}</div>
+                <div style="flex:1">
+                  <input type="file" id="logoFile" accept="image/*" style="display:none" />
+                  <button type="button" class="btn btn-secondary btn-sm" data-action="pick-logo">Upload Logo</button>
+                  ${settings.logo ? `<button type="button" class="btn btn-ghost btn-sm" data-action="remove-logo" style="margin-left:8px">Remove</button>` : ''}
+                </div>
+              </div>
+              <input type="hidden" name="logo" id="logoValue" value="" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Payment QR Code (JazzCash / EasyPaisa / Bank)</label>
+              <div class="logo-upload-row">
+                <div class="logo-preview" id="qrPreview">${(settings.paymentQr && (!window.HisablyFreemium || HisablyFreemium.effectivePlan().limits.paymentQrOnInvoice)) ? `<img src="${settings.paymentQr}" alt="QR" />` : '<span>No QR</span>'}</div>
+                <div style="flex:1">
+                  <input type="file" id="qrFile" accept="image/*" style="display:none" />
+                  <button type="button" class="btn btn-secondary btn-sm" data-action="pick-qr">Upload QR</button>
+                  ${(settings.paymentQr && (!window.HisablyFreemium || HisablyFreemium.effectivePlan().limits.paymentQrOnInvoice)) ? `<button type="button" class="btn btn-ghost btn-sm" data-action="remove-qr" style="margin-left:8px">Remove</button>` : ''}
+                </div>
+              </div>
+              <input type="text" class="form-input mt-8" name="paymentNote" value="${escapeHtml(settings.paymentNote || 'Pay via JazzCash / EasyPaisa / Bank')}" placeholder="Payment note on invoice" />
+            </div>
+            <div class="form-group"><label class="form-label">Owner Name</label><input class="form-input" name="ownerName" value="${escapeHtml(settings.ownerName || '')}" /></div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">Phone</label><input class="form-input" name="phone" type="tel" value="${escapeHtml(settings.phone || '')}" /></div>
+              <div class="form-group"><label class="form-label">Email</label><input class="form-input" name="email" type="email" value="${escapeHtml(settings.email || '')}" /></div>
+            </div>
+            <div class="form-group"><label class="form-label">Address</label><input class="form-input" name="address" value="${escapeHtml(settings.address || '')}" /></div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">City</label><input class="form-input" name="city" value="${escapeHtml(settings.city || '')}" /></div>
+              <div class="form-group"><label class="form-label">Tax / NTN / GST</label><input class="form-input" name="taxId" value="${escapeHtml(settings.taxId || '')}" /></div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Currency</label>
+              ${customSelect('currency', [
+                { value: 'PKR', label: 'PKR – Pakistani Rupee' },
+                { value: 'INR', label: 'INR – Indian Rupee' },
+                { value: 'BDT', label: 'BDT – Bangladeshi Taka' },
+                { value: 'USD', label: 'USD – US Dollar' },
+                { value: 'EUR', label: 'EUR – Euro' }
+              ], settings.currency || 'PKR')}
+            </div>
+            <div class="form-group">
+              <label class="form-label">Default Tax % (added to new invoices, 0 = none)</label>
+              <input class="form-input" name="taxRate" type="number" inputmode="decimal" min="0" step="any" value="${settings.taxRate || ''}" placeholder="0" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Invoice Prefix</label>
+              <input class="form-input" name="invoicePrefix" value="${escapeHtml(settings.invoicePrefix || 'INV')}" />
+            </div>
+            ${themePickerHTML()}
+            ${securityHTML()}
+            <button type="submit" class="btn btn-primary btn-block mt-16">Save Settings</button>
+          </form>
+        </div>
+      </div>`;
+    $('#settingsForm').addEventListener('submit', e => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      settings.businessName = fd.get('businessName').trim() || 'My Business';
+      settings.ownerName = fd.get('ownerName').trim();
+      settings.phone = fd.get('phone').trim();
+      settings.email = fd.get('email').trim();
+      settings.address = fd.get('address').trim();
+      settings.city = fd.get('city').trim();
+      settings.taxId = fd.get('taxId').trim();
+      settings.currency = fd.get('currency');
+      settings.invoicePrefix = fd.get('invoicePrefix').trim() || 'INV';
+      settings.taxRate = Math.max(0, parseFloat(fd.get('taxRate')) || 0);
+      settings.paymentNote = (fd.get('paymentNote') || '').trim() || 'Pay via JazzCash / EasyPaisa / Bank';
+      // logo / paymentQr updated live via pick/remove actions
+      persist();
+      toast('Settings saved');
+      closeModal();
+      render();
+    });
+  }
+
+  // ---------- Invoice Detail + PDF + Image Share + Print ----------
+  function openInvoiceDetail(inv) {
+    const itemsHtml = inv.items.map(it => `
+      <div class="summary-row"><span>${escapeHtml(it.name)} × ${it.qty}</span><span>${settings.currency} ${money(it.price * it.qty)}</span></div>`).join('');
+    const paid = inv.paidAmount || 0;
+    const due = Math.max(0, (inv.total || 0) - paid);
+    let statusLabel = 'Unpaid';
+    if (paid >= inv.total) statusLabel = 'Fully Paid';
+    else if (paid > 0) statusLabel = 'Partial / Advance';
+    const isEst = inv.docType === 'estimate';
+    if (isEst) statusLabel = inv.meta && inv.meta.convertedTo ? 'Converted to ' + inv.meta.convertedTo : 'Open';
+    if (inv.docType === 'return') statusLabel = paid >= inv.total ? 'Fully Refunded' : (paid > 0 ? 'Partly Refunded' : 'Credit pending');
+
+    $('#modalRoot').innerHTML = `
+      <div class="modal-overlay" id="invDetail">
+        <div class="modal-sheet">
+          <div class="modal-handle"></div>
+          <div class="modal-header">
+            <h3 class="modal-title">${docWord(inv)} ${escapeHtml(inv.number)}</h3>
+            <button class="modal-close" data-action="close-modal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+          </div>
+          <div class="mb-16">
+            <div class="text-sm text-secondary">Customer</div>
+            <div class="font-semibold">${escapeHtml(inv.customerName || 'Walk-in')}</div>
+            ${inv.customerPhone ? `<div class="text-sm text-secondary mt-8">${escapeHtml(inv.customerPhone)}</div>` : ''}
+            <div class="text-sm text-secondary mt-8">${formatDate(inv.date)}${inv.meta && inv.meta.refNumber ? ' · against ' + escapeHtml(inv.meta.refNumber) : ''}${inv.meta && inv.meta.by ? ' · by ' + escapeHtml(inv.meta.by) : ''}</div>
+          </div>
+          <div class="invoice-summary">${itemsHtml}
+            ${(() => { const x = invExtraRows(inv); return x.rows.length ? `<div class="summary-row"><span>Subtotal</span><span>${settings.currency} ${money(x.sub)}</span></div>` + x.rows.map(r => `<div class="summary-row"><span>${escapeHtml(r.label)}</span><span>${r.amt < 0 ? '−' : ''}${settings.currency} ${money(Math.abs(r.amt))}</span></div>`).join('') : ''; })()}
+            <div class="summary-row total"><span>Total</span><span>${settings.currency} ${money(inv.total)}</span></div>
+            ${inv.meta && inv.meta.paymentMode ? `<div class="summary-row"><span>Payment mode</span><span>${escapeHtml(inv.meta.paymentMode)}</span></div>` : ''}
+            ${inv.meta && inv.meta.dueDate ? `<div class="summary-row"><span>Due date</span><span${isOverdue(inv) ? ' style="color:var(--danger);font-weight:600"' : ''}>${formatDate(inv.meta.dueDate)}${isOverdue(inv) ? ' · overdue' : ''}</span></div>` : ''}
+            ${inv.meta && inv.meta.validUntil ? `<div class="summary-row"><span>Valid until</span><span>${formatDate(inv.meta.validUntil)}</span></div>` : ''}
+            ${isEst ? '' : `<div class="summary-row"><span>${inv.docType === 'return' ? 'Refunded' : 'Paid'}</span><span style="color:var(--success)">${settings.currency} ${money(paid)}</span></div>
+            <div class="summary-row"><span>${inv.docType === 'return' ? 'Credit left' : 'Due'}</span><span style="color:${due > 0 ? 'var(--danger)' : 'var(--success)'}">${settings.currency} ${money(due)}</span></div>
+`}
+            <div class="summary-row"><span>Status</span><span class="font-semibold">${statusLabel}</span></div>
+          </div>
+          ${isEst && !(inv.meta && inv.meta.convertedTo) ? `<button class="btn btn-primary btn-block mt-16" data-action="convert-estimate" data-id="${inv.id}">Convert to Invoice</button>` : ''}
+          ${(!isEst && due > 0) ? `
+          <div class="form-group mt-16">
+            <label class="form-label">${inv.docType === 'return' ? 'Record refund paid' : 'Record payment'}</label>
+            <div class="input-with-btn">
+              <input type="number" class="form-input" id="recordPayInput" min="0" step="0.01" placeholder="Amount" />
+              <button type="button" class="btn btn-primary btn-sm" style="height:48px" data-action="record-payment" data-id="${inv.id}">Add</button>
+            </div>
+            ${modeChips('rpMode')}
+          </div>
+          <button class="btn btn-secondary btn-block mt-8" data-action="mark-paid" data-id="${inv.id}">${inv.docType === 'return' ? 'Mark as Fully Refunded' : 'Mark as Fully Paid'}</button>
+          ` : ''}
+          <div class="flex gap-8 mt-20" style="flex-wrap:wrap">
+            <button class="btn btn-secondary" style="flex:1" data-action="share-image" data-id="${inv.id}">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+              Image
+            </button>
+            <button class="btn btn-secondary" style="flex:1" data-action="pdf-invoice" data-id="${inv.id}">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              PDF
+            </button>
+            <button class="btn btn-primary" style="flex:1" data-action="print-invoice" data-id="${inv.id}">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+              Print
+            </button>
+          </div>
+          <button class="btn btn-ghost btn-block mt-12" data-action="share-whatsapp-text" data-id="${inv.id}">Share as WhatsApp text</button>
+          ${((inv.docType || 'sale') === 'sale' && due > 0) ? `<button class="btn btn-ghost btn-block mt-8" data-action="remind-invoice" data-id="${inv.id}">Send payment reminder (WhatsApp)</button>` : ''}
+          ${(inv.docType || 'sale') === 'sale' ? `<button class="btn btn-ghost btn-block mt-8" data-action="return-from-invoice" data-id="${inv.id}">Return items from this invoice</button>` : ''}
+          <button class="btn btn-ghost btn-block mt-8" data-action="duplicate-invoice" data-id="${inv.id}">Duplicate invoice</button>
+        </div>
+      </div>`;
+  }
+
+  function generatePDF(inv) {
+    if (!tplOK()) return;
+    toast('Preparing PDF…');
+    BillauraTemplates.pdf(inv, tplCtx(), {}, `${(inv.docType==='estimate'?'Quotation':'Invoice')}-${inv.number}.pdf`).then(() => toast('PDF downloaded')).catch(e => { console.error(e); toast('PDF failed – try Print'); });
+  }
+  function generatePDFOld(inv) {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    const W = 210, m = 16;
+    const paid = inv.paidAmount || 0;
+    const due = Math.max(0, (inv.total || 0) - paid);
+    const statusText = inv.docType === 'estimate' ? 'QUOTE' : (due <= 0 ? 'PAID' : (paid > 0 ? 'PARTIAL' : 'UNPAID'));
+    let y = 0;
+
+    // Header (theme: filled band or clean line)
+    const TH = HisablyReceipt.themeOf(settings), A = HisablyReceipt.hexRgb(TH.accent), D = HisablyReceipt.hexRgb(TH.dark), S = HisablyReceipt.hexRgb(TH.soft);
+    const band = TH.style === 'band';
+    if (band) { doc.setFillColor(A[0], A[1], A[2]); doc.rect(0, 0, W, 36, 'F'); }
+    else { doc.setFillColor(A[0], A[1], A[2]); doc.rect(0, 34, W, 1.4, 'F'); }
+
+    let textX = m;
+    const pLogo = settings.printLogo !== false;
+    const pName = settings.printCompanyName !== false;
+    const pAddr = settings.printAddress !== false;
+    const pPhone = settings.printPhone !== false;
+    const pEmail = settings.printEmail !== false;
+    if (pLogo && settings.logo) {
+      try {
+        doc.setFillColor(255, 255, 255);
+        doc.roundedRect(m, 7, 22, 22, 3, 3, 'F');
+        doc.addImage(settings.logo, 'PNG', m + 2, 9, 18, 18);
+        textX = m + 26;
+      } catch (e) {}
+    }
+    if (band) doc.setTextColor(255, 255, 255); else doc.setTextColor(15, 23, 42);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(16);
+    if (pName) doc.text(settings.businessName || 'Business', textX, 16);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    const subParts = [];
+    if (pPhone && settings.phone) subParts.push(settings.phone);
+    if (pAddr) { if (settings.city) subParts.push(settings.city); if (settings.address) subParts.push(settings.address); }
+    const sub = subParts.join('  ·  ');
+    if (sub) doc.text(sub.substring(0, 70), textX, 23);
+    if (pEmail && settings.email) doc.text(settings.email, textX, 28);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.text(docWord(inv).toUpperCase(), W - m, 14, { align: 'right' });
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.text(String(inv.number), W - m, 20, { align: 'right' });
+    doc.text(formatDate(inv.date), W - m, 26, { align: 'right' });
+
+    y = 46;
+    // Bill to + status
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(148, 163, 184);
+    doc.text('BILL TO', m, y);
+    y += 5;
+    doc.setTextColor(15, 23, 42);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.text(inv.customerName || 'Walk-in Customer', m, y);
+    // status badge
+    if (statusText === 'PAID') doc.setFillColor(16, 185, 129);
+    else if (statusText === 'PARTIAL') doc.setFillColor(245, 158, 11);
+    else doc.setFillColor(239, 68, 68);
+    const bw = statusText === 'PARTIAL' ? 22 : 18;
+    doc.roundedRect(W - m - bw, y - 5, bw, 7, 1.5, 1.5, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'bold');
+    doc.text(statusText, W - m - bw / 2, y - 0.5, { align: 'center' });
+    y += 6;
+    doc.setTextColor(100);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    if (inv.customerPhone) { doc.text(inv.customerPhone, m, y); y += 5; }
+    y += 4;
+
+    // Table header (repeated on every page)
+    const tableHeader = () => {
+      doc.setFillColor(241, 245, 249);
+      doc.roundedRect(m, y, W - 2 * m, 8, 1.5, 1.5, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(100);
+      doc.text('#', m + 3, y + 5.5);
+      doc.text('ITEM', m + 12, y + 5.5);
+      doc.text('QTY', m + 108, y + 5.5, { align: 'right' });
+      doc.text('PRICE', m + 138, y + 5.5, { align: 'right' });
+      doc.text('AMOUNT', W - m - 3, y + 5.5, { align: 'right' });
+      y += 12;
+    };
+    tableHeader();
+
+    doc.setTextColor(15, 23, 42);
+    inv.items.forEach((it, idx) => {
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      const nameLines = doc.splitTextToSize(String(it.name), 88);
+      const rowH = Math.max(8, nameLines.length * 4.4 + 3.6);
+      if (y + rowH > 272) { doc.addPage(); y = 20; tableHeader(); }
+      if (idx % 2 === 1) {
+        doc.setFillColor(248, 250, 252);
+        doc.rect(m, y - 4.5, W - 2 * m, rowH, 'F');
+      }
+      doc.setTextColor(148, 163, 184);
+      doc.text(String(idx + 1), m + 3, y);
+      doc.setTextColor(15, 23, 42);
+      doc.text(nameLines, m + 12, y);
+      doc.text(String(it.qty), m + 108, y, { align: 'right' });
+      doc.text(money(it.price), m + 138, y, { align: 'right' });
+      doc.setFont('helvetica', 'bold');
+      doc.text(money(it.price * it.qty), W - m - 3, y, { align: 'right' });
+      y += rowH;
+    });
+    if (y > 215) { doc.addPage(); y = 20; }
+
+    y += 4;
+    doc.setDrawColor(226, 232, 240);
+    doc.line(m, y, W - m, y);
+    y += 8;
+
+    // Totals
+    const tx = W - m - 55;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(100);
+    const ex = invExtraRows(inv);
+    doc.text('Subtotal', tx, y);
+    doc.setTextColor(15, 23, 42);
+    doc.text(`${settings.currency} ${money(ex.rows.length ? ex.sub : inv.total)}`, W - m, y, { align: 'right' });
+    y += 6;
+    ex.rows.forEach(r => {
+      doc.setTextColor(100);
+      doc.text(r.label, tx, y);
+      doc.setTextColor(15, 23, 42);
+      doc.text(`${r.amt < 0 ? '-' : ''}${settings.currency} ${money(Math.abs(r.amt))}`, W - m, y, { align: 'right' });
+      y += 6;
+    });
+    if (inv.docType !== 'estimate') {
+    doc.setTextColor(100);
+    doc.text('Paid', tx, y);
+    doc.setTextColor(16, 185, 129);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`${settings.currency} ${money(paid)}`, W - m, y, { align: 'right' });
+    y += 6;
+    if (due > 0) {
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(100);
+      doc.text('Due', tx, y);
+      doc.setTextColor(239, 68, 68);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`${settings.currency} ${money(due)}`, W - m, y, { align: 'right' });
+      y += 6;
+    }
+    }
+    y += 2;
+    doc.setFillColor(S[0], S[1], S[2]);
+    doc.roundedRect(tx - 4, y - 4, W - m - (tx - 4), 10, 2, 2, 'F');
+    doc.setTextColor(D[0], D[1], D[2]);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.text('Total', tx, y + 3);
+    doc.text(`${settings.currency} ${money(inv.total)}`, W - m, y + 3, { align: 'right' });
+    y += 16;
+
+    // Payment QR section (paid plans only, same rule as the image invoice)
+    if (settings.paymentQr && (!window.HisablyFreemium || HisablyFreemium.effectivePlan().limits.paymentQrOnInvoice)) {
+      try {
+        const qrSize = 32;
+        doc.setDrawColor(226, 232, 240);
+        doc.setFillColor(248, 250, 252);
+        doc.roundedRect(m, y, W - 2 * m, qrSize + 14, 3, 3, 'FD');
+        doc.addImage(settings.paymentQr, 'PNG', m + 6, y + 6, qrSize, qrSize);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(15, 23, 42);
+        doc.text('Scan to pay', m + qrSize + 12, y + 14);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8);
+        doc.setTextColor(100);
+        doc.text(settings.paymentNote || 'Pay via JazzCash / EasyPaisa / Bank', m + qrSize + 12, y + 20);
+        if (settings.phone) doc.text('Contact: ' + settings.phone, m + qrSize + 12, y + 26);
+        y += qrSize + 18;
+      } catch (e) { y += 4; }
+    }
+
+    if (settings.taxId) {
+      doc.setFontSize(7);
+      doc.setTextColor(120);
+      doc.text('Tax / NTN / GST: ' + settings.taxId, m, y);
+      y += 5;
+    }
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(A[0], A[1], A[2]);
+    doc.text('Thank you for your business!', m, y);
+    y += 5;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.setTextColor(160);
+    doc.text('Generated by Billaura', m, y);
+
+    // page numbers + signature lines
+    const pages = doc.getNumberOfPages();
+    for (let pg = 1; pg <= pages; pg++) {
+      doc.setPage(pg);
+      doc.setFontSize(7);
+      doc.setTextColor(160);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`${inv.number}  ·  Page ${pg} of ${pages}`, W - m, 290, { align: 'right' });
+    }
+
+    doc.save(`Invoice-${inv.number}.pdf`);
+    toast('PDF downloaded');
+  }
+
+  async function shareInvoiceImage(inv) {
+    if (!tplOK()) return;
+    try {
+      toast('Preparing image…');
+      const blob = await BillauraTemplates.image(inv, tplCtx(), {});
+      const file = new File([blob], `Invoice-${inv.number}.png`, { type: 'image/png' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: 'Invoice ' + inv.number }); return; }
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = file.name; document.body.appendChild(a); a.click(); a.remove();
+      toast('Image saved');
+    } catch (e) { if (e && e.name !== 'AbortError') { console.error(e); toast('Could not create image'); } }
+  }
+  async function shareInvoiceImageOld(inv) {
+    const paid = inv.paidAmount || 0;
+    const due = Math.max(0, (inv.total || 0) - paid);
+    const statusText = inv.docType === 'estimate' ? 'QUOTE' : (due <= 0 ? 'PAID' : (paid > 0 ? 'PARTIAL' : 'UNPAID'));
+    const statusColor = due <= 0 ? '#10B981' : (paid > 0 ? '#F59E0B' : '#EF4444');
+
+    const TH = HisablyReceipt.themeOf(settings), bandT = TH.style === 'band';
+    const card = document.createElement('div');
+    card.style.cssText = 'position:fixed;left:-9999px;top:0;width:400px;background:#fff;font-family:Inter,system-ui,sans-serif;color:#0F172A;border-radius:16px;overflow:hidden;';
+    card.innerHTML = `
+      <div style="${bandT ? `background:linear-gradient(135deg,${TH.accent},${TH.dark});color:#fff;` : `background:#fff;color:#0F172A;border-bottom:3px solid ${TH.accent};`}padding:18px 20px;display:flex;align-items:center;gap:12px;">
+        ${settings.logo ? `<div style="width:46px;height:46px;border-radius:12px;background:#fff;display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0"><img src="${settings.logo}" style="width:42px;height:42px;object-fit:contain"/></div>` : `<div style="width:46px;height:46px;border-radius:12px;background:${bandT ? '#fff' : TH.soft};color:${TH.accent};font-weight:800;font-size:16px;display:flex;align-items:center;justify-content:center;flex-shrink:0">H</div>`}
+        <div style="flex:1;min-width:0">
+          <div style="font-size:17px;font-weight:700">${escapeHtml(settings.businessName)}</div>
+          <div style="font-size:11px;opacity:0.9;margin-top:2px">${escapeHtml([settings.phone, settings.city].filter(Boolean).join(' · '))}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:10px;font-weight:700;opacity:0.85;letter-spacing:0.05em">${docWord(inv).toUpperCase()}</div>
+          <div style="font-size:13px;font-weight:600">${escapeHtml(inv.number)}</div>
+          <div style="font-size:10px;opacity:0.85">${formatDate(inv.date)}</div>
+        </div>
+      </div>
+      <div style="padding:16px 20px 6px;display:flex;justify-content:space-between;align-items:flex-start">
+        <div>
+          <div style="font-size:10px;color:#94A3B8;font-weight:600;letter-spacing:0.04em">BILL TO</div>
+          <div style="font-size:15px;font-weight:700;margin-top:2px">${escapeHtml(inv.customerName || 'Walk-in')}</div>
+          ${inv.customerPhone ? `<div style="font-size:12px;color:#64748B;margin-top:2px">${escapeHtml(inv.customerPhone)}</div>` : ''}
+        </div>
+        <div style="background:${statusColor};color:#fff;font-size:11px;font-weight:700;padding:5px 10px;border-radius:8px">${statusText}</div>
+      </div>
+      <div style="padding:8px 20px">
+        <div style="background:#F8FAFC;border-radius:10px;padding:10px 12px">
+          <div style="display:flex;font-size:10px;color:#94A3B8;font-weight:600;margin-bottom:6px">
+            <span style="flex:1">ITEM</span><span style="width:40px;text-align:center">QTY</span><span style="width:78px;text-align:right">AMOUNT</span>
+          </div>
+          ${inv.items.map(it => `
+            <div style="display:flex;align-items:center;font-size:13px;padding:7px 0;border-top:1px solid #F1F5F9">
+              <span style="flex:1;font-weight:500">${escapeHtml(it.name)}</span>
+              <span style="width:40px;text-align:center;color:#64748B">${it.qty}</span>
+              <span style="width:78px;text-align:right;font-weight:600">${settings.currency} ${money(it.price * it.qty)}</span>
+            </div>`).join('')}
+        </div>
+      </div>
+      <div style="padding:4px 20px 8px">
+        ${(() => { const x = invExtraRows(inv); return x.rows.length ? [{ label: 'Subtotal', amt: x.sub }].concat(x.rows).map(r => `<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:#64748B">${escapeHtml(r.label)}</span><span style="font-weight:600">${r.amt < 0 ? '−' : ''}${settings.currency} ${money(Math.abs(r.amt))}</span></div>`).join('') : ''; })()}
+        ${inv.docType === 'estimate' ? '' : `        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+          <span style="color:#64748B">Paid</span><span style="color:#10B981;font-weight:600">${settings.currency} ${money(paid)}</span>
+        </div>
+        ${due > 0 ? `<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px">
+          <span style="color:#64748B">Due</span><span style="color:#EF4444;font-weight:600">${settings.currency} ${money(due)}</span>
+        </div>` : ''}`}
+        <div style="display:flex;justify-content:space-between;align-items:center;background:linear-gradient(135deg,${TH.soft},${TH.softer});border-radius:12px;padding:12px 14px;margin-top:4px">
+          <span style="font-weight:700;font-size:14px">Total</span>
+          <span style="font-weight:800;font-size:18px;color:${TH.dark}">${settings.currency} ${money(inv.total)}</span>
+        </div>
+      </div>
+      ${(settings.paymentQr && (!window.HisablyFreemium || HisablyFreemium.effectivePlan().limits.paymentQrOnInvoice)) ? `
+      <div style="margin:8px 20px 16px;padding:12px;background:#F8FAFC;border-radius:12px;display:flex;align-items:center;gap:14px;border:1px solid #E2E8F0">
+        <img src="${settings.paymentQr}" style="width:72px;height:72px;border-radius:8px;object-fit:contain;background:#fff" />
+        <div>
+          <div style="font-size:13px;font-weight:700;color:#0F172A">Scan to pay</div>
+          <div style="font-size:11px;color:#64748B;margin-top:4px">${escapeHtml(settings.paymentNote || 'Pay via JazzCash / EasyPaisa / Bank')}</div>
+          ${settings.phone ? `<div style="font-size:11px;color:#64748B;margin-top:2px">${escapeHtml(settings.phone)}</div>` : ''}
+        </div>
+      </div>` : `<div style="text-align:center;font-size:11px;color:#94A3B8;padding:0 20px 16px">Thank you for your business!</div>`}
+    `;
+    document.body.appendChild(card);
+
+    try {
+      const canvas = await html2canvas(card, { scale: 2, backgroundColor: '#ffffff', logging: false });
+      document.body.removeChild(card);
+      canvas.toBlob(async (blob) => {
+        if (!blob) { toast('Could not create image'); return; }
+        const file = new File([blob], `Invoice-${inv.number}.png`, { type: 'image/png' });
+        if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+          try {
+            await navigator.share({ files: [file], title: `${docWord(inv)} ${inv.number}`, text: `${docWord(inv)} from ${settings.businessName}` });
+            toast('Shared');
+            return;
+          } catch (err) {
+            if (err.name === 'AbortError') return;
+          }
+        }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `Invoice-${inv.number}.png`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast('Image saved – share on WhatsApp');
+      }, 'image/png');
+    } catch (err) {
+      if (card.parentNode) document.body.removeChild(card);
+      console.error(err);
+      toast('Image generation failed');
+    }
+  }
+
+  function shareWhatsAppText(inv) {
+    let text = `*${settings.businessName}*\n${docWord(inv)} ${inv.number}\nDate: ${formatDate(inv.date)}\nCustomer: ${inv.customerName || 'Walk-in'}\n\n`;
+    inv.items.forEach(it => {
+      text += `• ${it.name} × ${it.qty} = ${settings.currency} ${money(it.price * it.qty)}\n`;
+    });
+    const wx = invExtraRows(inv);
+    if (wx.rows.length) {
+      text += `\nSubtotal: ${settings.currency} ${money(wx.sub)}`;
+      wx.rows.forEach(r => { text += `\n${r.label}: ${r.amt < 0 ? '-' : ''}${settings.currency} ${money(Math.abs(r.amt))}`; });
+    }
+    text += `\n*Total: ${settings.currency} ${money(inv.total)}*`;
+    if (settings.phone) text += `\n\nContact: ${settings.phone}`;
+    sendWhatsApp(inv.customerPhone, text);
+  }
+
+  // ---------- Receipt printing: 58 / 80 / 88 mm thermal, A4, Bluetooth ----------
+  let printTarget = null;
+
+  function tplCtx() {
+    return { settings, money, formatDate, amountInWords, products, qrAllowed: !window.HisablyFreemium || HisablyFreemium.effectivePlan().limits.paymentQrOnInvoice };
+  }
+  function tplOK() { if (!window.BillauraTemplates) { toast('Template module not loaded. Refresh the page.'); return false; } return true; }
+
+  function receiptCtx() {
+    return {
+      settings,
+      money,
+      formatDate,
+      qrAllowed: !window.HisablyFreemium || HisablyFreemium.effectivePlan().limits.paymentQrOnInvoice,
+      amountInWords,
+      print: {
+        companyName: settings.printCompanyName !== false,
+        logo: settings.printLogo !== false,
+        address: settings.printAddress !== false,
+        email: settings.printEmail !== false,
+        phone: settings.printPhone !== false,
+        taxId: !!settings.printTIN,
+        received: settings.printReceivedAmount !== false,
+        balance: settings.printBalanceAmount !== false,
+        taxDetails: settings.printTaxDetails !== false,
+        amountInWords: settings.printAmountInWords !== false,
+        terms: settings.printTerms !== false,
+        signature: settings.printSignature !== false,
+        pageNumbers: settings.printPageNumbers !== false,
+        paymentMode: !!settings.printPaymentMode,
+        totalQty: settings.printTotalQty !== false,
+        amountWordsFormat: settings.amountWordsFormat || 'indian'
+      }
+    };
+  }
+
+  function amountInWords(n, format) {
+    n = Math.round(Math.abs(Number(n) || 0));
+    if (!n) return 'Zero only';
+    const ones = ['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
+    const tens = ['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];
+    function under1000(x) {
+      let s = '';
+      if (x >= 100) { s += ones[Math.floor(x/100)] + ' Hundred '; x %= 100; }
+      if (x >= 20) { s += tens[Math.floor(x/10)] + ' '; x %= 10; }
+      if (x > 0) s += ones[x] + ' ';
+      return s;
+    }
+    let s = '';
+    if ((format || 'indian') === 'indian') {
+      const cr = Math.floor(n / 10000000); n %= 10000000;
+      const l = Math.floor(n / 100000); n %= 100000;
+      const th = Math.floor(n / 1000); n %= 1000;
+      if (cr) s += under1000(cr) + 'Crore ';
+      if (l) s += under1000(l) + 'Lakh ';
+      if (th) s += under1000(th) + 'Thousand ';
+      s += under1000(n);
+    } else {
+      const m = Math.floor(n / 1000000); n %= 1000000;
+      const th = Math.floor(n / 1000); n %= 1000;
+      if (m) s += under1000(m) + 'Million ';
+      if (th) s += under1000(th) + 'Thousand ';
+      s += under1000(n);
+    }
+    return (s.trim() || 'Zero') + ' only';
+  }
+
+  function printInvoice(inv) {
+    if (!window.HisablyReceipt) { toast('Print module not loaded. Refresh the page.'); return; }
+    printTarget = inv;
+    openPrintModal();
+  }
+
+  function openPrintModal() {
+    const inv = printTarget;
+    if (!inv) return;
+    const R = HisablyReceipt, pr = R.getPrefs();
+    const chip = (k) => `<button type="button" class="cat-chip ${pr.paper === k ? 'active' : ''}" data-action="rc-paper" data-paper="${k}">${R.PAPER[k].label}</button>`;
+    const btOk = R.btSupported();
+    $('#modalRoot').innerHTML = `
+      <div class="modal-overlay" id="rcModal">
+        <div class="modal-sheet">
+          <div class="modal-handle"></div>
+          <div class="modal-header">
+            <h3 class="modal-title">Print ${escapeHtml(inv.number)}</h3>
+            <button class="modal-close" data-action="close-modal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+          </div>
+          <div class="form-label">Paper size</div>
+          <div class="cat-chips" style="margin-bottom:12px">${['58', '80', '88', 'a4'].map(chip).join('')}</div>
+          <div class="form-group">
+            <label class="form-label">Receipt footer message</label>
+            <input class="form-input" id="rcFooter" maxlength="80" placeholder="Thank you for your business!" value="${escapeHtml(pr.footer || '')}" />
+          </div>
+          ${pr.paper === 'a4' ? `<button class="btn btn-primary btn-block" data-action="print-a4" data-id="${inv.id}">Print / PDF with invoice theme</button>
+          <button class="btn btn-secondary btn-block mt-8" data-action="open-theme-from-print">Change invoice theme</button>` : `<button class="btn btn-primary btn-block" data-action="rc-print">Print (browser / printer app)</button>`}
+          <button class="btn btn-secondary btn-block mt-8" data-action="rc-save-image">Save receipt as image</button>
+
+          <div class="section-header" style="margin-top:20px"><h2 class="section-title">Bluetooth printer (direct)</h2></div>
+          ${btOk ? '' : `<p class="text-sm" style="color:var(--danger)">This browser has no Bluetooth printing. Open Billaura in <strong>Chrome on Android</strong>.</p>`}
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">Printer</label>
+              <select class="form-input" id="rcPrinter">
+                <option value="mxw01" ${pr.printer === 'mxw01' ? 'selected' : ''}>MXW01 / mini fun printer</option>
+                <option value="escpos" ${pr.printer === 'escpos' ? 'selected' : ''}>ESC/POS thermal (58/80/88)</option>
+              </select></div>
+            <div class="form-group"><label class="form-label">Darkness</label>
+              <select class="form-input" id="rcDensity">
+                ${['light', 'medium', 'dark'].map(d => `<option value="${d}" ${pr.density === d ? 'selected' : ''}>${d[0].toUpperCase() + d.slice(1)}</option>`).join('')}
+              </select></div>
+          </div>
+          <div class="form-group" id="rcBitWrap" style="${pr.printer === 'mxw01' ? '' : 'display:none'}"><label class="form-label">If the print is garbled / mirrored, switch this</label>
+            <select class="form-input" id="rcBit">
+              <option value="lsb" ${pr.bitOrder === 'lsb' ? 'selected' : ''}>Standard (recommended)</option>
+              <option value="msb" ${pr.bitOrder === 'msb' ? 'selected' : ''}>Alternate</option>
+            </select></div>
+          <div class="flex gap-8">
+            <button class="btn btn-primary" style="flex:1" data-action="rc-bt-print" ${btOk ? '' : 'disabled'}>Print via Bluetooth</button>
+            <button class="btn btn-secondary" style="flex:1" data-action="rc-bt-test" ${btOk ? '' : 'disabled'}>Test print</button>
+          </div>
+          <div id="rcStatus" class="text-sm text-secondary mt-8"></div>
+          <p class="text-sm text-secondary mt-8">Turn the printer on, keep it close, and choose it in the Bluetooth list that appears. Bluetooth printing is new: if it doesn’t work for your model, use <em>Save receipt as image</em> and print with the printer’s own app.</p>
+        </div>
+      </div>`;
+    const R2 = HisablyReceipt;
+    const bind = (id, key) => { const el = document.getElementById(id); if (el) el.addEventListener('change', () => { R2.setPrefs({ [key]: el.value }); if (id === 'rcPrinter') { const w = document.getElementById('rcBitWrap'); if (w) w.style.display = el.value === 'mxw01' ? '' : 'none'; R2.forgetDevice(); } }); };
+    bind('rcPrinter', 'printer'); bind('rcDensity', 'density'); bind('rcBit', 'bitOrder');
+    const f = document.getElementById('rcFooter');
+    if (f) f.addEventListener('input', () => R2.setPrefs({ footer: f.value.trim() }));
+  }
+
+  function rcStatus(msg) { const el = document.getElementById('rcStatus'); if (el) el.textContent = msg; }
+
+  function receiptDots() {
+    const pr = HisablyReceipt.getPrefs();
+    if (pr.printer === 'mxw01') return 384;           // MXW01 prints exactly 384 dots
+    const P = HisablyReceipt.PAPER[pr.paper === 'a4' ? '80' : pr.paper] || HisablyReceipt.PAPER['80'];
+    return P.dots;
+  }
+
+  async function rcBluetooth(test) {
+    const inv = printTarget;
+    if (!inv && !test) return;
+    try {
+      rcStatus('Rendering…');
+      const dots = receiptDots();
+      const cv = test ? HisablyReceipt.testCanvas(dots) : await HisablyReceipt.renderCanvas(inv, receiptCtx(), dots);
+      await HisablyReceipt.bluetoothPrint(cv, {}, rcStatus);
+      toast(test ? 'Test sent to printer' : 'Sent to printer');
+    } catch (e) {
+      if (e && e.name === 'NotFoundError') { rcStatus('No printer selected.'); return; }   // user closed the picker
+      console.error(e);
+      const raw = String((e && e.message) || e);
+      rcStatus(/bluetooth|chrome|android/i.test(raw) && /needs|support/i.test(raw) ? raw : 'Could not talk to the printer. Make sure it is switched on, close to your phone and not connected to another app, then try again.');
+    }
+  }
+
+  async function rcSaveImage() {
+    const inv = printTarget;
+    if (!inv) return;
+    try {
+      const pr = HisablyReceipt.getPrefs();
+      const dots = pr.paper === 'a4' ? 576 : (HisablyReceipt.PAPER[pr.paper] || HisablyReceipt.PAPER['80']).dots;
+      const cv = await HisablyReceipt.renderCanvas(inv, receiptCtx(), dots);
+      cv.toBlob(async (blob) => {
+        if (!blob) { toast('Could not create image'); return; }
+        const file = new File([blob], `Receipt-${inv.number}.png`, { type: 'image/png' });
+        if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+          try { await navigator.share({ files: [file], title: `Receipt ${inv.number}` }); return; } catch (err) { if (err.name === 'AbortError') return; }
+        }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = file.name; a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+        toast('Receipt image saved');
+      }, 'image/png');
+    } catch (e) { console.error(e); toast('Could not create image'); }
+  }
+
+  async function rcBrowserPrint() {
+    const inv = printTarget;
+    if (!inv) return;
+    try {
+      const pr = HisablyReceipt.getPrefs();
+      await HisablyReceipt.printHTML(HisablyReceipt.receiptHTML(inv, receiptCtx(), pr.paper));
+    } catch (e) { console.error(e); toast('Could not open the print dialog'); }
+  }
+
+  // ---------- Categories ----------
+  let productCat = '';            // '' = all, '__none__' = uncategorized, else category name
+
+  function categoryList() {
+    return [...new Set(products.map(p => (p.category || '').trim()).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b));
+  }
+  // "soap" and "Soap" must be one category
+  function normalizeCategory(name) {
+    const c = String(name || '').replace(/\s+/g, ' ').trim();
+    if (!c) return '';
+    const hit = categoryList().find(x => x.toLowerCase() === c.toLowerCase());
+    return hit || c;
+  }
+  function categoryChipsHTML() {
+    const cats = categoryList();
+    if (!cats.length) return '';
+    const hasNone = products.some(p => !(p.category || '').trim());
+    const chip = (val, label, n) =>
+      `<button type="button" class="cat-chip ${productCat === val ? 'active' : ''}" data-action="filter-cat" data-cat="${escapeHtml(val)}">${escapeHtml(label)} <span>${n}</span></button>`;
+    return `<div class="cat-chips">
+      ${chip('', 'All', products.length)}
+      ${cats.map(c => chip(c, c, products.filter(p => (p.category || '').trim() === c).length)).join('')}
+      ${hasNone ? chip('__none__', 'Uncategorized', products.filter(p => !(p.category || '').trim()).length) : ''}
+    </div>`;
+  }
+  function productListHTML(query) {
+    const q = (query || '').trim().toLowerCase();
+    let list = products.filter(p => {
+      const cat = (p.category || '').trim();
+      if (productCat === '__none__' && cat) return false;
+      if (productCat && productCat !== '__none__' && cat !== productCat) return false;
+      return !q || p.name.toLowerCase().includes(q) || (p.barcode || '').toLowerCase().includes(q) || cat.toLowerCase().includes(q);
+    });
+    if (!list.length) return '<div class="text-center text-secondary" style="padding:32px 0">No products found</div>';
+    list.sort((a, b) => (a.category || '~').localeCompare(b.category || '~') || a.name.localeCompare(b.name));
+    if (productCat) return list.map(listProduct).join('');
+    // "All": group under category headings
+    let html = '', last = null;
+    list.forEach(p => {
+      const cat = (p.category || '').trim() || 'Uncategorized';
+      if (cat !== last) {
+        const n = list.filter(x => ((x.category || '').trim() || 'Uncategorized') === cat).length;
+        html += `<div class="cat-heading">${escapeHtml(cat)} <span>${n}</span></div>`;
+        last = cat;
+      }
+      html += listProduct(p);
+    });
+    return html;
+  }
+
+  // ---------- Bulk tools: CSV export / import, bulk price change ----------
+  const CSV_COLUMNS = ['Name', 'Category', 'Selling Price', 'Cost Price', 'Stock', 'Unit', 'Low Stock Alert', 'Barcode', 'Notes'];
+
+  function csvCell(v, isText) {
+    let t = v == null ? '' : String(v);
+    // stop spreadsheet formula injection in text cells
+    if (isText && /^[=+\-@\t\r]/.test(t)) t = "'" + t;
+    return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+  }
+  function downloadText(filename, text, mime) {
+    const blob = new Blob(['﻿' + text], { type: (mime || 'text/csv') + ';charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  }
+  function exportProductsCSV(templateOnly) {
+    const rows = [CSV_COLUMNS.join(',')];
+    if (templateOnly) {
+      rows.push(['Sample Soap', 'Grocery', 120, 90, 50, 'pcs', 5, '8964000123456', ''].map((v, i) => csvCell(v, [0, 1, 5, 7, 8].includes(i))).join(','));
+    } else {
+      [...products].sort((a, b) => (a.category || '~').localeCompare(b.category || '~') || a.name.localeCompare(b.name)).forEach(p => {
+        rows.push([
+          csvCell(p.name, true), csvCell(p.category || '', true), p.price, p.cost || 0, p.stock,
+          csvCell(p.unit || 'pcs', true), p.lowStock ?? settings.lowStockDefault, csvCell(p.barcode || '', true), csvCell(p.notes || '', true)
+        ].join(','));
+      });
+    }
+    downloadText(templateOnly ? 'billaura-products-template.csv' : `billaura-products-${new Date().toISOString().slice(0, 10)}.csv`, rows.join('\r\n'));
+    toast(templateOnly ? 'Template downloaded' : `${products.length} products exported`);
+  }
+
+  // RFC-4180 style parser (quotes, embedded commas/newlines, ; or tab delimiters)
+  function parseCSV(text) {
+    text = String(text || '').replace(/^﻿/, '');
+    const firstLine = text.split(/\r?\n/)[0] || '';
+    const counts = { ',': 0, ';': 0, '\t': 0 };
+    let inQ = false;
+    for (const ch of firstLine) { if (ch === '"') inQ = !inQ; else if (!inQ && counts[ch] != null) counts[ch]++; }
+    const delim = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0];
+    const rows = []; let row = [], cell = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (q) {
+        if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; }
+        else cell += ch;
+      } else if (ch === '"') q = true;
+      else if (ch === delim) { row.push(cell); cell = ''; }
+      else if (ch === '\n' || ch === '\r') {
+        if (ch === '\r' && text[i + 1] === '\n') i++;
+        row.push(cell); cell = '';
+        if (row.some(c => c.trim() !== '')) rows.push(row);
+        row = [];
+      } else cell += ch;
+    }
+    row.push(cell);
+    if (row.some(c => c.trim() !== '')) rows.push(row);
+    return rows;
+  }
+
+  const HEADER_ALIASES = {
+    name: ['name', 'product', 'product name', 'item', 'item name', 'title'],
+    category: ['category', 'group', 'type', 'department'],
+    price: ['selling price', 'price', 'sale price', 'sell price', 'rate', 'mrp', 'retail price'],
+    cost: ['cost price', 'cost', 'purchase price', 'buying price', 'buy price'],
+    stock: ['stock', 'qty', 'quantity', 'opening stock', 'in stock'],
+    unit: ['unit', 'uom'],
+    lowStock: ['low stock alert', 'low stock', 'reorder level', 'min stock', 'alert'],
+    barcode: ['barcode', 'sku', 'code', 'barcode / qr'],
+    notes: ['notes', 'note', 'description', 'details']
+  };
+  function parseNum(v) {
+    const t = String(v == null ? '' : v).replace(/[,\s]/g, '').replace(/^(rs\.?|pkr|inr|usd|\$|€|₹)/i, '');
+    if (t === '') return null;
+    const n = Number(t);
+    return isFinite(n) ? n : NaN;
+  }
+
+  // Turn CSV text into a plan: what will be added / updated / skipped (nothing is changed yet)
+  function planImport(text, opts) {
+    const rows = parseCSV(text);
+    if (rows.length < 2) return { error: 'The file is empty or has no product rows.' };
+    const header = rows[0].map(h => h.trim().toLowerCase().replace(/[_*]+/g, ' ').replace(/\s*\(.*?\)\s*/g, ' ').replace(/\s+/g, ' ').trim());
+    const col = {};
+    Object.entries(HEADER_ALIASES).forEach(([key, names]) => {
+      const i = header.findIndex(h => names.includes(h));
+      if (i >= 0) col[key] = i;
+    });
+    if (col.name == null) return { error: 'Could not find a "Name" column. Download the template to see the expected columns.' };
+
+    const get = (r, k) => (col[k] == null ? undefined : String(r[col[k]] == null ? '' : r[col[k]]).trim());
+    const text0 = v => (v || '').replace(/^'(?=[=+\-@])/, '');
+    const byBarcode = new Map(), byName = new Map();
+    products.forEach(p => {
+      if (p.barcode) byBarcode.set(p.barcode.toLowerCase(), p);
+      byName.set(p.name.toLowerCase(), p);
+    });
+
+    const plan = { adds: [], updates: [], skipped: [], newCategories: new Set(), colsFound: Object.keys(col) };
+    const seen = new Map();   // key in file -> index in adds/updates (last row wins)
+    rows.slice(1).forEach((r, idx) => {
+      const line = idx + 2;
+      const name = text0(get(r, 'name'));
+      if (!name) { plan.skipped.push(`Row ${line}: no name`); return; }
+      const rec = { name };
+      let bad = null;
+      const numField = (k, label, int) => {
+        const raw = get(r, k);
+        if (raw === undefined || raw === '') return;
+        const n = parseNum(raw);
+        if (Number.isNaN(n) || n < 0) { bad = `${label} "${raw}" is not a valid number`; return; }
+        rec[k] = int ? Math.round(n) : round2(n);
+      };
+      numField('price', 'Selling price'); numField('cost', 'Cost price'); numField('stock', 'Stock', true); numField('lowStock', 'Low stock', true);
+      if (bad) { plan.skipped.push(`Row ${line} (${name}): ${bad}`); return; }
+      const cat = get(r, 'category'); if (cat !== undefined && cat !== '') rec.category = normalizeCategoryWith(text0(cat), plan);
+      const unit = get(r, 'unit'); if (unit) rec.unit = text0(unit);
+      const bc = get(r, 'barcode'); if (bc) rec.barcode = text0(bc);
+      const nt = get(r, 'notes'); if (nt) rec.notes = text0(nt);
+
+      const existing = (rec.barcode && byBarcode.get(rec.barcode.toLowerCase())) || byName.get(name.toLowerCase());
+      const key = existing ? 'id:' + existing.id : 'new:' + (rec.barcode || name).toLowerCase();
+      if (seen.has(key)) {          // same product twice in the file: last row wins
+        const target = seen.get(key);
+        Object.assign(target.rec, rec);
+        plan.skipped.push(`Row ${line} (${name}): duplicate in file – merged into the earlier row`);
+        return;
+      }
+      const entry = existing ? { existing, rec } : { rec };
+      seen.set(key, entry);
+      (existing ? plan.updates : plan.adds).push(entry);
+    });
+
+    // Free-plan product limit applies to NEW products only
+    if (window.HisablyFreemium) {
+      const { limits, key } = HisablyFreemium.effectivePlan();
+      const room = key === 'blocked' ? 0 : Math.max(0, limits.products - products.length);
+      if (plan.adds.length > room) {
+        const cut = plan.adds.length - room;
+        plan.adds.slice(room).forEach(e => plan.skipped.push(`${e.rec.name}: not added – plan limit of ${limits.products} products`));
+        plan.adds = plan.adds.slice(0, room);
+        plan.limited = cut;
+      }
+    }
+    plan.updateStock = !!(opts && opts.updateStock);
+    return plan;
+  }
+  function normalizeCategoryWith(name, plan) {
+    const c = normalizeCategory(name);
+    if (c && !categoryList().some(x => x.toLowerCase() === c.toLowerCase())) {
+      // keep one spelling for categories new in this file
+      const hit = [...plan.newCategories].find(x => x.toLowerCase() === c.toLowerCase());
+      if (hit) return hit;
+      plan.newCategories.add(c);
+    }
+    return c;
+  }
+
+  function applyImport(plan) {
+    const now = new Date().toISOString();
+    let added = 0, updated = 0;
+    plan.adds.forEach(({ rec }) => {
+      const p = {
+        id: uid(), name: rec.name, category: rec.category || '', price: rec.price || 0, cost: rec.cost || 0,
+        stock: rec.stock || 0, unit: rec.unit || 'pcs', lowStock: rec.lowStock ?? settings.lowStockDefault,
+        barcode: rec.barcode || '', notes: rec.notes || '', createdAt: now
+      };
+      products.push(p); added++;
+      if (p.stock > 0) stockMovements.unshift({ id: uid(), productId: p.id, productName: p.name, type: 'in', qty: p.stock, date: now, note: 'Opening stock (import)' });
+    });
+    plan.updates.forEach(({ existing, rec }) => {
+      ['category', 'price', 'cost', 'unit', 'lowStock', 'barcode', 'notes'].forEach(k => { if (rec[k] !== undefined) existing[k] = rec[k]; });
+      if (plan.updateStock && rec.stock !== undefined && rec.stock !== existing.stock) {
+        const diff = rec.stock - existing.stock;
+        existing.stock = rec.stock;
+        stockMovements.unshift({ id: uid(), productId: existing.id, productName: existing.name, type: diff > 0 ? 'in' : 'out', qty: Math.abs(diff), date: now, note: 'Import adjustment' });
+      }
+      updated++;
+    });
+    persist();
+    return { added, updated };
+  }
+
+  let pendingImportText = null;
+
+  function openBulkModal() {
+    const undo = load('sb_price_undo_v1', null);
+    $('#modalRoot').innerHTML = `
+      <div class="modal-overlay">
+        <div class="modal-sheet">
+          <div class="modal-handle"></div>
+          <div class="modal-header">
+            <h3 class="modal-title">Bulk tools</h3>
+            <button class="modal-close" data-action="close-modal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+          </div>
+          <div class="menu-list">
+            <button class="menu-item" data-action="bulk-price"><div>Change prices in bulk<span class="menu-sub">+/− by % or by ${escapeHtml(settings.currency)} amount</span></div></button>
+            <button class="menu-item" data-action="bulk-export"><div>Export products (CSV)<span class="menu-sub">Opens in Excel / Google Sheets</span></div></button>
+            <button class="menu-item" data-action="bulk-import-pick"><div>Import products (CSV)<span class="menu-sub">Add new or update existing</span></div></button>
+            <button class="menu-item" data-action="bulk-template"><div>Download blank CSV template</div></button>
+            ${undo ? `<button class="menu-item" data-action="bulk-undo"><div>Undo last price change<span class="menu-sub">${escapeHtml(undo.label)} · ${formatDate(undo.at)}</span></div></button>` : ''}
+          </div>
+          <input type="file" id="bulkImportFile" accept=".csv,text/csv,text/plain" style="display:none" />
+        </div>
+      </div>`;
+  }
+
+  function openImportPreview(text) {
+    pendingImportText = text;
+    renderImportPreview(true);
+  }
+  function renderImportPreview(updateStock) {
+    const plan = planImport(pendingImportText, { updateStock });
+    if (plan.error) {
+      $('#modalRoot').innerHTML = modalShell('Import products', `<p class="text-sm" style="color:var(--danger)">${escapeHtml(plan.error)}</p>
+        <button class="btn btn-secondary btn-block mt-16" data-action="bulk-template">Download template</button>`);
+      return;
+    }
+    const cats = [...plan.newCategories];
+    const sample = [...plan.adds.slice(0, 3), ...plan.updates.slice(0, 3)].map(e => `<div class="text-sm">${e.existing ? 'Update' : 'Add'}: <strong>${escapeHtml(e.rec.name)}</strong>${e.rec.price != null ? ' · ' + settings.currency + ' ' + money(e.rec.price) : ''}</div>`).join('');
+    $('#modalRoot').innerHTML = modalShell('Import preview', `
+      <div class="stats-grid mb-16" style="grid-template-columns:repeat(3,1fr)">
+        <div class="stat-card"><div class="stat-label">New</div><div class="stat-value success">${plan.adds.length}</div></div>
+        <div class="stat-card"><div class="stat-label">Updated</div><div class="stat-value primary">${plan.updates.length}</div></div>
+        <div class="stat-card"><div class="stat-label">Skipped</div><div class="stat-value ${plan.skipped.length ? 'danger' : ''}">${plan.skipped.length}</div></div>
+      </div>
+      ${cats.length ? `<p class="text-sm text-secondary mb-8">New categories: ${cats.map(escapeHtml).join(', ')}</p>` : ''}
+      ${sample}
+      <label class="text-sm" style="display:flex;gap:8px;align-items:center;margin:14px 0">
+        <input type="checkbox" id="importUpdateStock" ${updateStock ? 'checked' : ''} /> Also set stock quantity of existing products from the file
+      </label>
+      ${plan.skipped.length ? `<details class="mb-12"><summary class="text-sm" style="cursor:pointer">Why were ${plan.skipped.length} rows skipped?</summary>
+        <div class="text-sm text-secondary" style="max-height:140px;overflow:auto;margin-top:6px">${plan.skipped.slice(0, 50).map(s => `<div>${escapeHtml(s)}</div>`).join('')}</div></details>` : ''}
+      ${plan.limited ? `<div class="plan-banner">Free plan limit reached – ${plan.limited} new product(s) not added. <button type="button" class="linkish" data-action="open-plans">Upgrade</button></div>` : ''}
+      <button class="btn btn-primary btn-block" data-action="bulk-import-confirm" ${plan.adds.length + plan.updates.length === 0 ? 'disabled' : ''}>Import ${plan.adds.length + plan.updates.length} product(s)</button>`);
+  }
+  function modalShell(title, inner) {
+    return `<div class="modal-overlay"><div class="modal-sheet"><div class="modal-handle"></div>
+      <div class="modal-header"><h3 class="modal-title">${title}</h3>
+      <button class="modal-close" data-action="close-modal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+      ${inner}</div></div>`;
+  }
+
+  // ---- bulk price change ----
+  function computeNewPrice(v, o) {
+    let n = o.type === 'percent' ? v * (1 + o.sign * o.value / 100) : v + o.sign * o.value;
+    n = Math.max(0, n);
+    if (o.round > 0) n = Math.round(n / o.round) * o.round;
+    return round2(n);
+  }
+  function bulkPriceOptions() {
+    const f = $('#bulkPriceForm');
+    if (!f) return null;
+    const fd = new FormData(f);
+    return {
+      scope: fd.get('scope') || '', field: fd.get('field') || 'price',
+      sign: fd.get('dir') === 'dec' ? -1 : 1, type: fd.get('type') || 'percent',
+      value: Math.max(0, parseFloat(fd.get('value')) || 0), round: parseFloat(fd.get('round')) || 0
+    };
+  }
+  function bulkTargets(scope) {
+    if (scope === '') return products;
+    if (scope === '__none__') return products.filter(p => !(p.category || '').trim());
+    return products.filter(p => (p.category || '').trim() === scope);
+  }
+  function openBulkPriceModal() {
+    const cats = categoryList();
+    const opt = (v, l) => `<option value="${escapeHtml(v)}">${escapeHtml(l)}</option>`;
+    $('#modalRoot').innerHTML = modalShell('Change prices in bulk', `
+      <form id="bulkPriceForm">
+        <div class="form-group"><label class="form-label">Apply to</label>
+          <select class="form-input" name="scope">
+            ${opt('', `All products (${products.length})`)}
+            ${cats.map(c => opt(c, `${c} (${bulkTargets(c).length})`)).join('')}
+            ${products.some(p => !(p.category || '').trim()) ? opt('__none__', `Uncategorized (${bulkTargets('__none__').length})`) : ''}
+          </select></div>
+        <div class="form-group"><label class="form-label">Which price</label>
+          <select class="form-input" name="field">${opt('price', 'Selling price')}${opt('cost', 'Cost price')}${opt('both', 'Both selling and cost')}</select></div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">Action</label>
+            <select class="form-input" name="dir">${opt('inc', 'Increase')}${opt('dec', 'Decrease')}</select></div>
+          <div class="form-group"><label class="form-label">By</label>
+            <select class="form-input" name="type">${opt('percent', 'Percentage (%)')}${opt('amount', `Amount (${settings.currency})`)}</select></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label" id="bulkValueLabel">Percentage</label>
+            <input class="form-input" type="number" name="value" min="0" step="0.01" placeholder="e.g. 10" /></div>
+          <div class="form-group"><label class="form-label">Round to</label>
+            <select class="form-input" name="round"><option value="0">No rounding</option><option value="1" selected>Nearest 1</option><option value="5">Nearest 5</option><option value="10">Nearest 10</option></select></div>
+        </div>
+        <div id="bulkPreview" class="card text-sm" style="padding:12px"></div>
+        <button type="submit" class="btn btn-primary btn-block mt-16" id="bulkApplyBtn" disabled>Apply</button>
+      </form>`);
+    const f = $('#bulkPriceForm');
+    f.addEventListener('input', updateBulkPreview);
+    f.addEventListener('change', updateBulkPreview);
+    f.addEventListener('submit', e => { e.preventDefault(); applyBulkPrice(); });
+    updateBulkPreview();
+  }
+  function updateBulkPreview() {
+    const o = bulkPriceOptions();
+    if (!o) return;
+    const lbl = $('#bulkValueLabel');
+    if (lbl) lbl.textContent = o.type === 'percent' ? 'Percentage (%)' : `Amount (${settings.currency})`;
+    const list = bulkTargets(o.scope);
+    const fields = o.field === 'both' ? ['price', 'cost'] : [o.field];
+    const prev = $('#bulkPreview'), btn = $('#bulkApplyBtn');
+    if (!prev) return;
+    if (!list.length) { prev.textContent = 'No products in this selection.'; btn.disabled = true; return; }
+    if (!o.value) { prev.textContent = `${list.length} product(s) selected. Enter a value to see the preview.`; btn.disabled = true; return; }
+    let changed = 0, zeroed = 0;
+    list.forEach(p => fields.forEach(k => {
+      const nv = computeNewPrice(p[k] || 0, o);
+      if (nv !== (p[k] || 0)) changed++;
+      if (nv === 0 && (p[k] || 0) > 0) zeroed++;
+    }));
+    const rows = list.slice(0, 4).map(p => fields.map(k => `<div>${escapeHtml(p.name)} <span class="text-secondary">(${k === 'price' ? 'sell' : 'cost'})</span>: ${money(p[k] || 0)} → <strong>${money(computeNewPrice(p[k] || 0, o))}</strong></div>`).join('')).join('');
+    prev.innerHTML = `<div class="mb-8"><strong>${list.length}</strong> product(s) will change.</div>${rows}${list.length > 4 ? `<div class="text-secondary">…and ${list.length - 4} more</div>` : ''}${zeroed ? `<div style="color:var(--danger);margin-top:6px">${zeroed} price(s) would drop to 0.</div>` : ''}`;
+    btn.disabled = false;
+    btn.textContent = `${o.sign > 0 ? 'Increase' : 'Decrease'} ${o.value}${o.type === 'percent' ? '%' : ' ' + settings.currency} on ${list.length} product(s)`;
+  }
+  function applyBulkPrice() {
+    const o = bulkPriceOptions();
+    if (!o || !o.value) return;
+    const list = bulkTargets(o.scope);
+    if (!list.length) return;
+    if (!confirm(`${o.sign > 0 ? 'Increase' : 'Decrease'} prices of ${list.length} product(s)? You can undo this from Bulk tools.`)) return;
+    const fields = o.field === 'both' ? ['price', 'cost'] : [o.field];
+    const snapshot = list.map(p => ({ id: p.id, price: p.price, cost: p.cost || 0 }));
+    list.forEach(p => fields.forEach(k => { p[k] = computeNewPrice(p[k] || 0, o); }));
+    save('sb_price_undo_v1', { at: new Date().toISOString(), label: `${o.sign > 0 ? '+' : '−'}${o.value}${o.type === 'percent' ? '%' : ' ' + settings.currency} · ${list.length} items`, items: snapshot });
+    persist();
+    closeModal();
+    toast(`Prices updated for ${list.length} product(s)`);
+    render();
+  }
+  function undoBulkPrice() {
+    const u = load('sb_price_undo_v1', null);
+    if (!u) return;
+    if (!confirm(`Restore the previous prices of ${u.items.length} product(s)?`)) return;
+    let n = 0;
+    u.items.forEach(s => { const p = products.find(x => x.id === s.id); if (p) { p.price = s.price; p.cost = s.cost; n++; } });
+    localStorage.removeItem('sb_price_undo_v1');
+    persist();
+    closeModal();
+    toast(`Restored ${n} product(s)`);
+    render();
+  }
+
+  // ---------- Barcode Scanner ----------
+
+  function resizeImageFile(file, max, cb) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if (w > max || h > max) {
+          if (w > h) { h = Math.round(h * max / w); w = max; }
+          else { w = Math.round(w * max / h); h = max; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        cb(canvas.toDataURL('image/png'));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function bindBrandFile(inputId, key, previewId, label) {
+    const fileInput = document.getElementById(inputId);
+    if (!fileInput) { toast('Open Business Profile first'); return; }
+    fileInput.onchange = () => {
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) return;
+      resizeImageFile(file, key === 'signature' ? 400 : 512, (dataUrl) => {
+        settings[key] = dataUrl;
+        const prev = document.getElementById(previewId);
+        if (prev) prev.innerHTML = `<img src="${dataUrl}" alt="${label}" />`;
+        persist();
+        toast(label + ' uploaded');
+        // refresh profile view previews without full navigation loss
+        if (currentView === 'business-profile') render();
+      });
+    };
+    fileInput.click();
+  }
+
+  function startScanner(onResult) {
+    const root = $('#scannerRoot');
+    root.innerHTML = `
+      <div class="scanner-header">
+        <span style="font-weight:600">Scan Barcode / QR</span>
+        <button class="scanner-close" data-action="stop-scanner">✕</button>
+      </div>
+      <div id="qr-reader" style="width:100%;height:100%;"></div>`;
+    root.classList.add('active');
+
+    scanner = new Html5Qrcode('qr-reader');
+    scanner.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: { width: 250, height: 250 } },
+      (decoded) => {
+        stopScanner();
+        onResult(decoded);
+      },
+      () => {}
+    ).catch(err => {
+      toast('Camera not available or permission denied');
+      stopScanner();
+    });
+  }
+
+  function stopScanner() {
+    if (scanner) {
+      try { const r = scanner.stop(); if (r && r.catch) r.catch(() => {}); } catch (e) {}
+      scanner = null;
+    }
+    const root = $('#scannerRoot');
+    root.classList.remove('active');
+    root.innerHTML = '';
+  }
+
+  // ============================================================
+  //  Core modals (add / edit forms) + field editors
+  // ============================================================
+  const X_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+
+  function closeModal() {
+    const r = $('#modalRoot');
+    if (r) r.innerHTML = '';
+    editingId = null;
+  }
+  function numOrBlank(v) {
+    const n = parseFloat(v);
+    return isFinite(n) ? n : null;
+  }
+  // custom additional fields: settings.itemFields / partyFields / txnFields = [{label,on}]
+  function activeFields(key) {
+    return (settings[key] || []).filter(f => f && f.on && String(f.label || '').trim());
+  }
+  function extraFieldsHTML(key, values) {
+    const list = activeFields(key);
+    if (!list.length) return '';
+    return `<div class="form-row" style="flex-wrap:wrap">${list.map((f, i) => `
+      <div class="form-group" style="min-width:140px"><label class="form-label">${escapeHtml(f.label)}</label>
+      <input class="form-input" data-extra="${escapeHtml(f.label)}" value="${escapeHtml((values || {})[f.label] || '')}" maxlength="60" /></div>`).join('')}</div>`;
+  }
+  function readExtra(form) {
+    const out = {};
+    form.querySelectorAll('[data-extra]').forEach(el => { const v = el.value.trim(); if (v) out[el.dataset.extra] = v; });
+    return out;
+  }
+
+  function openProductModal(p) {
+    editingId = p ? p.id : null;
+    const cats = categoryList();
+    const units = ['pcs', 'kg', 'g', 'ltr', 'ml', 'box', 'pack', 'dozen', 'set', 'meter', 'ft', 'sq ft', 'bag'];
+    const showBarcode = settings.enableBarcode || (p && p.barcode);
+    $('#modalRoot').innerHTML = modalShell(p ? 'Edit Item' : 'Add Item', `
+      <form id="productForm" autocomplete="off">
+        <div class="form-group"><label class="form-label">Item name *</label>
+          <input class="form-input" name="name" required maxlength="80" value="${escapeHtml(p ? p.name : '')}" placeholder="e.g. Steel rod 12mm" /></div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">Sale price (${escapeHtml(settings.currency)})</label>
+            <input class="form-input" name="price" type="number" inputmode="decimal" min="0" step="any" value="${p ? p.price : ''}" placeholder="0" /></div>
+          ${settings.enableDisplayPurchasePrice !== false ? `<div class="form-group"><label class="form-label">Purchase price</label>
+            <input class="form-input" name="cost" type="number" inputmode="decimal" min="0" step="any" value="${p && p.cost != null ? p.cost : ''}" placeholder="0" /></div>` : ''}
+        </div>
+        ${settings.enableStock !== false ? `<div class="form-row">
+          <div class="form-group"><label class="form-label">${p ? 'Current stock' : 'Opening stock'}</label>
+            <input class="form-input" name="stock" type="number" inputmode="decimal" step="any" value="${p ? p.stock : ''}" placeholder="0" /></div>
+          <div class="form-group"><label class="form-label">Low-stock alert</label>
+            <input class="form-input" name="lowStock" type="number" inputmode="decimal" min="0" step="any" value="${p && p.lowStock != null ? p.lowStock : ''}" placeholder="${settings.lowStockDefault || 5}" /></div>
+        </div>` : ''}
+        <div class="form-row">
+          ${settings.enableItemUnits !== false ? `<div class="form-group"><label class="form-label">Unit</label>
+            <input class="form-input" name="unit" list="unitList" value="${escapeHtml(p ? (p.unit || '') : (settings.defaultUnit || 'pcs'))}" maxlength="12" />
+            <datalist id="unitList">${units.map(u => `<option value="${u}">`).join('')}</datalist></div>` : ''}
+          ${settings.enableItemCategory !== false ? `<div class="form-group"><label class="form-label">Category</label>
+            <input class="form-input" name="category" list="catList" value="${escapeHtml(p ? (p.category || '') : '')}" maxlength="40" placeholder="Optional" />
+            <datalist id="catList">${cats.map(c => `<option value="${escapeHtml(c)}">`).join('')}</datalist></div>` : ''}
+        </div>
+        ${showBarcode ? `<div class="form-group"><label class="form-label">Barcode / SKU</label>
+          <div class="input-with-btn"><input class="form-input" name="barcode" id="pmBarcode" value="${escapeHtml(p ? (p.barcode || '') : '')}" maxlength="40" />
+          <button type="button" class="btn btn-outline btn-sm" id="pmScan" style="height:48px">Scan</button></div></div>` : ''}
+        ${settings.enableItemTax ? `<div class="form-group"><label class="form-label">Item tax %</label>
+          <input class="form-input" name="taxRate" type="number" inputmode="decimal" min="0" step="any" value="${p && p.taxRate != null ? p.taxRate : ''}" /></div>` : ''}
+        ${settings.enableItemDiscount ? `<div class="form-group"><label class="form-label">Item discount %</label>
+          <input class="form-input" name="discount" type="number" inputmode="decimal" min="0" max="100" step="any" value="${p && p.discount != null ? p.discount : ''}" /></div>` : ''}
+        ${settings.enableWholesale ? `<div class="form-group"><label class="form-label">Wholesale price</label>
+          <input class="form-input" name="wholesale" type="number" inputmode="decimal" min="0" step="any" value="${p && p.wholesale != null ? p.wholesale : ''}" /></div>` : ''}
+        ${extraFieldsHTML('itemFields', p && p.extra)}
+        ${settings.enableItemDescription ? `<div class="form-group"><label class="form-label">Description</label>
+          <input class="form-input" name="desc" maxlength="120" value="${escapeHtml(p ? (p.desc || '') : '')}" /></div>` : ''}
+        <div class="form-group"><label class="form-label">Notes</label>
+          <input class="form-input" name="notes" maxlength="120" value="${escapeHtml(p ? (p.notes || '') : '')}" placeholder="Optional" /></div>
+        <button type="submit" class="btn btn-primary btn-block">${p ? 'Save changes' : 'Save item'}</button>
+      </form>
+      ${p && settings.enableStock !== false ? `<div class="form-group mt-16"><label class="form-label">Add stock (purchase / stock-in)</label>
+        <div class="input-with-btn"><input class="form-input" id="stockInQty" type="number" inputmode="decimal" min="0" placeholder="Quantity" />
+        <button type="button" class="btn btn-secondary btn-sm" style="height:48px" data-action="stock-in" data-id="${p.id}">Add</button></div></div>` : ''}
+      ${p ? `<button type="button" class="btn btn-ghost btn-block mt-12" style="color:var(--danger)" data-action="delete-product">Delete item</button>` : ''}`);
+    const f = $('#productForm');
+    const scan = $('#pmScan');
+    if (scan) scan.onclick = () => startScanner(code => { const b = $('#pmBarcode'); if (b) b.value = code; });
+    f.addEventListener('submit', e => {
+      e.preventDefault();
+      const fd = new FormData(f);
+      const name = String(fd.get('name') || '').trim();
+      if (!name) { toast('Enter the item name'); return; }
+      const dup = products.find(x => x.name.trim().toLowerCase() === name.toLowerCase() && (!p || x.id !== p.id));
+      if (dup) { toast('An item with this name already exists'); return; }
+      const price = Math.max(0, numOrBlank(fd.get('price')) || 0);
+      const rec = { name, price, unit: String(fd.get('unit') || '').trim() || 'pcs', category: normalizeCategory(fd.get('category')),
+        notes: String(fd.get('notes') || '').trim(), extra: readExtra(f) };
+      if (fd.has('cost')) rec.cost = Math.max(0, numOrBlank(fd.get('cost')) || 0); else if (!p) rec.cost = 0;
+      if (fd.has('barcode')) rec.barcode = String(fd.get('barcode') || '').trim();
+      if (fd.has('desc')) rec.desc = String(fd.get('desc') || '').trim();
+      ['taxRate', 'discount', 'wholesale'].forEach(k => { if (fd.has(k)) { const n = numOrBlank(fd.get(k)); if (n == null) rec[k] = undefined; else rec[k] = n; } });
+      if (rec.barcode) {
+        const bd = products.find(x => (x.barcode || '').toLowerCase() === rec.barcode.toLowerCase() && (!p || x.id !== p.id));
+        if (bd) { toast('Barcode already used by ' + bd.name); return; }
+      }
+      const stockVal = fd.has('stock') ? (numOrBlank(fd.get('stock')) || 0) : (p ? p.stock : 0);
+      const low = fd.has('lowStock') ? numOrBlank(fd.get('lowStock')) : (p ? p.lowStock : null);
+      const now = new Date().toISOString();
+      if (!p) {
+        if (!enforceLimit('products', products.length)) return;
+        const np = Object.assign({ id: uid(), stock: stockVal }, rec);
+        if (low != null) np.lowStock = low;
+        products.push(np);
+        if (stockVal > 0) stockMovements.unshift({ id: uid(), productId: np.id, productName: np.name, type: 'in', qty: stockVal, date: now, note: 'Opening stock' });
+        toast('Item added');
+      } else {
+        const diff = round2(stockVal - (p.stock || 0));
+        if (diff !== 0) stockMovements.unshift({ id: uid(), productId: p.id, productName: name, type: diff > 0 ? 'in' : 'out', qty: Math.abs(diff), date: now, note: 'Stock edited' });
+        Object.assign(p, rec, { stock: stockVal });
+        if (low == null) delete p.lowStock; else p.lowStock = low;
+        toast('Item updated');
+      }
+      persist();
+      closeModal();
+      render();
+    });
+  }
+
+  function openCustomerModal(c) {
+    editingId = c ? c.id : null;
+    $('#modalRoot').innerHTML = modalShell(c ? 'Edit Party' : 'Add Party', `
+      <form id="customerForm" autocomplete="off">
+        <div class="form-group"><label class="form-label">Party name *</label>
+          <input class="form-input" name="name" required maxlength="80" value="${escapeHtml(c ? c.name : '')}" /></div>
+        ${settings.enableBillingName ? `<div class="form-group"><label class="form-label">Billing name</label>
+          <input class="form-input" name="billingName" maxlength="80" value="${escapeHtml(c ? (c.billingName || '') : '')}" /></div>` : ''}
+        <div class="form-group"><label class="form-label">Phone</label>
+          <input class="form-input" name="phone" type="tel" inputmode="tel" maxlength="20" value="${escapeHtml(c ? (c.phone || '') : '')}" placeholder="03XX-XXXXXXX" /></div>
+        <div class="form-group"><label class="form-label">Address</label>
+          <input class="form-input" name="address" maxlength="160" value="${escapeHtml(c ? (c.address || '') : '')}" /></div>
+        ${settings.enablePartyShipping ? `<div class="form-group"><label class="form-label">Shipping address</label>
+          <input class="form-input" name="shipping" maxlength="160" value="${escapeHtml(c ? (c.shipping || '') : '')}" /></div>` : ''}
+        ${settings.enablePartyTIN ? `<div class="form-group"><label class="form-label">TIN / NTN</label>
+          <input class="form-input" name="tin" maxlength="30" value="${escapeHtml(c ? (c.tin || '') : '')}" /></div>` : ''}
+        ${settings.enablePartyGrouping ? `<div class="form-group"><label class="form-label">Party group</label>
+          <input class="form-input" name="group" maxlength="40" value="${escapeHtml(c ? (c.group || '') : '')}" placeholder="e.g. Retail, Wholesale" /></div>` : ''}
+        ${extraFieldsHTML('partyFields', c && c.extra)}
+        <div class="form-group"><label class="form-label">Notes</label>
+          <input class="form-input" name="notes" maxlength="160" value="${escapeHtml(c ? (c.notes || '') : '')}" /></div>
+        <button type="submit" class="btn btn-primary btn-block">${c ? 'Save changes' : 'Save party'}</button>
+      </form>
+      ${c ? `<button type="button" class="btn btn-ghost btn-block mt-12" style="color:var(--danger)" data-action="delete-customer">Delete party</button>` : ''}`);
+    const f = $('#customerForm');
+    f.addEventListener('submit', e => {
+      e.preventDefault();
+      const fd = new FormData(f);
+      const name = String(fd.get('name') || '').trim();
+      if (!name) { toast('Enter the party name'); return; }
+      const dup = customers.find(x => x.name.trim().toLowerCase() === name.toLowerCase() && (!c || x.id !== c.id));
+      if (dup) { toast('A party with this name already exists'); return; }
+      const rec = { name, phone: String(fd.get('phone') || '').trim(), address: String(fd.get('address') || '').trim(), notes: String(fd.get('notes') || '').trim(), extra: readExtra(f) };
+      ['billingName', 'shipping', 'tin', 'group'].forEach(k => { if (fd.has(k)) rec[k] = String(fd.get(k) || '').trim(); });
+      if (c) {
+        // keep old invoices attached when the name changes
+        const oldName = c.name;
+        Object.assign(c, rec);
+        if (oldName !== name) invoices.forEach(i => { if (i.customerId === c.id) i.customerName = name; });
+        toast('Party updated');
+      } else {
+        if (!enforceLimit('customers', customers.length)) return;
+        customers.push(Object.assign({ id: uid() }, rec));
+        toast('Party added');
+      }
+      persist(); closeModal(); render();
+    });
+  }
+
+  function openSupplierModal(s) {
+    editingId = s ? s.id : null;
+    $('#modalRoot').innerHTML = modalShell(s ? 'Edit Supplier' : 'Add Supplier', `
+      <form id="supplierForm" autocomplete="off">
+        <div class="form-group"><label class="form-label">Supplier name *</label>
+          <input class="form-input" name="name" required maxlength="80" value="${escapeHtml(s ? s.name : '')}" /></div>
+        <div class="form-group"><label class="form-label">Phone</label>
+          <input class="form-input" name="phone" type="tel" inputmode="tel" maxlength="20" value="${escapeHtml(s ? (s.phone || '') : '')}" /></div>
+        <div class="form-group"><label class="form-label">Address</label>
+          <input class="form-input" name="address" maxlength="160" value="${escapeHtml(s ? (s.address || '') : '')}" /></div>
+        <div class="form-group"><label class="form-label">Notes</label>
+          <input class="form-input" name="notes" maxlength="160" value="${escapeHtml(s ? (s.notes || '') : '')}" /></div>
+        <button type="submit" class="btn btn-primary btn-block">${s ? 'Save changes' : 'Save supplier'}</button>
+      </form>
+      ${s ? `<button type="button" class="btn btn-ghost btn-block mt-12" style="color:var(--danger)" data-action="delete-supplier">Delete supplier</button>` : ''}`);
+    $('#supplierForm').addEventListener('submit', e => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const name = String(fd.get('name') || '').trim();
+      if (!name) { toast('Enter the supplier name'); return; }
+      const dup = suppliers.find(x => x.name.trim().toLowerCase() === name.toLowerCase() && (!s || x.id !== s.id));
+      if (dup) { toast('A supplier with this name already exists'); return; }
+      const rec = { name, phone: String(fd.get('phone') || '').trim(), address: String(fd.get('address') || '').trim(), notes: String(fd.get('notes') || '').trim() };
+      if (s) {
+        const oldName = s.name;
+        Object.assign(s, rec);
+        if (oldName !== name) purchases.forEach(p => { if (p.supplierId === s.id) p.supplierName = name; });
+        toast('Supplier updated');
+      } else {
+        if (!enforceLimit('suppliers', suppliers.length)) return;
+        suppliers.push(Object.assign({ id: uid() }, rec));
+        toast('Supplier added');
+      }
+      persist(); closeModal(); render();
+    });
+  }
+
+  const DEFAULT_EXPENSE_CATS = ['Manufacturing Expense', 'Petrol', 'Rent', 'Salary', 'Tea', 'Transport'];
+  function expenseCategories() {
+    const extra = (settings.expenseCats || []);
+    const used = expenses.map(e => e.category).filter(Boolean);
+    return [...new Set([...DEFAULT_EXPENSE_CATS, ...extra, ...used])];
+  }
+  function openExpenseModal(ex, presetCat) {
+    editingId = ex ? ex.id : null;
+    const today = new Date().toISOString().slice(0, 10);
+    const dval = ex ? dayKey(ex.date) : today;
+    const cats = expenseCategories();
+    $('#modalRoot').innerHTML = modalShell(ex ? 'Edit Expense' : 'Add Expense', `
+      <form id="expenseForm" autocomplete="off">
+        <div class="form-group"><label class="form-label">Expense category *</label>
+          <input class="form-input" name="category" list="expCatList" required maxlength="40" value="${escapeHtml(ex ? (ex.category || '') : (presetCat || ''))}" placeholder="e.g. Rent, Petrol" />
+          <datalist id="expCatList">${cats.map(c => `<option value="${escapeHtml(c)}">`).join('')}</datalist></div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">Amount (${escapeHtml(settings.currency)}) *</label>
+            <input class="form-input" name="amount" type="number" inputmode="decimal" min="0" step="any" required value="${ex ? ex.amount : ''}" /></div>
+          <div class="form-group"><label class="form-label">Date</label>
+            <input class="form-input" name="date" type="date" max="${today}" value="${dval}" /></div>
+        </div>
+        <div class="form-group"><label class="form-label">Item / title</label>
+          <input class="form-input" name="title" maxlength="60" value="${escapeHtml(ex ? (ex.title || '') : '')}" placeholder="Optional, e.g. Office tea" /></div>
+        <div class="form-group"><label class="form-label">Paid from</label>
+          <div class="chip-row" id="exMode">${['Cash', 'Bank', 'Online', 'Cheque'].map(m => `<button type="button" class="cat-chip${((ex && ex.mode) || 'Cash') === m ? ' active' : ''}" data-mode="${m}">${m}</button>`).join('')}</div></div>
+        <div class="form-group"><label class="form-label">Note</label>
+          <input class="form-input" name="note" maxlength="120" value="${escapeHtml(ex ? (ex.note || '') : '')}" /></div>
+        <button type="submit" class="btn btn-primary btn-block">${ex ? 'Save changes' : 'Save expense'}</button>
+      </form>
+      ${ex ? `<button type="button" class="btn btn-ghost btn-block mt-12" style="color:var(--danger)" data-action="delete-expense">Delete expense</button>` : ''}`);
+    let mode = (ex && ex.mode) || 'Cash';
+    document.querySelectorAll('#exMode .cat-chip').forEach(b => b.addEventListener('click', () => {
+      mode = b.dataset.mode; document.querySelectorAll('#exMode .cat-chip').forEach(x => x.classList.toggle('active', x === b));
+    }));
+    $('#expenseForm').addEventListener('submit', e => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const category = String(fd.get('category') || '').trim();
+      const amount = round2(numOrBlank(fd.get('amount')) || 0);
+      if (!category) { toast('Choose a category'); return; }
+      if (amount <= 0) { toast('Enter the amount'); return; }
+      const d = fd.get('date');
+      const dateIso = (d && d !== today) ? new Date(d + 'T12:00:00').toISOString() : (ex && dayKey(ex.date) === d ? ex.date : new Date().toISOString());
+      const rec = { category, amount, title: String(fd.get('title') || '').trim(), note: String(fd.get('note') || '').trim(), mode, date: dateIso };
+      if (ex) { Object.assign(ex, rec); toast('Expense updated'); }
+      else { expenses.unshift(Object.assign({ id: uid() }, rec)); toast('Expense added'); }
+      if (!DEFAULT_EXPENSE_CATS.includes(category)) {
+        settings.expenseCats = settings.expenseCats || [];
+        if (!settings.expenseCats.includes(category)) settings.expenseCats.push(category);
+      }
+      persist(); closeModal(); render();
+    });
+  }
+
+  // ---- "Additional fields" editors (transaction / party / item) ----
+  function openFieldsModal(title, key, max) {
+    const cur = settings[key] || [];
+    const rows = Array.from({ length: max }, (_, i) => cur[i] || { label: '', on: false });
+    $('#modalRoot').innerHTML = modalShell(title, `
+      <p class="text-sm text-secondary mb-12">Add your own fields. Turn a field on to show it on the form${key === 'txnFields' ? ' and print it on the invoice' : ''}.</p>
+      <form id="fieldsForm">
+        ${rows.map((r, i) => `<div class="field-edit-row">
+          <input class="form-input" data-fl="${i}" maxlength="24" placeholder="Field ${i + 1} name" value="${escapeHtml(r.label || '')}" />
+          <label class="toggle"><input type="checkbox" data-fo="${i}" ${r.on ? 'checked' : ''} /><span class="toggle-track"></span></label>
+        </div>`).join('')}
+        <button type="submit" class="btn btn-primary btn-block mt-16">Save</button>
+      </form>`);
+    $('#fieldsForm').addEventListener('submit', e => {
+      e.preventDefault();
+      settings[key] = rows.map((_, i) => ({ label: ($(`[data-fl="${i}"]`).value || '').trim(), on: $(`[data-fo="${i}"]`).checked }));
+      persist(); closeModal(); toast('Saved'); render();
+    });
+  }
+  function openTermsModal() {
+    $('#modalRoot').innerHTML = modalShell('Terms & Conditions', `
+      <p class="text-sm text-secondary mb-12">Printed at the bottom of invoices.</p>
+      <form id="termsForm">
+        <textarea class="form-input" id="termsText" rows="6" maxlength="600" style="height:auto">${escapeHtml(settings.termsText || 'Thank you for doing business with us.')}</textarea>
+        <button type="submit" class="btn btn-primary btn-block mt-16">Save</button>
+      </form>`);
+    $('#termsForm').addEventListener('submit', e => {
+      e.preventDefault();
+      settings.termsText = $('#termsText').value.trim();
+      persist(); closeModal(); toast('Terms saved');
+    });
+  }
+  function openDueDatesModal() {
+    $('#modalRoot').innerHTML = modalShell('Due Dates & Payment Terms', `
+      <form id="dueForm">
+        <div class="list-row" style="padding:8px 0"><div class="list-row-left"><div class="list-row-label">Auto-fill due date on credit sales</div></div>
+          <label class="toggle"><input type="checkbox" id="dueOn" ${settings.enableDueDates ? 'checked' : ''}/><span class="toggle-track"></span></label></div>
+        <div class="form-group mt-12"><label class="form-label">Default payment term (days)</label>
+          <input class="form-input" id="dueDays" type="number" inputmode="numeric" min="0" max="365" value="${settings.dueDays != null ? settings.dueDays : 15}" /></div>
+        <div class="chip-row mb-8">${[7, 15, 30, 45, 60].map(d => `<button type="button" class="cat-chip" data-days="${d}">Net ${d}</button>`).join('')}</div>
+        <button type="submit" class="btn btn-primary btn-block mt-16">Save</button>
+      </form>`);
+    document.querySelectorAll('[data-days]').forEach(b => b.addEventListener('click', () => { $('#dueDays').value = b.dataset.days; $('#dueOn').checked = true; }));
+    $('#dueForm').addEventListener('submit', e => {
+      e.preventDefault();
+      settings.enableDueDates = $('#dueOn').checked;
+      settings.dueDays = Math.max(0, parseInt($('#dueDays').value, 10) || 0);
+      persist(); closeModal(); toast('Saved');
+    });
+  }
+
+  // ============================================================
+  //  Vyapar-style screens: Home, Dashboard, Menu, Expenses, Cash, utilities
+  // ============================================================
+  const IC = {
+    home: '<path d="M3 11l9-8 9 8v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>',
+    store: '<path d="M3 9l1.5-5h15L21 9"/><path d="M3 9a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0"/><path d="M5 12v8h14v-8"/><path d="M10 20v-5h4v5"/>',
+    bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>',
+    gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    receipt: '<path d="M5 3h14v18l-3-2-2 2-2-2-2 2-2-2-3 2z"/><path d="M12 8v6M9 11h6"/>',
+    report: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 3v2h6V3M9 12h6M9 16h4"/>',
+    chevR: '<path d="M9 6l6 6-6 6"/>', chevD: '<path d="M6 9l6 6 6-6"/>',
+    print: '<path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="7"/>',
+    share: '<path d="M14 4l7 6-7 6v-4c-6 0-9 2-11 6 1-7 4-11 11-12z"/>',
+    dots: '<circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/>',
+    bank: '<path d="M3 10l9-6 9 6M5 10v8M9 10v8M15 10v8M19 10v8M3 21h18"/>',
+    book: '<path d="M12 6c-2-1.5-5-2-9-2v14c4 0 7 .5 9 2 2-1.5 5-2 9-2V4c-4 0-7 .5-9 2zM12 6v14"/>',
+    docs: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>',
+    pl: '<circle cx="12" cy="12" r="9"/><path d="M9 8v8M9 8l-2 2M15 16V8M15 16l2-2"/>',
+    cash: '<rect x="2" y="7" width="17" height="11" rx="2"/><circle cx="10.5" cy="12.5" r="2.5"/><path d="M6 4h14a2 2 0 0 1 2 2v9"/>',
+    cheque: '<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20M6 15h5"/>',
+    loan: '<circle cx="12" cy="12" r="9"/><path d="M9 9h.01M15 15h.01M15 9l-6 6"/>',
+    sync: '<path d="M21 12a9 9 0 0 0-15-6.7L3 8M3 3v5h5M3 12a9 9 0 0 0 15 6.7L21 16M21 21v-5h-5"/>',
+    company: '<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/>',
+    backup: '<ellipse cx="11" cy="6" rx="7" ry="3"/><path d="M4 6v6c0 1.7 3 3 7 3M4 12v6c0 1.7 3 3 7 3M18 13v6M15 16l3-3 3 3"/>',
+    inbox: '<path d="M3 13l3-8h12l3 8v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="M3 13h5l1 3h6l1-3h5"/>',
+    sale: '<ellipse cx="9" cy="6" rx="6" ry="3"/><path d="M3 6v5c0 1.7 2.7 3 6 3M3 11v5c0 1.7 2.7 3 6 3M21 13c0 1.7-2.7 3-6 3s-6-1.3-6-3 2.7-3 6-3 6 1.3 6 3zM9 16v4c0 1.7 2.7 3 6 3"/>',
+    cart: '<circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M2 3h3l2.7 12.4a2 2 0 0 0 2 1.6h8a2 2 0 0 0 2-1.6L21 7H6"/>',
+    wallet: '<path d="M4 7a2 2 0 0 1 2-2h12v4M4 7v11a2 2 0 0 0 2 2h14V9H6a2 2 0 0 1-2-2z"/><circle cx="16.5" cy="14.5" r="1"/>',
+    crown: '<path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z" fill="currentColor"/>',
+    tag: '<path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="8.5" r="1.3"/>',
+    users: '<circle cx="9" cy="8" r="3.5"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M16 4.5a3.5 3.5 0 0 1 0 7M18 15c2.5.6 4 2.4 4 6"/>',
+    calc: '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h8M8 11h2M14 11h2M8 15h2M14 15h2M8 19h2M14 19h2"/>',
+    trash: '<path d="M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15M10 11v6M14 11v6"/>',
+    check: '<path d="M20 6L9 17l-5-5"/>',
+    barcode: '<path d="M3 5v14M7 5v14M10 5v14M14 5v14M17 5v14M21 5v14"/>',
+    box: '<path d="M21 8l-9-5-9 5v8l9 5 9-5z"/><path d="M3.3 7.5L12 12l8.7-4.5M12 22V12"/>',
+    chart: '<path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/>',
+    verify: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M8.5 12l2.5 2.5L15.5 10"/>',
+    desktop: '<rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>',
+    whatsapp: '<path d="M3 21l1.6-5A9 9 0 1 1 8 19.4z"/><path d="M9 9c0 3 3 6 6 6l1.5-1.5-2-1-1 .7c-1-.4-2-1.4-2.4-2.4l.7-1-1-2z"/>'
+  };
+  function ico(n, cls) { return `<svg class="${cls || ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${IC[n] || ''}</svg>`; }
+  const cur$ = () => settings.currency || 'Rs';
+  const fmtAmt = n => cur$() + ' ' + (Number(n) || 0).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  let homeTab = 'txn', homeQuery = '';
+  // ---- Trash (Recycle Bin) ----
+  function trashPush(kind, obj) {
+    const t = load('sb_recycle_v1', []);
+    t.unshift({ id: uid(), kind, obj, at: new Date().toISOString() });
+    save('sb_recycle_v1', t.slice(0, 200));
+  }
+  // ---- HOME ----
+  function allTxns() {
+    const list = invoices.map(i => ({ kind: i.docType === 'return' ? 'return' : (i.docType === 'estimate' ? 'estimate' : 'sale'), doc: i, date: i.date, name: i.customerName || 'Walk-in Customer', no: i.number, total: i.total || 0, paid: i.paidAmount || 0 }));
+    purchases.forEach(p => list.push({ kind: 'purchase', doc: p, date: p.date, name: p.supplierName, no: p.number, total: p.total || 0, paid: p.paidAmount || 0 }));
+    return list.sort((a, b) => new Date(b.date) - new Date(a.date));
+  }
+  function viewHome() {
+    const q = homeQuery.trim().toLowerCase();
+    const tabs = `<div class="vy-tabs"><button class="vy-tab ${homeTab === 'txn' ? 'active' : ''}" data-action="home-tab" data-tab="txn">Transaction Details</button><button class="vy-tab ${homeTab === 'party' ? 'active' : ''}" data-action="home-tab" data-tab="party">Party Details</button></div>`;
+    const ql = (ic, label, attr, red) => `<button class="ql" ${attr}><div class="ql-ic ${red ? 'red' : ''}">${ico(ic)}</div><span>${label}</span></button>`;
+    const quick = `<div class="vy-card"><h3>Quick Links</h3><div class="quick-links">
+      ${ql('receipt', 'Add Txn', 'data-action="sheet-add-txn"', true)}${ql('report', 'Sale Report', 'data-view="sale-report"')}${ql('gear', 'Txn Settings', 'data-view="txn-settings"')}${ql('chevR', 'Show All', 'data-action="sheet-more"')}</div></div>`;
+    let body = '';
+    if (homeTab === 'txn') {
+      const list = allTxns().filter(t => !q || t.name.toLowerCase().includes(q) || String(t.no).toLowerCase().includes(q)).slice(0, 60);
+      body = list.length ? list.map(t => {
+        const bal = Math.max(0, t.total - t.paid);
+        const tag = { sale: 'SALE', return: 'SALE RETURN', estimate: 'ESTIMATE', purchase: 'PURCHASE' }[t.kind];
+        const act = t.kind === 'purchase' ? 'view-purchase' : 'view-invoice';
+        const isInv = t.kind !== 'purchase';
+        return `<div class="vy-txn" data-action="${act}" data-id="${t.doc.id}">
+          <div class="vy-txn-top"><div><div class="vy-txn-name">${escapeHtml(t.name)}</div><span class="vy-tag ${t.kind}">${tag}</span></div>
+            <div class="vy-txn-no">#${escapeHtml(String(t.no).replace(/^[A-Za-z]+-/, ''))}<br>${new Date(t.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}, ${String(new Date(t.date).getFullYear()).slice(2)}</div></div>
+          <div class="vy-txn-bottom"><div><div class="lbl">Total</div><div class="val">${fmtAmt(t.total)}</div></div>
+            <div><div class="lbl">Balance</div><div class="val">${fmtAmt(bal)}</div></div>
+            ${isInv ? `<div class="vy-txn-actions"><button data-action="print-invoice" data-id="${t.doc.id}" aria-label="Print">${ico('print')}</button><button data-action="share-txn" data-id="${t.doc.id}" aria-label="Share">${ico('share')}</button><button data-action="txn-more" data-id="${t.doc.id}" aria-label="More">${ico('dots')}</button></div>` : ''}</div></div>`;
+      }).join('') : `<div class="art-empty">${ico('receipt')}<div>No transactions yet.<br>Tap <b>Add New Sale</b> to create your first invoice.</div></div>`;
+    } else {
+      const parties = [...customers.map(c => ({ c, type: 'c' })), ...suppliers.map(s => ({ c: s, type: 's' }))].filter(p => !q || p.c.name.toLowerCase().includes(q));
+      body = parties.length ? `<div class="vy-card" style="padding:0 14px">${parties.sort((a, b) => a.c.name.localeCompare(b.c.name)).map(p => {
+        let amt = 0, get = true;
+        if (p.type === 'c') { const b = customerBalance(p.c.id, p.c.name, p.c.phone); amt = b.due || b.credit; get = b.due > 0 || !b.credit; }
+        else { const b = supplierBalance(p.c); amt = b.due; get = false; }
+        return `<div class="m-row" data-action="${p.type === 'c' ? 'view-customer' : 'view-supplier'}" data-id="${p.c.id}"><div class="grow">${escapeHtml(p.c.name)}<small>${p.type === 'c' ? 'Customer' : 'Supplier'}${p.c.phone ? ' · ' + escapeHtml(p.c.phone) : ''}</small></div><b style="color:${amt ? (get ? '#13B97A' : '#EF1A3C') : '#8F95A8'}">${amt ? fmtAmt(amt) : '—'}</b></div>`;
+      }).join('')}</div>` : `<div class="art-empty">${ico('users')}<div>No parties yet.</div><button class="btn btn-outline" data-action="add-customer">+ Add Party</button></div>`;
+    }
+    return `<div class="fade-in" style="padding-bottom:90px">${tabs}
+      <div style="height:12px"></div>${quick}
+      <div class="vy-search"><div class="search-wrap" style="margin:0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><input type="search" class="search-input" id="homeSearch" placeholder="Search ${homeTab === 'txn' ? 'transactions' : 'parties'}…" value="${escapeHtml(homeQuery)}"/></div></div>
+      ${body}</div>
+      <button class="fab-pill" data-view="create-invoice">${ico('plus')} Add New Sale</button>`;
+  }
+
+  // ---- bottom sheets ----
+  function sheet(inner, title) {
+    $('#modalRoot').innerHTML = `<div class="modal-overlay"><div class="modal-sheet"><div class="modal-handle"></div>
+      <div class="modal-header" style="margin:0"><h3 class="sheet-title" style="border:0;padding:0">${title}</h3><button class="modal-close" data-action="close-modal">${X_ICON}</button></div>${inner}</div></div>`;
+  }
+  function sheetItem(ic, label, attr, crown) { return `<button class="ql" ${attr}><div class="ql-ic">${ico(ic)}${crown ? `<span class="crown">${ico('crown')}</span>` : ''}</div><span>${label}</span></button>`; }
+  function openAddTxnSheet() {
+    sheet(`<div class="sheet-grid">${sheetItem('sale', 'Sale', 'data-view="create-invoice"')}${sheetItem('cart', 'Purchase', 'data-action="new-purchase"')}
+      ${sheetItem('cash', 'Payment-In', 'data-action="pay-in"')}${sheetItem('wallet', 'Payment-Out', 'data-action="pay-out"')}
+      ${sheetItem('docs', 'Sale Return', 'data-action="new-return"')}${sheetItem('report', 'Estimate', 'data-action="new-estimate"')}
+      ${sheetItem('wallet', 'Expense', 'data-action="add-expense"')}${sheetItem('chart', 'Other Income', 'data-view="other-income"')}${sheetItem('box', 'Stock Adjust', 'data-view="stock-adjust"')}</div>`, 'Add Transaction');
+  }
+  function openMoreSheet() {
+    sheet(`<div class="sheet-grid">${sheetItem('bank', 'Bank Accounts', 'data-view="banks"')}${sheetItem('book', 'Day Book', 'data-view="daybook-detail"')}${sheetItem('docs', 'All Txns Report', 'data-view="invoices"')}
+      ${sheetItem('pl', 'Profit & Loss', 'data-view="profit-loss"')}${sheetItem('report', 'Balance Sheet', 'data-view="balance-sheet"')}${sheetItem('pl', 'Billwise PnL', 'data-view="bill-pnl"')}
+      ${sheetItem('print', 'Print Settings', 'data-view="print-settings"')}</div>`, 'More Options');
+  }
+  function openTxnMore(inv) {
+    const isSale = (inv.docType || 'sale') === 'sale';
+    const due = Math.max(0, (inv.total || 0) - (inv.paidAmount || 0));
+    const b = (a, l) => `<button data-action="${a}" data-id="${inv.id}">${l}</button>`;
+    sheet(`<div class="sheet-list">${b('duplicate-invoice', 'Duplicate')}${isSale && due > 0 ? b('quick-receive', 'Receive Payment') : ''}${isSale ? b('return-from-invoice', 'Return') : ''}${b('delivery-note', 'Delivery Note')}${b('pdf-invoice', 'Share as PDF')}${b('view-invoice', 'Open / Edit payments')}${b('delete-invoice', '<span style="color:#EF1A3C">Delete</span>')}</div>`, 'More Options');
+  }
+  function openShareSheet(inv) {
+    const b = (a, ic, l) => `<button class="ql" data-action="${a}" data-id="${inv.id}"><div class="ql-ic" style="background:#EEF3FA">${ico(ic)}</div><span>${l}</span></button>`;
+    sheet(`<div class="sheet-grid">${b('share-whatsapp-text', 'whatsapp', 'WhatsApp')}${b('share-sms', 'docs', 'SMS')}${b('share-image', 'share', 'Share image')}${b('pdf-invoice', 'docs', 'PDF')}</div>`, 'Share Transaction');
+  }
+  // payment-in / payment-out picker
+  function openPartyPay(dir) {
+    const list = dir === 'in'
+      ? customers.map(c => ({ id: c.id, name: c.name, due: customerBalance(c.id, c.name, c.phone).due, act: 'receive-payment' }))
+      : suppliers.map(s => ({ id: s.id, name: s.name, due: supplierBalance(s).due, act: 'pay-supplier' }));
+    const rows = list.filter(x => x.due > 0);
+    sheet(rows.length ? `<div class="sheet-list">${rows.map(r => `<button data-action="${r.act}" data-id="${r.id}">${escapeHtml(r.name)}<small style="float:right;color:#EF1A3C">${dir === 'in' ? 'Due' : 'You owe'} ${fmtAmt(r.due)}</small></button>`).join('')}</div>`
+      : `<div class="art-empty" style="padding:30px 10px">Nobody has a pending ${dir === 'in' ? 'balance to receive' : 'balance to pay'}.</div>`, dir === 'in' ? 'Payment-In: choose party' : 'Payment-Out: choose supplier');
+  }
+
+  // ---- DASHBOARD ----
+  function monthTotals(n) {
+    const out = [], now = new Date();
+    for (let i = n - 1; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const s = invoices.reduce((a, inv) => {
+        const g = docSign(inv); if (!g) return a;
+        const x = new Date(inv.date);
+        return (x.getMonth() === d.getMonth() && x.getFullYear() === d.getFullYear()) ? a + g * (inv.total || 0) : a;
+      }, 0);
+      out.push({ label: d.toLocaleString('en-US', { month: 'short' }), v: round2(s) });
+    }
+    return out;
+  }
+  function lineChartSVG(pts) {
+    const W = 340, H = 190, pad = 22, max = Math.max(1, ...pts.map(p => p.v));
+    const xs = i => pad + i * (W - 2 * pad) / Math.max(1, pts.length - 1);
+    const ys = v => H - 34 - (v / max) * (H - 70);
+    const d = pts.map((p, i) => (i ? 'L' : 'M') + xs(i) + ' ' + ys(p.v)).join(' ');
+    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto"><defs><linearGradient id="lg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4DA3FF" stop-opacity=".28"/><stop offset="1" stop-color="#4DA3FF" stop-opacity="0"/></linearGradient></defs>
+      <path d="${d} L${xs(pts.length - 1)} ${H - 34} L${xs(0)} ${H - 34}Z" fill="url(#lg)"/><line x1="${pad}" x2="${W - pad}" y1="${H - 34}" y2="${H - 34}" stroke="#E1E6EE" stroke-dasharray="4 4"/>
+      <path d="${d}" fill="none" stroke="#4DA3FF" stroke-width="3" stroke-linejoin="round"/>
+      ${pts.map((p, i) => `<circle cx="${xs(i)}" cy="${ys(p.v)}" r="4" fill="#0A6FE0"/><text x="${xs(i)}" y="${H - 10}" text-anchor="${i === 0 ? 'start' : i === pts.length - 1 ? 'end' : 'middle'}" font-size="13" fill="#8F95A8">${p.label}</text>`).join('')}</svg>`;
+  }
+  function viewDashboard() {
+    const { revenue, cogs, receivable } = netTotals();
+    const payable = totalPayable ? totalPayable() : 0;
+    const m = monthTotals(3);
+    const thisM = m[2].v, last = m[1].v;
+    const growth = last > 0 ? Math.round((thisM - last) / last * 100) : (thisM > 0 ? 100 : 0);
+    const now = new Date();
+    const monthExp = expenses.filter(e => { const d = new Date(e.date); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); }).reduce((s, e) => s + (e.amount || 0), 0);
+    const totalExp = expenses.reduce((s, e) => s + (e.amount || 0), 0);
+    const profit = revenue - cogs - totalExp;
+    const low = products.filter(p => p.stock > 0 && p.stock <= lowLimit(p)).length, out = products.filter(p => p.stock <= 0).length;
+    const stockVal = products.reduce((s, p) => s + Math.max(0, p.stock || 0) * (p.cost || 0), 0);
+    return `<div class="fade-in" style="padding-bottom:16px">
+      <div class="vy-banner"><div><h3>Billaura Reports</h3><p>View more than <b>40 reports</b> and gain full control of your business!</p><button class="pill-soft" data-view="reports">See Reports</button></div>
+        <div class="art"><svg viewBox="0 0 70 86" fill="none"><rect x="6" y="4" width="58" height="78" rx="6" fill="#fff"/><rect x="14" y="14" width="30" height="5" rx="2" fill="#0A6FE0"/><rect x="14" y="26" width="42" height="3" rx="1.5" fill="#BFDBFE"/><rect x="14" y="34" width="42" height="3" rx="1.5" fill="#BFDBFE"/><rect x="14" y="42" width="42" height="3" rx="1.5" fill="#BFDBFE"/><circle cx="46" cy="64" r="8" fill="#F5B301"/></svg></div></div>
+      <div class="gg-row"><div class="gg"><div class="t"><span class="ar g"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M17 7L7 17M7 17h8M7 17V9"/></svg></span>You'll Get</div><div class="v">${fmtAmt(receivable)}</div></div>
+        <div class="gg"><div class="t"><span class="ar r"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M7 17L17 7M17 7H9M17 7v8"/></svg></span>You'll Give</div><div class="v">${fmtAmt(payable)}</div></div></div>
+      <div class="vy-card sale-ov"><h3>Your Sale Overview (${m[2].label})</h3><div class="sub" style="margin-top:12px">Total Sale</div><div class="big">${fmtAmt(thisM)}</div>
+        <div style="text-align:center;margin:6px 0"><span class="growth"><i style="${growth < 0 ? 'background:#FDE3E8;color:#EF1A3C' : ''}">${growth < 0 ? '↓' : '↑'}</i>${Math.abs(growth)}% ${growth < 0 ? 'Less' : 'More'} Growth This Month</span></div>${lineChartSVG(m)}</div>
+      <div class="exp-card"><div class="t">Expenses (${m[2].label})</div><div class="v">${fmtAmt(monthExp)}</div></div>
+      <div class="gg-row"><div class="gg"><div class="t" style="font-size:.95rem">Net profit</div><div class="v" style="margin:6px 0 0;color:${profit >= 0 ? '#13B97A' : '#EF1A3C'}">${fmtAmt(profit)}</div></div>
+        <div class="gg"><div class="t" style="font-size:.95rem">Stock value</div><div class="v" style="margin:6px 0 0">${fmtAmt(stockVal)}</div></div></div>
+      <div class="gg-row"><div class="gg" data-view="low-stock" style="cursor:pointer"><div class="t" style="font-size:.95rem">Low stock items</div><div class="v" style="margin:6px 0 0;color:#E69500">${low}</div></div>
+        <div class="gg" data-view="low-stock" style="cursor:pointer"><div class="t" style="font-size:.95rem">Out of stock</div><div class="v" style="margin:6px 0 0;color:#EF1A3C">${out}</div></div></div></div>`;
+  }
+
+  // ---- MENU ----
+  let menuOpen = { sale: true };
+  function mrow(ic, label, attr, opts) {
+    opts = opts || {};
+    return `<button class="m-row ${opts.open ? 'open' : ''}" ${attr}>${ic ? ico(ic, 'mi') : ''}<span class="grow">${label}${opts.badge ? `<span class="badge-new">${opts.badge}</span>` : ''}</span>${ico(opts.toggle ? 'chevD' : 'chevR', 'arr' + (opts.dim ? ' dim' : ''))}</button>`;
+  }
+  function msub(key, rows) { return `<div class="m-sub ${menuOpen[key] ? 'open' : ''}">${rows.map(r => mrow('', r[0], r[1], { dim: true })).join('')}</div>`; }
+  function viewMore() {
+    if (isStaff()) return staffMoreHTML();
+    const tg = (key, ic, label) => mrow(ic, label, `data-action="menu-toggle" data-key="${key}"`, { toggle: true, open: menuOpen[key] });
+    return `<div class="fade-in" style="padding-bottom:20px">
+      <div class="menu-card" style="margin-top:14px"><div class="menu-h">My Business</div>
+        ${tg('sale', 'sale', 'Sale')}${msub('sale', [['Sale Invoice', 'data-action="list-sales"'], ['Payment-In', 'data-view="payments-in"'], ['Sale Return (Credit Note)', 'data-action="list-returns"'], ['Estimate/Quotation', 'data-action="list-estimates"'], ['Delivery Note', 'data-action="list-sales-dn"'], ['Mobile POS', 'data-view="pos"']])}
+        ${tg('purchase', 'cart', 'Purchase')}${msub('purchase', [['Purchase Bills', 'data-view="purchases"'], ['Payment - Out', 'data-view="payments-out"'], ['Suppliers', 'data-view="suppliers"']])}
+        ${mrow('wallet', 'Expenses', 'data-view="expenses"')}${mrow('users', 'Parties (Customers)', 'data-view="customers"')}${mrow('store', 'My Online Store', 'data-view="online-store"')}${mrow('report', 'Reports', 'data-view="reports"')}
+        ${mrow('box', 'Stock Adjustment', 'data-view="stock-adjust"')}${mrow('chart', 'Other Income', 'data-view="other-income"')}</div>
+      <div class="menu-card"><div class="menu-h">Cash &amp; Bank</div>${mrow('bank', 'Bank Accounts', 'data-view="banks"')}${mrow('cash', 'Cash In-Hand', 'data-view="cash-in-hand"')}${mrow('cheque', 'Cheques', 'data-view="cheques"')}${mrow('loan', 'Loan Accounts', 'data-view="loans"')}</div>
+      <div class="menu-card"><div class="menu-h">Important Utilities</div>
+        ${mrow('sync', 'Sync &amp; Share', 'data-view="sync"')}${mrow('company', 'Manage Companies', 'data-view="companies"')}
+        ${tg('backup', 'backup', 'Backup/Restore')}${msub('backup', [['Auto Backup', 'data-action="auto-backup"'], ['Backup to phone', 'data-action="export-backup"'], ['Backup to e-mail', 'data-action="backup-email"'], ['Restore backup', 'data-action="import-data"']])}
+        ${tg('util', 'inbox', 'Utilities')}${msub('util', [['Verify my data', 'data-view="verify"'], ['Open Calculator', 'data-action="open-calc"'], ['Import Items', 'data-action="bulk-tools"'], ['Bulk Update Tax Slab', 'data-action="bulk-tax"'], ['Export Items', 'data-action="bulk-export"'], ['Import Parties', 'data-action="import-parties"'], ['Recycle Bin', 'data-view="recycle"'], ['Close Financial Year', 'data-action="close-fy"'], ['Barcode Generator', 'data-view="barcode-gen"']])}</div>
+      <div class="menu-card"><div class="menu-h">Others</div>
+        ${mrow('crown', 'Plans &amp; Pricing', 'data-action="open-plans"')}
+        ${tg('grow', 'whatsapp', 'Grow Your Business')}${msub('grow', [['Payment Reminders', 'data-view="reminders"'], ['Business Card &amp; Profile', 'data-view="business-profile"'], ['Share Catalog', 'data-view="online-store"']])}
+        ${mrow('gear', 'Settings', 'data-view="settings"')}${mrow('lock', 'App Lock &amp; Staff PIN', 'data-action="open-settings"')}</div>
+      <div style="text-align:center;padding:14px;color:#8F95A8;font-size:.8rem">Billaura v${APP_VERSION}${profileCompleteness() < 100 ? ` · <a href="#" data-view="business-profile" style="color:#0A6FE0">Complete profile (${profileCompleteness()}%)</a>` : ''}</div></div>`;
+  }
+  IC.lock = '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>';
+
+  // ---- EXPENSES (Categories | Items) ----
+  let expTab = 'cat';
+  function viewExpenses() {
+    const total = expenses.reduce((s, e) => s + (e.amount || 0), 0);
+    let rows;
+    if (expTab === 'cat') {
+      const sums = {}; expenseCategories().forEach(c => { sums[c] = 0; });
+      expenses.forEach(e => { const c = e.category || 'Other'; sums[c] = (sums[c] || 0) + (e.amount || 0); });
+      rows = Object.entries(sums).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([c, v]) => `<div class="u-row" data-action="exp-cat" data-cat="${escapeHtml(c)}"><span>${escapeHtml(c)}</span><span>${fmtAmt(v)}</span></div>`).join('');
+    } else {
+      const sorted = [...expenses].sort((a, b) => new Date(b.date) - new Date(a.date));
+      rows = sorted.length ? sorted.map(e => `<div class="u-row" data-action="edit-expense" data-id="${e.id}"><span>${escapeHtml(e.title || e.category || 'Expense')}<small>${escapeHtml(e.category || '')} · ${formatDate(e.date)}${e.mode && e.mode !== 'Cash' ? ' · ' + escapeHtml(e.mode) : ''}</small></span><span style="color:#EF1A3C">${fmtAmt(e.amount)}</span></div>`).join('')
+        : `<div class="art-empty">No expenses recorded yet.</div>`;
+    }
+    return `<div class="u-page fade-in" style="padding-bottom:110px"><div class="u-tabs"><button class="u-tab ${expTab === 'cat' ? 'active' : ''}" data-action="exp-tab" data-tab="cat">Categories</button><button class="u-tab ${expTab === 'items' ? 'active' : ''}" data-action="exp-tab" data-tab="items">Items</button></div>
+      <div class="u-total">Total: <b>${fmtAmt(total)}</b></div>${rows}</div>
+      <button class="fab-pill" data-action="add-expense">${ico('plus')} Add Expenses</button>`;
+  }
+
+  // ---- CASH IN-HAND ----
+  function viewCashInHand() {
+    const bal = cashInHandBalance();
+    let rows = [];
+    try {
+      rows = cashEntries().filter(r => (r.mode || 'Cash') === 'Cash').map(r => ({ ...r, _s: new Date(r.date).getTime() }));
+      cashAdjustments().forEach(a => rows.push({ date: a.date, text: a.note || 'Cash Adjustment', amount: Math.abs(a.amount || 0), dir: (a.amount || 0) >= 0 ? 'in' : 'out', _s: new Date(a.date).getTime() }));
+      rows.sort((a, b) => b._s - a._s);
+    } catch (e) {}
+    return `<div class="u-page fade-in" style="padding-bottom:120px"><div class="cash-hero"><div class="l">Current Cash Balance</div><div class="v">${fmtAmt(bal)}</div>${ico('cash')}</div>
+      <div class="td-head"><span>Transaction Details</span><span>Amount</span></div>
+      ${rows.length ? rows.slice(0, 80).map(r => `<div class="td-row"><div><div class="n">${escapeHtml((r.text || '').replace(/^Payment in /, 'Sale - ').replace(/^Paid for /, 'Purchase - '))}${r.party ? ' - ' + escapeHtml(r.party) : ''}</div><div class="d">${formatDate(r.date)}</div></div><div class="a ${r.dir}">${fmtAmt(r.amount)}</div></div>`).join('') : '<div class="art-empty">No cash transactions yet</div>'}</div>
+      <div class="bottom-btns"><button class="btn btn-outline" data-action="bank-transfer">Bank Transfer</button><button class="btn btn-primary" data-action="adjust-cash">Adjust Cash</button></div>`;
+  }
+
+  // ---- Payment lists, cheques ----
+  function paymentList(dir) {
+    const rows = cashEntries().filter(r => r.dir === dir && !/^Expense/.test(r.text) && (dir === 'in' ? /^Payment in/.test(r.text) : true));
+    return `<div class="u-page fade-in"><div class="u-total">Total: <b>${fmtAmt(rows.reduce((s, r) => s + r.amount, 0))}</b></div>
+      ${rows.length ? rows.map(r => `<div class="td-row"><div><div class="n">${escapeHtml(r.party || '—')}</div><div class="d">${formatDate(r.date)} · ${escapeHtml(r.mode || 'Cash')}</div></div><div class="a ${dir}">${fmtAmt(r.amount)}</div></div>`).join('') : `<div class="art-empty">No payments ${dir === 'in' ? 'received' : 'made'} yet</div>`}</div>
+      <button class="fab-pill" data-action="${dir === 'in' ? 'pay-in' : 'pay-out'}">${ico('plus')} ${dir === 'in' ? 'Add Payment-In' : 'Add Payment-Out'}</button>`;
+  }
+  function viewCheques() {
+    const rows = cashEntries().filter(r => r.mode === 'Cheque');
+    if (!rows.length) return `<div class="u-page"><div class="art-empty"><svg viewBox="0 0 160 110"><rect x="10" y="20" width="110" height="70" rx="4" fill="#FFF3D6"/><circle cx="32" cy="42" r="8" fill="#FFE0A0" stroke="#44485A" stroke-width="2"/><path d="M48 40h42M48 50h30" stroke="#44485A" stroke-width="2"/><rect x="26" y="64" width="46" height="12" fill="none" stroke="#44485A" stroke-width="2"/><rect x="132" y="16" width="8" height="46" rx="3" fill="#fff" stroke="#44485A" stroke-width="2"/></svg><div>Hey! You have not added any cheques yet.<br>Any payment involving cheque appears here</div></div></div>`;
+    return `<div class="u-page">${rows.map(r => `<div class="td-row"><div><div class="n">${escapeHtml(r.party || r.text)}</div><div class="d">${formatDate(r.date)} · Cheque</div></div><div class="a ${r.dir}">${fmtAmt(r.amount)}</div></div>`).join('')}</div>`;
+  }
+
+  // ---- Sync, Companies ----
+  function viewSync() {
+    const sess = window.HisablyCloud && HisablyCloud.ready() && HisablyCloud.getSession && HisablyCloud.getSession();
+    const email = (window.HisablyFreemium && HisablyFreemium.getSession && (HisablyFreemium.getSession() || {}).email) || '';
+    return `<div class="fade-in"><div class="hero-page"><svg viewBox="0 0 220 150" width="220"><circle cx="110" cy="75" r="68" fill="#F1EFEF"/><rect x="88" y="8" width="44" height="76" rx="5" fill="#fff" stroke="#2B3347" stroke-width="3"/><rect x="20" y="62" width="76" height="52" rx="4" fill="#fff" stroke="#2B3347" stroke-width="3"/><rect x="128" y="50" width="76" height="62" rx="4" fill="#fff" stroke="#2B3347" stroke-width="3"/><circle cx="110" cy="60" r="18" fill="#E3F2FD"/><path d="M102 60a8 8 0 0 1 14-5M118 60a8 8 0 0 1-14 5" stroke="#0A6FE0" stroke-width="2.4" fill="none"/></svg>
+      <h2>Connect Multiple Devices</h2><p>Use your company in multiple devices and on the go by syncing it.</p>
+      <button class="btn btn-primary btn-lg" data-action="${sess ? 'cloud-sync-now' : 'cloud-auth'}">${ico('sync')} ${sess ? 'Sync now' : 'Enable Sync'}</button>
+      <p class="text-sm" style="margin-top:14px;color:#8F95A8">${email ? '*You\'re logged in with ' + escapeHtml(email) : 'Sign in with your account to back up and sync.'}</p></div></div>`;
+  }
+  function viewCompanies() {
+    const email = (window.HisablyFreemium && HisablyFreemium.getSession && (HisablyFreemium.getSession() || {}).email) || '';
+    const lastWk = invoices.filter(i => Date.now() - new Date(i.date) < 7 * 864e5 && docSign(i) > 0).length;
+    return `<div class="fade-in" style="min-height:70vh"><div style="padding:12px 16px;color:#6F7589">${email ? 'Logged in with <b>' + escapeHtml(email) + '</b>' : 'Offline company on this device'}</div>
+      <div class="co-card"><div class="top"><div class="co-av">${escapeHtml(initials(settings.businessName || 'B'))}</div><div><div style="font-size:1.125rem;font-weight:600">${escapeHtml(settings.businessName || 'My Business')}</div><div class="text-sm text-secondary" style="margin-top:6px">Sales in last week: ${lastWk}</div></div></div>
+        <div class="tags"><span class="co-tag">My Company</span><span class="co-tag on">Active</span></div></div></div>
+      <div class="bottom-btns"><button class="btn btn-outline" data-action="import-data">Restore backup</button><button class="btn btn-primary" data-action="add-company">${ico('plus')} Add Company</button></div>`;
+  }
+
+  // ---- Verify my data ----
+  function runVerify() {
+    const issues = [];
+    invoices.forEach(i => {
+      const sub = round2((i.items || []).reduce((s, it) => s + (it.price || 0) * (it.qty || 0), 0));
+      const m = i.meta || {};
+      const expect = round2(sub - (m.discount || 0) + (m.tax || 0) + (m.charges || 0) + (m.roundOff || 0));
+      if (Math.abs(expect - (i.total || 0)) > 0.51) issues.push({ t: `${i.number}: total ${money(i.total)} does not match items (${money(expect)})` });
+      if ((i.paidAmount || 0) > (i.total || 0) + 0.01) issues.push({ t: `${i.number}: received more than the invoice total` });
+      const ps = (i.paidAmount || 0) >= (i.total || 0) && i.total > 0 ? 'paid' : ((i.paidAmount || 0) > 0 ? 'partial' : 'unpaid');
+      if (i.docType !== 'estimate' && i.paymentStatus !== ps) issues.push({ t: `${i.number}: payment status should be ${ps}`, fix: () => { i.paymentStatus = ps; } });
+    });
+    products.forEach(p => { if ((p.stock || 0) < 0) issues.push({ t: `${p.name}: negative stock (${p.stock})` }); });
+    const nums = {}; invoices.forEach(i => { nums[i.number] = (nums[i.number] || 0) + 1; });
+    Object.entries(nums).forEach(([n, c]) => { if (c > 1) issues.push({ t: `Invoice number ${n} used ${c} times` }); });
+    return issues;
+  }
+  let _verifyIssues = null;
+  function viewVerify() {
+    _verifyIssues = runVerify();
+    const fixable = _verifyIssues.filter(i => i.fix).length;
+    return `<div class="fade-in">${_verifyIssues.length ? `<div class="vy-card"><h3 style="color:#EF1A3C">${_verifyIssues.length} issue(s) found</h3>${_verifyIssues.map(i => `<div class="m-row" style="cursor:default;font-size:.95rem">${escapeHtml(i.t)}</div>`).join('')}${fixable ? `<button class="btn btn-primary btn-block mt-12" data-action="verify-fix">Fix ${fixable} automatically</button>` : ''}</div>`
+      : `<div class="hero-page"><div style="color:#13B97A">${ico('verify').replace('<svg ', '<svg width="72" height="72" ')}</div><h2>All good</h2><p>${invoices.length} invoices, ${products.length} items and ${customers.length} parties were checked. No problems found.</p></div>`}</div>`;
+  }
+
+  // ---- Recycle bin ----
+  function viewRecycle() {
+    const t = load('sb_recycle_v1', []);
+    if (!t.length) return `<div class="u-page"><div class="art-empty">${ico('trash')}<div>Recycle bin is empty.<br>Deleted items appear here and can be restored.</div></div></div>`;
+    const nm = r => r.obj.name || r.obj.number || r.obj.title || r.obj.category || 'Item';
+    return `<div class="u-page">${t.map(r => `<div class="td-row"><div><div class="n">${escapeHtml(nm(r))}</div><div class="d">${escapeHtml(r.kind)} · deleted ${formatDate(r.at)}</div></div><div><button class="btn btn-outline btn-sm" data-action="restore-trash" data-id="${r.id}">Restore</button> <button class="btn btn-ghost btn-sm" style="color:#EF1A3C" data-action="purge-trash" data-id="${r.id}">✕</button></div></div>`).join('')}</div>`;
+  }
+  function restoreTrash(id) {
+    const t = load('sb_recycle_v1', []); const r = t.find(x => x.id === id); if (!r) return;
+    const lists = { product: products, customer: customers, supplier: suppliers, expense: expenses, invoice: invoices };
+    const L = lists[r.kind]; if (!L) return;
+    if (r.kind === 'invoice') {
+      (r.obj.items || []).forEach(it => { const p = products.find(x => x.id === it.productId); if (p) p.stock += (r.obj.docType === 'return' ? it.qty : -it.qty); });
+    }
+    L.unshift(r.obj);
+    save('sb_recycle_v1', t.filter(x => x.id !== id));
+    persist(); toast('Restored');
+  }
+
+  // ---- Bill-wise profit ----
+  function viewBillPnl() {
+    const rows = invoices.filter(i => docSign(i) > 0).map(i => {
+      const cost = (i.items || []).reduce((s, it) => s + (it.cost || 0) * it.qty, 0);
+      return { i, profit: round2((i.total || 0) - cost - ((i.meta && i.meta.tax) || 0)) };
+    }).sort((a, b) => new Date(b.i.date) - new Date(a.i.date));
+    const tot = rows.reduce((s, r) => s + r.profit, 0);
+    return `<div class="u-page"><div class="u-total">Total profit: <b style="color:${tot >= 0 ? '#13B97A' : '#EF1A3C'}">${fmtAmt(tot)}</b></div>${rows.length ? rows.map(r => `<div class="td-row" data-action="view-invoice" data-id="${r.i.id}" style="cursor:pointer"><div><div class="n">${escapeHtml(r.i.customerName || 'Walk-in')}</div><div class="d">${escapeHtml(r.i.number)} · ${formatDate(r.i.date)} · Sale ${fmtAmt(r.i.total)}</div></div><div class="a ${r.profit >= 0 ? 'in' : 'out'}">${fmtAmt(r.profit)}</div></div>`).join('') : '<div class="art-empty">No sales yet</div>'}</div>`;
+  }
+
+  // ---- Calculator ----
+  function openCalculator() {
+    sheet(`<div class="calc-disp"><small id="calcExp"></small><div id="calcOut">0</div></div><div class="calc-grid" id="calcGrid">
+      ${['C', '⌫', '%', '÷', '7', '8', '9', '×', '4', '5', '6', '−', '1', '2', '3', '+', '0', '00', '.', '='].map(k => `<button class="${'÷×−+%'.includes(k) ? 'op' : (k === '=' ? 'eq' : '')}" data-k="${k}">${k}</button>`).join('')}</div>`, 'Calculator');
+    let exp = '';
+    const out = $('#calcOut'), ex = $('#calcExp');
+    const evalExp = s => { try { const clean = s.replace(/×/g, '*').replace(/÷/g, '/').replace(/−/g, '-'); if (!/^[0-9+\-*/.% ()]+$/.test(clean)) return NaN; return Function('"use strict";return (' + clean.replace(/(\d+(\.\d+)?)%/g, '($1/100)') + ')')(); } catch (e) { return NaN; } };
+    $('#calcGrid').addEventListener('click', e => {
+      const b = e.target.closest('[data-k]'); if (!b) return; const k = b.dataset.k;
+      if (k === 'C') exp = ''; else if (k === '⌫') exp = exp.slice(0, -1);
+      else if (k === '=') { const r = evalExp(exp); ex.textContent = exp + ' ='; exp = isFinite(r) ? String(round2(r)) : ''; out.textContent = isFinite(r) ? money(round2(r)) : 'Error'; return; }
+      else exp += k;
+      out.textContent = exp || '0';
+    });
+  }
+
+  // ---- Import parties (CSV: name,phone,address) ----
+  function importPartiesPick() {
+    const input = document.createElement('input'); input.type = 'file'; input.accept = '.csv,text/csv,text/plain';
+    input.onchange = () => {
+      const f = input.files && input.files[0]; if (!f) return;
+      const r = new FileReader();
+      r.onload = () => {
+        const rows = parseCSV(String(r.result));
+        let added = 0;
+        rows.forEach((row, i) => {
+          if (i === 0 && /name/i.test(row[0] || '')) return;
+          const name = (row[0] || '').trim(); if (!name) return;
+          if (customers.some(c => c.name.toLowerCase() === name.toLowerCase())) return;
+          if (!HisablyFreemium.canAdd('customers', customers.length).ok) return;
+          customers.push({ id: uid(), name, phone: (row[1] || '').trim(), address: (row[2] || '').trim(), notes: '' }); added++;
+        });
+        persist(); toast(`${added} part${added === 1 ? 'y' : 'ies'} imported`); render();
+      };
+      r.readAsText(f);
+    };
+    input.click();
+  }
+  function emailBackup() {
+    const n = invoices.length;
+    location.href = 'mailto:?subject=' + encodeURIComponent('Billaura backup ' + new Date().toISOString().slice(0, 10)) + '&body=' + encodeURIComponent(`Download the backup file first (Menu → Backup to phone), then attach it to this email.\n\n${settings.businessName}: ${n} invoices, ${products.length} items.`);
+  }
+
+  document.addEventListener('input', e => {
+    if (e.target && e.target.id === 'homeSearch') {
+      homeQuery = e.target.value; const pos = homeQuery.length; render();
+      const el = document.getElementById('homeSearch'); if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch (x) {} }
+    }
+  });
+  function maybeAutoBackup() {
+    if (!settings.autoBackup) return;
+    const last = Number(localStorage.getItem('billaura_last_autobackup') || 0);
+    if (Date.now() - last < 864e5) return;
+    try {
+      const data = { products, invoices, customers, suppliers, expenses, stockMovements, purchases, banks, bankTxns, otherIncome, loans, settings, invoiceCounter, exportedAt: new Date().toISOString() };
+      const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: 'application/json' }));
+      a.download = `billaura-auto-backup-${new Date().toISOString().slice(0, 10)}.json`; a.click();
+      localStorage.setItem('billaura_last_autobackup', String(Date.now()));
+    } catch (e) {}
+  }
+  // ---------- Global Event Delegation ----------
+  document.addEventListener('click', e => {
+    // Close open custom dropdowns when clicking outside
+    if (!e.target.closest('.custom-select')) {
+      $$('.custom-select.open').forEach(el => el.classList.remove('open'));
+    }
+    // POS filter chips
+    const posChip = e.target.closest('[data-pos-filter]');
+    if (posChip) {
+      window._posFilter = posChip.dataset.posFilter;
+      $$('.pos-chips .cat-chip').forEach(c => c.classList.toggle('active', c === posChip));
+      if (window._posRenderGrid) window._posRenderGrid(window._posFilter, (document.getElementById('posSearch')||{}).value);
+    }
+    // Stock adjust dir chips
+    const sa = e.target.closest('#saDir .cat-chip');
+    if (sa) {
+      $$('#saDir .cat-chip').forEach(c => c.classList.remove('active'));
+      sa.classList.add('active');
+    }
+
+    const t = e.target.closest('[data-action], [data-view], .nav-item, .list-item, .modal-overlay');
+    if (!t) return;
+
+    // Close modal on overlay click
+    if (t.classList.contains('modal-overlay') && t.id !== 'qr-reader') {
+      if (e.target === t) closeModal();
+      return;
+    }
+
+    const action = t.dataset.action;
+    const view = t.dataset.view || (t.classList.contains('nav-item') ? t.dataset.view : null);
+    const id = t.dataset.id;
+    if (isStaff() && action && STAFF_BLOCK.test(action)) { toast('Only the owner can do that'); return; }
+
+    if (view) {
+      setView(view);
+      return;
+    }
+
+    switch (action) {
+      case 'pick-theme': {
+        const k = t.dataset.theme;
+        if (HisablyReceipt.THEMES[k] && HisablyReceipt.THEMES[k].pro && !HisablyFreemium.hasFeature('themes')) { toast('This style is a Pro feature.', 4000); openPlansModal && openPlansModal(); break; }
+        settings.invoiceTheme = k; persist();
+        const box = document.getElementById('themePicker'); if (box) box.outerHTML = themePickerHTML();
+        break;
+      }
+      case 'lock-now': showLock(); break;
+      case 'save-business-profile': {
+        settings.businessName = ($('#bpName')||{}).value?.trim() || 'My Business';
+        settings.phone = ($('#bpPhone')||{}).value?.trim() || '';
+        settings.email = ($('#bpEmail')||{}).value?.trim() || '';
+        settings.address = ($('#bpAddress')||{}).value?.trim() || '';
+        settings.city = ($('#bpCity')||{}).value?.trim() || '';
+        settings.taxId = ($('#bpTax')||{}).value?.trim() || '';
+        settings.ownerName = ($('#bpOwner')||{}).value?.trim() || '';
+        settings.phone2 = ($('#bpPhone2')||{}).value?.trim() || '';
+        settings.businessDesc = ($('#bpDesc')||{}).value?.trim() || '';
+        settings.currency = ($('#bpCurrency')||{}).value || 'PKR';
+        settings.invoicePrefix = ($('#bpPrefix')||{}).value?.trim() || 'INV';
+        // logo/signature/stamp/qr already on settings from pick actions
+        persist();
+        toast('Business profile saved');
+        setView('more');
+        break;
+      }
+      case 'set-invoice-theme': {
+        const th = t.dataset.theme;
+        if (!th) break;
+        settings.invoiceTheme = th;
+        persist();
+        document.querySelectorAll('#themeGrid .template-card').forEach(el => {
+          el.classList.toggle('active', el.dataset.theme === th);
+        });
+        toast('Invoice template: ' + th);
+        break;
+      }
+      case 'set-card-style': {
+        const st = t.dataset.style;
+        if (!st) break;
+        settings.businessCardStyle = st;
+        persist();
+        document.querySelectorAll('[data-action="set-card-style"]').forEach(el => {
+          el.classList.toggle('active', el.dataset.style === st);
+        });
+        toast('Card style: ' + st);
+        break;
+      }
+      case 'set-card-tpl': {
+        settings.businessCardTpl = t.dataset.value; persist();
+        document.querySelectorAll('[data-action="set-card-tpl"]').forEach(el => el.classList.toggle('active', el.dataset.value === t.dataset.value));
+        break;
+      }
+      case 'preview-business-card': {
+        if (!tplOK()) break;
+        const id = settings.businessCardTpl || 'classic';
+        $('#modalRoot').innerHTML = modalShell('Business Card', `<div style="padding:8px 0 16px"><div class="bc-big">${BillauraTemplates.cardHTML(settings, id)}</div>
+          <div style="display:flex;gap:10px;margin-top:18px"><button class="btn btn-outline" style="flex:1" data-action="close-modal">Close</button><button class="btn btn-primary" style="flex:1" data-action="share-business-card">Share Card</button></div></div>`);
+        break;
+      }
+      case 'share-business-card': {
+        if (!tplOK()) break;
+        (async () => {
+          try {
+            toast('Preparing card…');
+            const cv = await BillauraTemplates.cardCanvas(settings, settings.businessCardTpl || 'classic');
+            const blob = await new Promise(r => cv.toBlob(r, 'image/png'));
+            const file = new File([blob], 'business-card.png', { type: 'image/png' });
+            if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: settings.businessName || 'Business card' }); return; }
+            const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = file.name; document.body.appendChild(a); a.click(); a.remove(); toast('Card saved');
+          } catch (e) { if (e && e.name !== 'AbortError') { console.error(e); toast('Could not create card'); } }
+        })();
+        break;
+      }
+      case 'draw-signature': {
+        $('#modalRoot').innerHTML = modalShell('Draw Signature', `<div style="padding:8px 0 16px"><canvas id="sigPad" width="600" height="240" style="width:100%;height:auto;border:1.5px dashed #9aa3b5;border-radius:10px;background:#fff;touch-action:none"></canvas>
+          <div style="display:flex;gap:10px;margin-top:14px"><button class="btn btn-outline" style="flex:1" data-action="sig-clear">Clear</button><button class="btn btn-primary" style="flex:1" data-action="sig-save">Save</button></div></div>`);
+        const cv = document.getElementById('sigPad'), g = cv.getContext('2d'); g.lineWidth = 4; g.lineCap = 'round'; g.lineJoin = 'round'; g.strokeStyle = '#111827';
+        let down = false; const pt = e => { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * cv.width / r.width, (e.clientY - r.top) * cv.height / r.height]; };
+        cv.addEventListener('pointerdown', e => { down = true; cv.setPointerCapture(e.pointerId); const [x, y] = pt(e); g.beginPath(); g.moveTo(x, y); g.lineTo(x + .1, y + .1); g.stroke(); });
+        cv.addEventListener('pointermove', e => { if (!down) return; const [x, y] = pt(e); g.lineTo(x, y); g.stroke(); });
+        ['pointerup', 'pointercancel'].forEach(ev => cv.addEventListener(ev, () => { down = false; }));
+        break;
+      }
+      case 'sig-clear': { const cv = document.getElementById('sigPad'); if (cv) cv.getContext('2d').clearRect(0, 0, cv.width, cv.height); break; }
+      case 'sig-save': {
+        const cv = document.getElementById('sigPad'); if (!cv) break;
+        const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data; let any = false; for (let k = 3; k < d.length; k += 4) if (d[k]) { any = true; break; }
+        if (!any) { toast('Draw your signature first'); break; }
+        settings.signature = cv.toDataURL('image/png'); persist(); closeModal(); render(); toast('Signature saved'); break;
+      }
+      case 'pick-signature':
+      case 'pick-stamp':
+      case 'pick-logo':
+      case 'pick-qr': bindBrandFile('qrFile', 'paymentQr', 'qrPreview', 'Payment QR'); break;
+      case 'pick-qr-legacy': {
+        // handled below with unified uploader when id matches
+        break;
+      }
+      case 'open-txn-settings': setView('txn-settings'); break;
+      case 'open-print-settings': setView('print-settings'); break;
+      case 'open-tax-settings': setView('tax-settings'); break;
+      case 'open-item-settings': setView('item-settings'); break;
+      case 'open-party-settings': setView('party-settings'); break;
+      case 'open-general-settings': setView('general-settings'); break;
+      case 'print-tab':
+        settings._printTab = t.dataset.tab || 'regular';
+        persist();
+        render();
+        break;
+      case 'tax-tab':
+        settings._taxTab = t.dataset.tab || 'rates';
+        persist();
+        render();
+        break;
+      case 'set-thermal-size':
+        settings.thermalPageSize = t.dataset.value || '80';
+        try {
+          if (window.HisablyReceipt && HisablyReceipt.setPrefs) HisablyReceipt.setPrefs({ paper: settings.thermalPageSize });
+        } catch (e) {}
+        persist();
+        render();
+        break;
+      case 'toggle-words-format':
+        settings.amountWordsFormat = settings.amountWordsFormat === 'indian' ? 'international' : 'indian';
+        persist();
+        render();
+        break;
+      case 'open-theme': setView('invoice-theme'); break;
+      case 'add-tax-rate': {
+        const name = prompt('Tax name (e.g. GST 18%)');
+        if (!name) break;
+        const rate = parseFloat(prompt('Tax rate %', '18') || '0');
+        if (!settings.taxRates) settings.taxRates = [];
+        settings.taxRates.push({ name: name.trim(), rate: isNaN(rate) ? 0 : rate });
+        if (!settings.taxRate) settings.taxRate = isNaN(rate) ? 0 : rate;
+        persist();
+        toast('Tax rate added');
+        render();
+        break;
+      }
+      case 'remove-tax-rate': {
+        const i = Number(t.dataset.idx);
+        if (settings.taxRates) { settings.taxRates.splice(i, 1); persist(); render(); }
+        break;
+      }
+      case 'add-tax-group': {
+        const name = prompt('Group name (e.g. GST 18%)');
+        if (!name) break;
+        const rate = parseFloat(prompt('Combined rate %', '18') || '0');
+        if (!settings.taxGroups) settings.taxGroups = [];
+        settings.taxGroups.push({ name: name.trim(), rate: isNaN(rate) ? 0 : rate, rates: [] });
+        persist();
+        toast('Tax group added');
+        render();
+        break;
+      }
+      case 'remove-tax-group': {
+        const i = Number(t.dataset.idx);
+        if (settings.taxGroups) { settings.taxGroups.splice(i, 1); persist(); render(); }
+        break;
+      }
+      case 'report-sales': setView('sale-report'); break;
+      case 'report-all-txn': invFilter = ''; setView('invoices'); break;
+      case 'report-pl': setView('profit-loss'); break;
+      case 'report-trial': setView('trial-balance'); break;
+      case 'report-stock': setView('stock-summary'); break;
+      case 'report-low-stock': setView('low-stock'); break;
+      case 'report-party-pl': setView('party-pl'); break;
+      case 'report-item-pl': setView('item-pl'); break;
+      case 'report-balance-sheet': setView('balance-sheet'); break;
+      case 'add-bank': {
+        const name = prompt('Bank / wallet name (e.g. HBL, JazzCash)');
+        if (!name) break;
+        const accountNo = prompt('Account / IBAN (optional)') || '';
+        const opening = parseFloat(prompt('Opening balance', '0') || '0') || 0;
+        banks.push({ id: uid(), name: name.trim(), accountNo, type: 'Bank', opening, createdAt: new Date().toISOString() });
+        persist(); toast('Bank added'); setView('banks');
+        break;
+      }
+      case 'open-bank-ledger':
+        settings._bankId = t.dataset.id;
+        persist();
+        setView('bank-ledger');
+        break;
+      case 'bank-adjust': {
+        const bankId = t.dataset.id || settings._bankId || (banks[0] && banks[0].id);
+        if (!bankId) { toast('Add a bank first'); break; }
+        const dir = confirm('OK = Deposit (money in)\nCancel = Withdraw (money out)') ? 'in' : 'out';
+        const amt = parseFloat(prompt('Amount') || '');
+        if (!amt || amt <= 0) { toast('Invalid amount'); break; }
+        const note = prompt('Note', dir === 'in' ? 'Deposit' : 'Withdrawal') || '';
+        bankTxns.push({ id: uid(), bankId, dir, amount: amt, note, mode: 'Bank', date: new Date().toISOString() });
+        persist(); toast('Bank entry saved');
+        settings._bankId = bankId; setView('bank-ledger');
+        break;
+      }
+      case 'bank-transfer': {
+        if (banks.length < 1) { toast('Add a bank first'); break; }
+        const fromCash = confirm('Transfer FROM Cash to Bank?\nOK = Cash→Bank, Cancel = Bank→Cash');
+        const bankId = t.dataset.id || settings._bankId || banks[0].id;
+        const amt = parseFloat(prompt('Transfer amount') || '');
+        if (!amt || amt <= 0) break;
+        if (fromCash) {
+          if (!settings.cashAdjustments) settings.cashAdjustments = [];
+          settings.cashAdjustments.push({ id: uid(), amount: -amt, note: 'Transfer to bank', date: new Date().toISOString() });
+          bankTxns.push({ id: uid(), bankId, dir: 'in', amount: amt, note: 'Transfer from cash', mode: 'Transfer', date: new Date().toISOString() });
+        } else {
+          bankTxns.push({ id: uid(), bankId, dir: 'out', amount: amt, note: 'Transfer to cash', mode: 'Transfer', date: new Date().toISOString() });
+          if (!settings.cashAdjustments) settings.cashAdjustments = [];
+          settings.cashAdjustments.push({ id: uid(), amount: amt, note: 'Transfer from bank', date: new Date().toISOString() });
+        }
+        persist(); toast('Transfer recorded'); setView('banks');
+        break;
+      }
+      case 'add-loan': {
+        const name = prompt('Loan name');
+        if (!name) break;
+        const lender = prompt('Lender (bank / person)') || '';
+        const amount = parseFloat(prompt('Loan amount') || '0') || 0;
+        loans.push({ id: uid(), name: name.trim(), lender, amount, balance: amount, date: new Date().toISOString() });
+        persist(); toast('Loan added'); setView('loans');
+        break;
+      }
+      case 'add-other-income': {
+        const title = prompt('Income title (e.g. Interest, Rent received)');
+        if (!title) break;
+        const amount = parseFloat(prompt('Amount') || '0') || 0;
+        const category = prompt('Category', 'Other') || 'Other';
+        otherIncome.push({ id: uid(), title: title.trim(), category, amount, date: new Date().toISOString() });
+        persist(); toast('Income recorded'); setView('other-income');
+        break;
+      }
+      case 'gen-barcode': {
+        const code = t.dataset.code || '';
+        const id = t.dataset.id;
+        const p = products.find(x => x.id === id);
+        if (p && !p.barcode) { p.barcode = code; persist(); }
+        const box = document.getElementById('barcodePreview');
+        if (!box) break;
+        box.innerHTML = `<div class="card" style="padding:16px;display:inline-block">
+          <svg id="barcodeSvg"></svg>
+          <div style="margin-top:8px;font-weight:600">${escapeHtml(p ? p.name : '')}</div>
+          <div class="text-sm text-secondary">${escapeHtml(code)}</div>
+          <button class="btn btn-primary btn-sm mt-8" onclick="window.print()">Print label</button>
+        </div>`;
+        const draw = () => {
+          if (window.JsBarcode) {
+            try { window.JsBarcode('#barcodeSvg', code, { format: 'CODE128', width: 2, height: 60, displayValue: true }); }
+            catch (e) { box.innerHTML += '<p class="text-danger">Could not draw barcode</p>'; }
+          } else {
+            box.innerHTML += `<p class="text-sm">Barcode value: <strong>${escapeHtml(code)}</strong></p>`;
+          }
+        };
+        if (!window.JsBarcode) {
+          const s = document.createElement('script');
+          s.src = 'https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js';
+          s.onload = draw;
+          document.head.appendChild(s);
+        } else draw();
+        break;
+      }
+      case 'publish-store-page': {
+        const catalog = {
+          shop: settings.businessName || 'My Shop',
+          phone: settings.phone || '',
+          email: settings.email || '',
+          address: [settings.address, settings.city].filter(Boolean).join(', '),
+          currency: settings.currency || 'PKR',
+          updatedAt: new Date().toISOString(),
+          items: products.map(p => ({
+            name: p.name, price: p.price, unit: p.unit || '', category: p.category || '', stock: p.stock
+          })).slice(0, 80)
+        };
+        localStorage.setItem('billaura_public_store', JSON.stringify(catalog));
+        try {
+          const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(catalog)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+          settings._storeHash = b64;
+          persist();
+        } catch (e) {}
+        toast('Store published (' + catalog.items.length + ' items). Share link works on any phone.');
+        render();
+        break;
+      }
+      case 'open-store-page': {
+        let u = new URL('store.html', location.href).href;
+        if (settings._storeHash) u += '#c=' + settings._storeHash;
+        window.open(u, '_blank');
+        break;
+      }
+      case 'share-store-link': {
+        let u = new URL('store.html', location.href).href;
+        if (settings._storeHash) u += '#c=' + settings._storeHash;
+        else {
+          try {
+            const raw = localStorage.getItem('billaura_public_store');
+            if (raw) {
+              const b64 = btoa(unescape(encodeURIComponent(raw))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+              u += '#c=' + b64;
+            }
+          } catch (e) {}
+        }
+        const msg = '*' + (settings.businessName || 'Our Store') + '*\n\nBrowse products: ' + u + (settings.phone ? '\nOrder: ' + settings.phone : '');
+        sendWhatsApp('', msg);
+        break;
+      }
+      case 'toggle-setting': {
+        e.preventDefault();
+        e.stopPropagation();
+        const key = t.dataset.key;
+        if (key) {
+          settings[key] = !settings[key];
+          persist();
+          render();
+        }
+        break;
+      }
+      case 'set-setting': {
+        const key = t.dataset.key;
+        const val = t.dataset.value;
+        if (key) { settings[key] = isNaN(val) ? val : Number(val); persist(); render(); }
+        break;
+      }
+      case 'step-setting': {
+        const key = t.dataset.key;
+        const delta = Number(t.dataset.delta || 0);
+        if (key) {
+          settings[key] = Math.max(0, Math.min(4, (Number(settings[key]) || 0) + delta));
+          persist();
+          render();
+        }
+        break;
+      }
+      case 'adjust-cash': {
+        const amt = prompt('Enter adjustment amount (positive = cash in, negative = cash out):');
+        if (amt === null || amt === '') break;
+        const n = parseFloat(amt);
+        if (isNaN(n) || n === 0) { toast('Invalid amount'); break; }
+        if (!settings.cashAdjustments) settings.cashAdjustments = [];
+        settings.cashAdjustments.push({
+          id: uid(),
+          amount: n,
+          note: n >= 0 ? 'Cash In Adjustment' : 'Cash Out Adjustment',
+          date: new Date().toISOString()
+        });
+        persist();
+        toast('Cash adjusted by ' + (settings.currency||'') + ' ' + n);
+        render();
+        break;
+      }
+      case 'db-full':
+        setView('daybook-detail');
+        break;
+      case 'add-tax-rate': {
+        const name = prompt('Tax name (e.g. GST 18%)');
+        if (!name) break;
+        const rate = parseFloat(prompt('Tax rate %') || '0');
+        settings.taxRate = isNaN(rate) ? settings.taxRate : rate;
+        persist();
+        toast('Default tax set to ' + settings.taxRate + '%');
+        render();
+        break;
+      }
+      case 'set-base-currency':
+      case 'pick-base-currency': {
+        const code = t.dataset.code || prompt('Base currency code (e.g. PKR, INR, USD)');
+        if (!code) break;
+        settings.baseCurrency = String(code).toUpperCase();
+        settings.currency = settings.baseCurrency;
+        persist();
+        toast('Base currency: ' + settings.baseCurrency);
+        render();
+        break;
+      }
+      case 'add-currency': {
+        const code = prompt('Currency code (e.g. USD)');
+        if (!code) break;
+        const rate = parseFloat(prompt('Exchange rate: 1 ' + (settings.baseCurrency||settings.currency) + ' = ? ' + code) || '1');
+        if (!settings.currencies) settings.currencies = [];
+        settings.currencies = settings.currencies.filter(c => c.code !== code.toUpperCase());
+        settings.currencies.push({ code: code.toUpperCase(), rate: rate || 1 });
+        persist();
+        toast('Currency added');
+        render();
+        break;
+      }
+      case 'remove-currency': {
+        const code = t.dataset.code;
+        settings.currencies = (settings.currencies || []).filter(c => c.code !== code);
+        persist();
+        render();
+        break;
+      }
+      case 'open-payment-reminders':
+        setView('reminders');
+        break;
+      case 'open-service-reminders':
+        toast('Service Reminders is a Premium feature', 3000);
+        if (typeof openPlansModal === 'function') openPlansModal();
+        break;
+      case 'open-plans':
+        if (typeof openPlansModal === 'function') openPlansModal();
+        else toast('Plans screen unavailable');
+        break;
+      case 'publish-store': {
+        const names = products.slice(0, 15).map(p => '• ' + p.name + ' — ' + settings.currency + ' ' + money(p.price)).join('\n');
+        let msg = '*' + (settings.businessName || 'Our Store') + '*\n\n' + names;
+        if (products.length > 15) msg += '\n\n...and more';
+        msg += '\n\nOrder now' + (settings.phone ? ': ' + settings.phone : '') + '!';
+        sendWhatsApp('', msg);
+        break;
+      }
+      case 'export-backup': {
+        const data = { products, invoices, customers, suppliers, expenses, stockMovements, purchases, banks, bankTxns, otherIncome, loans, settings, invoiceCounter, exportedAt: new Date().toISOString() };
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `billaura-backup-${new Date().toISOString().slice(0,10)}.json`;
+        a.click();
+        toast('Backup downloaded');
+        break;
+      }
+      case 'pin-set-owner': openPinModal('owner'); break;
+      case 'pin-set-staff': openPinModal('staff'); break;
+      case 'pin-remove':
+        if (confirm('Remove the PIN lock and staff PIN?')) { settings.pinHash = ''; settings.staffHash = ''; persist(); setRole(''); toast('Lock removed'); openSettingsModal(); }
+        break;
+      case 'home-tab': homeTab = t.dataset.tab; homeQuery = ''; render(); break;
+      case 'sheet-add-txn': openAddTxnSheet(); break;
+      case 'sheet-more': openMoreSheet(); break;
+      case 'txn-more': { const inv = invoices.find(x => x.id === id); if (inv) openTxnMore(inv); break; }
+      case 'share-txn': { const inv = invoices.find(x => x.id === id); if (inv) openShareSheet(inv); break; }
+      case 'pay-in': openPartyPay('in'); break;
+      case 'pay-out': openPartyPay('out'); break;
+      case 'quick-receive': { const inv = invoices.find(x => x.id === id); if (inv) { const c = custOfInvoice(inv); closeModal(); if (c && c.id) openReceiveModal(c); else openInvoiceDetail(inv); } break; }
+      case 'delete-invoice': {
+        const inv = invoices.find(x => x.id === id); if (!inv) break;
+        if (!confirm('Delete ' + docWord(inv).toLowerCase() + ' ' + inv.number + '? Stock will be adjusted and it goes to the Recycle Bin.')) break;
+        if (inv.docType !== 'estimate') (inv.items || []).forEach(it => { const p = products.find(x => x.id === it.productId); if (p) p.stock += (inv.docType === 'return' ? -it.qty : it.qty); });
+        trashPush('invoice', inv);
+        invoices = invoices.filter(x => x.id !== inv.id);
+        persist(); closeModal(); toast('Deleted — find it in Recycle Bin'); render();
+        break;
+      }
+      case 'delivery-note': { const inv = invoices.find(x => x.id === id); if (inv && window.BillauraTemplates) { closeModal(); BillauraTemplates.printDoc(inv, tplCtx(), { deliveryNote: true }); } break; }
+      case 'share-sms': { const inv = invoices.find(x => x.id === id); if (inv) { const c = custOfInvoice(inv); location.href = 'sms:' + (inv.customerPhone || (c && c.phone) || '') + '?body=' + encodeURIComponent(`${settings.businessName}\n${docWord(inv)} ${inv.number}\nTotal ${settings.currency} ${money(inv.total)}\nBalance ${settings.currency} ${money(Math.max(0, inv.total - (inv.paidAmount || 0)))}`); } break; }
+      case 'menu-toggle': menuOpen[t.dataset.key] = !menuOpen[t.dataset.key]; render(); break;
+      case 'list-sales': invFilter = 'sale'; setView('invoices'); break;
+      case 'list-returns': invFilter = 'return'; setView('invoices'); break;
+      case 'list-estimates': invFilter = 'estimate'; setView('invoices'); break;
+      case 'list-sales-dn': invFilter = 'sale'; setView('invoices'); toast('Tap ⋮ on an invoice → Delivery Note', 3500); break;
+      case 'auto-backup': settings.autoBackup = !settings.autoBackup; persist(); toast(settings.autoBackup ? 'Auto backup ON — a backup file downloads once a day when you open the app' : 'Auto backup OFF', 4000); break;
+      case 'backup-email': emailBackup(); break;
+      case 'open-calc': openCalculator(); break;
+      case 'bulk-tax': setView('tax-settings'); toast('Set the default tax in Tax List; new invoices use it'); break;
+      case 'import-parties': importPartiesPick(); break;
+      case 'close-fy': sheet(`<p class="text-sm text-secondary mb-12">Closing the year downloads a full backup and keeps all your data. Invoice numbers continue; reports can be filtered by date.</p><button class="btn btn-primary btn-block" data-action="export-backup">Download year-end backup</button>`, 'Close Financial Year'); break;
+      case 'verify-fix': { (_verifyIssues || []).forEach(i => i.fix && i.fix()); persist(); toast('Fixed'); render(); break; }
+      case 'restore-trash': restoreTrash(id); render(); break;
+      case 'purge-trash': { save('sb_recycle_v1', load('sb_recycle_v1', []).filter(x => x.id !== id)); render(); break; }
+      case 'exp-tab': expTab = t.dataset.tab; render(); break;
+      case 'exp-cat': openExpenseModal(null, t.dataset.cat); break;
+      case 'add-company': toast('Multiple companies is a Premium feature'); openPlansModal(); break;
+      case 'cloud-sync-now': doCloudSync({ silent: false }); break;
+      case 'open-terms': openTermsModal(); break;
+      case 'open-due-dates': openDueDatesModal(); break;
+      case 'open-txn-fields': openFieldsModal('Additional Fields (Transaction)', 'txnFields', 3); break;
+      case 'open-party-fields': openFieldsModal('Party Additional Fields', 'partyFields', 4); break;
+      case 'open-item-fields': openFieldsModal('Additional Item Fields', 'itemFields', 4); break;
+      case 'open-item-custom': openFieldsModal('Item Custom Fields', 'itemFields', 4); break;
+      case 'add-product': openProductModal(); break;
+      case 'filter-cat': productCat = t.dataset.cat || ''; render(); break;
+      case 'bulk-tools': openBulkModal(); break;
+      case 'bulk-export': exportProductsCSV(false); break;
+      case 'bulk-template': exportProductsCSV(true); break;
+      case 'bulk-price': if (!needPro('Bulk price change')) break; openBulkPriceModal(); break;
+      case 'bulk-undo': undoBulkPrice(); break;
+      case 'bulk-import-pick': { if (!needPro('Bulk product import')) break; const fi = $('#bulkImportFile'); if (fi) fi.click(); break; }
+      case 'bulk-import-confirm': {
+        if (!pendingImportText) break;
+        const plan = planImport(pendingImportText, { updateStock: !!($('#importUpdateStock') || {}).checked });
+        if (plan.error) break;
+        const r = applyImport(plan);
+        pendingImportText = null;
+        closeModal();
+        toast(`Imported: ${r.added} new, ${r.updated} updated`, 3500);
+        setView('products');
+        break;
+      }
+      case 'edit-product': {
+        const p = products.find(x => x.id === id);
+        if (p) openProductModal(p);
+        break;
+      }
+      case 'delete-product':
+        if (confirm('Delete this product?')) {
+          { const _o = products.find(p => p.id === editingId); if (_o) trashPush('product', _o); }
+          products = products.filter(p => p.id !== editingId);
+          persist();
+          toast('Deleted');
+          closeModal();
+          render();
+        }
+        break;
+      case 'view-customer': {
+        const c = customers.find(x => x.id === id);
+        if (c) openCustomerDetail(c);
+        break;
+      }
+      case 'add-customer': openCustomerModal(); break;
+      case 'edit-customer': {
+        const c = customers.find(x => x.id === id);
+        if (c) { closeModal(); openCustomerModal(c); }
+        break;
+      }
+      case 'scan-invoice-barcode':
+        startScanner(code => {
+          addProductByBarcode(code);
+          const inp = $('#invoiceBarcodeInput');
+          if (inp) inp.value = code;
+        });
+        break;
+      case 'delete-customer':
+        if (confirm('Delete this customer?')) {
+          { const _o = customers.find(c => c.id === editingId); if (_o) trashPush('customer', _o); }
+          customers = customers.filter(c => c.id !== editingId);
+          persist();
+          toast('Deleted');
+          closeModal();
+          setView('customers');
+        }
+        break;
+      case 'add-supplier': openSupplierModal(); break;
+      case 'edit-supplier': {
+        const s = suppliers.find(x => x.id === id);
+        if (s) openSupplierModal(s);
+        break;
+      }
+      case 'delete-supplier':
+        if (confirm('Delete this supplier?')) {
+          { const _o = suppliers.find(c => c.id === editingId); if (_o) trashPush('supplier', _o); }
+          suppliers = suppliers.filter(s => s.id !== editingId);
+          persist();
+          toast('Deleted');
+          closeModal();
+          setView('suppliers');
+        }
+        break;
+      case 'inv-filter': invFilter = t.dataset.kind || 'all'; render(); break;
+      case 'receive-payment': { const c = customers.find(x => x.id === id); if (c) openReceiveModal(c); break; }
+      case 'open-statement': { const c = customers.find(x => x.id === id); if (c) openStatement(c); break; }
+      case 'statement-pdf': { const c = customers.find(x => x.id === id); if (c) statementPDF(c); break; }
+      case 'statement-wa': { const c = customers.find(x => x.id === id); if (c) sendWhatsApp(c.phone, statementText(c)); break; }
+      case 'remind-customer': { const c = customers.find(x => x.id === id); if (c) sendWhatsApp(c.phone, reminderText(c)); break; }
+      case 'remind-invoice': { const inv = invoices.find(x => x.id === id); if (inv) { const c = custOfInvoice(inv); sendWhatsApp(c.phone, reminderText(c, inv)); } break; }
+      case 'db-range': dbRange = t.dataset.v; render(); break;
+      case 'db-mode': dbMode = t.dataset.v; render(); break;
+      case 'rp-mode': { const row = t.parentElement; row.querySelectorAll('.cat-chip').forEach(x => x.classList.toggle('active', x === t)); break; }
+      case 'new-purchase': docCtx = { type: 'purchase' }; closeModal(); setView('create-invoice'); break;
+      case 'view-purchase': { const p = purchases.find(x => x.id === id); if (p) openPurchaseDetail(p); break; }
+      case 'purchase-pay': {
+        const p = purchases.find(x => x.id === id); if (!p) break;
+        const amt = parseFloat($('#recordPayInput') && $('#recordPayInput').value) || 0;
+        if (amt <= 0) { toast('Enter a valid amount'); break; }
+        addPayment(p, amt, pickedMode('rpMode'), ''); persist(); toast('Payment recorded'); openPurchaseDetail(p); if (currentView === 'purchases') render(); break;
+      }
+      case 'purchase-pay-full': {
+        const p = purchases.find(x => x.id === id); if (!p) break;
+        addPayment(p, (p.total || 0) - (p.paidAmount || 0), pickedMode('rpMode'), ''); persist(); toast('Marked as paid'); openPurchaseDetail(p); if (currentView === 'purchases') render(); break;
+      }
+      case 'view-supplier': { const sp = suppliers.find(x => x.id === id); if (sp) openSupplierDetail(sp); break; }
+      case 'pay-supplier': { const sp = suppliers.find(x => x.id === id); if (sp) openPaySupplierModal(sp); break; }
+      case 'new-estimate': docCtx = { type: 'estimate' }; closeModal(); setView('create-invoice'); break;
+      case 'convert-estimate': {
+        const q = invoices.find(x => x.id === id);
+        if (q) { docCtx = { type: 'sale', from: q }; closeModal(); setView('create-invoice'); }
+        break;
+      }
+      case 'new-return': docCtx = { type: 'return' }; closeModal(); setView('create-invoice'); break;
+      case 'return-from-invoice': {
+        const inv = invoices.find(x => x.id === id);
+        if (inv) { docCtx = { type: 'return', ref: inv }; closeModal(); setView('create-invoice'); }
+        break;
+      }
+      case 'view-invoice': {
+        const inv = invoices.find(x => x.id === id);
+        if (inv) openInvoiceDetail(inv);
+        break;
+      }
+      case 'pdf-invoice': {
+        const inv = invoices.find(x => x.id === id);
+        if (inv) generatePDF(inv);
+        break;
+      }
+      case 'share-image': {
+        const inv = invoices.find(x => x.id === id);
+        if (inv) shareInvoiceImage(inv);
+        break;
+      }
+      case 'share-whatsapp-text': {
+        const inv = invoices.find(x => x.id === id);
+        if (inv) shareWhatsAppText(inv);
+        break;
+      }
+      case 'rc-paper': { HisablyReceipt.setPrefs({ paper: t.dataset.paper }); openPrintModal(); break; }
+      case 'rc-print': rcBrowserPrint(); break;
+      case 'rc-save-image': rcSaveImage(); break;
+      case 'rc-bt-print': rcBluetooth(false); break;
+      case 'rc-bt-test': rcBluetooth(true); break;
+      case 'print-invoice': {
+        const inv = invoices.find(x => x.id === id);
+        if (inv) printInvoice(inv);
+        break;
+      }
+      case 'open-theme-from-print': closeModal(); setView('invoice-theme'); break;
+      case 'print-a4': {
+        const inv = invoices.find(x => x.id === (id || (printTarget && printTarget.id)));
+        if (inv && tplOK()) BillauraTemplates.printDoc(inv, tplCtx(), {});
+        break;
+      }
+      case 'cycle-print-text': { const o=['small','medium','large']; settings.printTextSize = o[(o.indexOf(settings.printTextSize||'medium')+1)%3]; persist(); render(); break; }
+      case 'cycle-page-size': { const o=['A4','A5','Letter']; settings.printPageSize = o[(o.indexOf(settings.printPageSize||'A4')+1)%3]; persist(); render(); break; }
+      case 'set-inv-template': settings.invoiceTemplate = t.dataset.value; persist(); render(); break;
+      case 'set-inv-color': settings.invoiceColor = t.dataset.value; persist(); render(); break;
+      case 'set-print-text': settings.printTextSize = t.dataset.value; persist(); render(); break;
+      case 'set-page-size': settings.printPageSize = t.dataset.value; persist(); render(); break;
+      case 'set-orient': settings.printOrientation = t.dataset.value; persist(); render(); break;
+      case 'preview-invoice-template': {
+        const inv = invoices[0] || sampleInvoice();
+        if (tplOK()) BillauraTemplates.printDoc(inv, tplCtx(), {});
+        break;
+      }
+      case 'open-settings': openSettingsModal(); break;
+      case 'close-modal': closeModal(); break;
+      case 'toggle-select': {
+        const wrap = t.closest('.custom-select');
+        if (!wrap) break;
+        $$('.custom-select.open').forEach(el => {
+          if (el !== wrap) el.classList.remove('open');
+        });
+        wrap.classList.toggle('open');
+        if (wrap.classList.contains('open') && wrap.classList.contains('searchable')) {
+          const searchInput = wrap.querySelector('.custom-select-search-input');
+          if (searchInput) {
+            searchInput.value = '';
+            wrap.querySelectorAll('.custom-select-option').forEach(o => o.style.display = '');
+            setTimeout(() => searchInput.focus(), 50);
+          }
+        }
+        break;
+      }
+      case 'select-option': {
+        const wrap = t.closest('.custom-select');
+        if (!wrap) break;
+        const value = t.dataset.value || '';
+        const label = t.dataset.label || '';
+        const hidden = wrap.querySelector('input[type="hidden"]');
+        const trigger = wrap.querySelector('.custom-select-trigger');
+        if (hidden) hidden.value = value;
+        if (trigger) trigger.textContent = label;
+        wrap.querySelectorAll('.custom-select-option').forEach(o => o.classList.remove('selected'));
+        t.classList.add('selected');
+        wrap.classList.remove('open');
+
+        // Choosing "Walk-in Customer" clears the typed customer
+        if (wrap.dataset.name === 'customerId' && !value) {
+          const ni = $('#customerNameInput'), pi = $('#customerPhoneInput');
+          if (ni) ni.value = '';
+          if (pi) pi.value = '';
+        }
+        // Auto-fill customer name/phone when selecting a customer
+        if (wrap.dataset.name === 'customerId' && value) {
+          const c = customers.find(x => x.id === value);
+          if (c) {
+            const nameInput = $('#customerNameInput');
+            const phoneInput = $('#customerPhoneInput');
+            if (nameInput) nameInput.value = c.name;
+            if (phoneInput) phoneInput.value = c.phone || '';
+          }
+        }
+        // Show amount paid field for partial payments
+        if (wrap.dataset.name === 'paymentStatus') {
+          const grp = $('#paidAmountGroup');
+          if (grp) grp.style.display = value === 'partial' ? 'block' : 'none';
+        }
+        break;
+      }
+      case 'record-payment': {
+        const inv = invoices.find(x => x.id === id);
+        if (!inv) break;
+        const input = $('#recordPayInput');
+        const amt = parseFloat(input && input.value) || 0;
+        if (amt <= 0) { toast('Enter a valid amount'); break; }
+        addPayment(inv, amt, pickedMode('rpMode'), '');
+        persist();
+        toast('Payment recorded');
+        openInvoiceDetail(inv);
+        break;
+      }
+      case 'mark-paid': {
+        const inv = invoices.find(x => x.id === id);
+        if (!inv) break;
+        addPayment(inv, inv.total - (inv.paidAmount || 0), pickedMode('rpMode'), '');
+        inv.paidAmount = inv.total;
+        inv.paymentStatus = 'paid';
+        persist();
+        toast('Marked as paid');
+        openInvoiceDetail(inv);
+        if (currentView === 'invoices' || currentView === 'dashboard') render();
+        break;
+      }
+      case 'stock-in': {
+        const p = products.find(x => x.id === id);
+        if (!p) break;
+        const qtyInput = $('#stockInQty');
+        const qty = parseInt(qtyInput && qtyInput.value, 10) || 0;
+        if (qty <= 0) { toast('Enter quantity to add'); break; }
+        p.stock = (p.stock || 0) + qty;
+        stockMovements.unshift({
+          id: uid(),
+          productId: p.id,
+          productName: p.name,
+          type: 'in',
+          qty,
+          date: new Date().toISOString(),
+          note: 'Stock in'
+        });
+        persist();
+        toast(`+${qty} added to stock`);
+        if (qtyInput) qtyInput.value = '';
+        // refresh modal product stock field if present
+        const stockField = document.querySelector('#productForm input[name="stock"]');
+        if (stockField) stockField.value = p.stock;
+        break;
+      }
+      case 'add-expense': openExpenseModal(); break;
+      case 'edit-expense': {
+        const exp = expenses.find(x => x.id === id);
+        if (exp) openExpenseModal(exp);
+        break;
+      }
+      case 'delete-expense':
+        if (confirm('Delete this expense?')) {
+          { const _o = expenses.find(c => c.id === editingId); if (_o) trashPush('expense', _o); }
+          expenses = expenses.filter(x => x.id !== editingId);
+          persist();
+          toast('Deleted');
+          closeModal();
+          setView('expenses');
+        }
+        break;
+      case 'pick-logo': bindBrandFile('logoFile', 'logo', 'logoPreview', 'Logo'); break;
+      case 'pick-logo-legacy': {
+        const fileInput = $('#logoFile');
+        if (!fileInput) break;
+        fileInput.onchange = () => {
+          const file = fileInput.files && fileInput.files[0];
+          if (!file) return;
+          if (file.size > 500 * 1024) { toast('Logo must be under 500KB'); return; }
+          const reader = new FileReader();
+          reader.onload = () => {
+            const dataUrl = reader.result;
+            // Resize roughly via canvas if large
+            const img = new Image();
+            img.onload = () => {
+              const max = 200;
+              let w = img.width, h = img.height;
+              if (w > max || h > max) {
+                if (w > h) { h = Math.round(h * max / w); w = max; }
+                else { w = Math.round(w * max / h); h = max; }
+              }
+              const canvas = document.createElement('canvas');
+              canvas.width = w; canvas.height = h;
+              canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+              const resized = canvas.toDataURL('image/png');
+              settings.logo = resized;
+              const prev = $('#logoPreview');
+              if (prev) prev.innerHTML = `<img src="${resized}" alt="Logo" />`;
+              toast('Logo ready – tap Save Settings');
+            };
+            img.src = dataUrl;
+          };
+          reader.readAsDataURL(file);
+        };
+        fileInput.click();
+        break;
+      }
+      case 'remove-logo':
+        settings.logo = '';
+        const prev = $('#logoPreview');
+        if (prev) prev.innerHTML = '<span>No logo</span>';
+        toast('Logo removed – tap Save Settings');
+        break;
+      case 'pick-qr': bindBrandFile('qrFile', 'paymentQr', 'qrPreview', 'Payment QR'); break;
+      case 'pick-qr-legacy': {
+        const fileInput = $('#qrFile');
+        if (!fileInput) break;
+        fileInput.onchange = () => {
+          const file = fileInput.files && fileInput.files[0];
+          if (!file) return;
+          if (file.size > 800 * 1024) { toast('QR image must be under 800KB'); return; }
+          const reader = new FileReader();
+          reader.onload = () => {
+            const img = new Image();
+            img.onload = () => {
+              const max = 400;
+              let w = img.width, h = img.height;
+              if (w > max || h > max) {
+                if (w > h) { h = Math.round(h * max / w); w = max; }
+                else { w = Math.round(w * max / h); h = max; }
+              }
+              const canvas = document.createElement('canvas');
+              canvas.width = w; canvas.height = h;
+              canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+              settings.paymentQr = canvas.toDataURL('image/png');
+              const prev = $('#qrPreview');
+              if (prev) prev.innerHTML = `<img src="${settings.paymentQr}" alt="QR" />`;
+              toast('Payment QR ready – tap Save Settings');
+            };
+            img.src = reader.result;
+          };
+          reader.readAsDataURL(file);
+        };
+        fileInput.click();
+        break;
+      }
+      case 'remove-qr':
+        settings.paymentQr = '';
+        const qprev = $('#qrPreview');
+        if (qprev) qprev.innerHTML = '<span>No QR</span>';
+        toast('QR removed – tap Save Settings');
+        break;
+      case 'filter-select':
+        // handled by input listener
+        break;
+      case 'scan-barcode':
+        startScanner(code => {
+          const input = $('#barcodeInput');
+          if (input) input.value = code;
+          toast('Barcode scanned');
+        });
+        break;
+      case 'pick-signature': bindBrandFile('sigFile', 'signature', 'sigPreview', 'Signature'); break;
+      case 'remove-signature': settings.signature = ''; persist(); toast('Signature removed'); if (currentView==='business-profile') render(); break;
+      case 'pick-stamp': bindBrandFile('stampFile', 'stamp', 'stampPreview', 'Stamp'); break;
+      case 'remove-stamp': settings.stamp = ''; persist(); toast('Stamp removed'); if (currentView==='business-profile') render(); break;
+      case 'remove-qr': settings.paymentQr = ''; persist(); toast('QR removed'); if (currentView==='business-profile') render(); break;
+      
+      case 'pos-add': {
+        if (e.target.closest('[data-action="toggle-fav"]')) break;
+        posAdd(t.dataset.id);
+        break;
+      }
+      case 'toggle-fav': {
+        e.preventDefault();
+        e.stopPropagation();
+        const id = t.dataset.id;
+        if (!settings.favourites) settings.favourites = [];
+        const i = settings.favourites.indexOf(id);
+        if (i >= 0) settings.favourites.splice(i, 1);
+        else settings.favourites.push(id);
+        persist();
+        if (window._posRenderGrid) window._posRenderGrid(window._posFilter || 'fav', (document.getElementById('posSearch')||{}).value);
+        else if (currentView === 'pos') { $('#appContent').innerHTML = viewPOS(); bindPOS(); }
+        break;
+      }
+      case 'pos-checkout': {
+        const lines = window._posLines || [];
+        if (!lines.length) { toast('Add items first'); break; }
+        // Convert POS cart into create-invoice flow
+        docCtx = { type: 'sale', posLines: lines.map(l => Object.assign({}, l)) };
+        window._posLines = [];
+        setView('create-invoice');
+        toast('Review & save invoice');
+        break;
+      }
+      case 'scan-pos-barcode':
+        startScanner(code => {
+          const p = products.find(x => (x.barcode || '').toLowerCase() === code.toLowerCase());
+          if (!p) { toast('Product not found'); return; }
+          posAdd(p.id);
+          toast('+1 ' + p.name);
+        });
+        break;
+      case 'save-stock-adjust': {
+        const pid = (document.getElementById('saProduct')||{}).value;
+        const qty = parseFloat((document.getElementById('saQty')||{}).value || '');
+        const reason = (document.getElementById('saReason')||{}).value || 'Adjustment';
+        const note = (document.getElementById('saNote')||{}).value || '';
+        const dirBtn = document.querySelector('#saDir .cat-chip.active');
+        const dir = dirBtn ? dirBtn.dataset.dir : 'out';
+        if (!pid) { toast('Select a product'); break; }
+        if (!(qty >= 0)) { toast('Enter quantity'); break; }
+        const pr = products.find(x => x.id === pid);
+        if (!pr) break;
+        const before = pr.stock || 0;
+        let after = before;
+        if (dir === 'in') after = before + qty;
+        else if (dir === 'out') after = before - qty;
+        else after = qty;
+        pr.stock = after;
+        stockMovements.unshift({
+          id: uid(), productId: pr.id, productName: pr.name,
+          type: after >= before ? 'in' : 'out',
+          qty: Math.abs(after - before),
+          date: new Date().toISOString(),
+          note: 'Adjust: ' + reason + (note ? ' – ' + note : '')
+        });
+        persist();
+        toast('Stock updated: ' + pr.name + ' ' + before + ' → ' + after);
+        setView('stock-adjust');
+        break;
+      }
+      case 'duplicate-invoice': {
+        const inv = invoices.find(x => x.id === id);
+        if (!inv || !inv.items || !inv.items.length) { toast('Nothing to duplicate'); break; }
+        docCtx = { type: inv.docType === 'estimate' ? 'estimate' : 'sale', posLines: inv.items.map(it => ({ productId: it.productId, name: it.name, price: it.price, cost: it.cost||0, qty: it.qty, custom: it.custom })) };
+        closeModal();
+        setView('create-invoice');
+        toast('Duplicated – review and save');
+        break;
+      }
+
+      case 'stop-scanner': stopScanner(); break;
+      case 'open-plans': openPlansModal(); break;
+      case 'open-shopify': openShopifyModal(); break;
+      case 'shopify-sync': shopifyManualSync(false); break;
+      case 'shopify-full': shopifyManualSync(true); break;
+      case 'shopify-disconnect':
+        if (confirm('Disconnect Shopify? Your products and invoices in Billaura stay; syncing stops.')) {
+          shopifyBusy('Disconnecting…');
+          HisablyCloud.shopifyCall('disconnect', {}).then(() => { setShopifyOn(false); toast('Shopify disconnected'); }).catch(e => toast(e.message, 5000)).finally(openShopifyModal);
+        }
+        break;
+      case 'submit-payment': submitPayment(); break;
+      case 'sign-out-user': signOutUser(); break;
+      case 'cloud-auth': openCloudAuthModal(); break;
+      case 'cloud-sync': doCloudSync(); break;
+      case 'cloud-signin': {
+        const email = (($('#cloudEmail') || {}).value || '').trim();
+        const password = ($('#cloudPassword') || {}).value;
+        if (!email || !password) { toast('Enter email & password'); break; }
+        HisablyCloud.signIn(email, password).then(async () => {
+          claimDataFor(email);
+          closeModal();
+          toast('Signed in – syncing…');
+          await refreshPlanFromCloud();
+          await doCloudSync({ silent: false });
+        }).catch(err => toast(err.message || 'Sign in failed'));
+        break;
+      }
+      case 'export-data': {
+        const data = { products, invoices, customers, suppliers, expenses, stockMovements, purchases, banks, bankTxns, otherIncome, loans, settings, invoiceCounter, exportedAt: new Date().toISOString() };
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `billaura-backup-${new Date().toISOString().slice(0,10)}.json`;
+        a.click();
+        toast('Backup downloaded');
+        break;
+      }
+      case 'import-data': {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'application/json,.json';
+        input.onchange = () => {
+          const file = input.files && input.files[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = () => {
+            try {
+              const data = JSON.parse(reader.result);
+              if (!data || typeof data !== 'object') throw new Error('Invalid');
+              if (confirm('Replace current data with this backup?')) {
+                if (Array.isArray(data.products)) products = data.products;
+                if (Array.isArray(data.invoices)) invoices = data.invoices;
+                if (Array.isArray(data.customers)) customers = data.customers;
+                if (Array.isArray(data.suppliers)) suppliers = data.suppliers;
+                if (Array.isArray(data.expenses)) expenses = data.expenses;
+                if (Array.isArray(data.stockMovements)) stockMovements = data.stockMovements;
+                if (Array.isArray(data.purchases)) purchases = data.purchases;
+                if (Array.isArray(data.banks)) banks = data.banks;
+                if (Array.isArray(data.bankTxns)) bankTxns = data.bankTxns;
+                if (Array.isArray(data.otherIncome)) otherIncome = data.otherIncome;
+                if (Array.isArray(data.loans)) loans = data.loans;
+                if (data.settings) settings = Object.assign({}, settings, data.settings);
+                if (data.invoiceCounter) invoiceCounter = Math.max(invoiceCounter, Number(data.invoiceCounter) || 0);
+                normalizeData();
+                migrateIds();
+                persist();
+                migrateData();
+                toast('Backup restored');
+                setView('dashboard');
+              }
+            } catch (err) {
+              toast('Invalid backup file');
+            }
+          };
+          reader.readAsText(file);
+        };
+        input.click();
+        break;
+      }
+      case 'clear-data':
+        if (confirm('Delete ALL data? This also deletes it from your cloud account and cannot be undone.')) {
+          products = []; invoices = []; customers = []; suppliers = []; expenses = []; stockMovements = []; purchases = [];
+          invoiceCounter = 1001;
+          persist();
+          toast('All data cleared');
+          setView('dashboard');
+        }
+        break;
+    }
+  });
+
+  // Search handlers (delegated via input event)
+  document.addEventListener('input', e => {
+    if (e.target.classList.contains('custom-select-search-input')) {
+      const q = e.target.value.trim().toLowerCase();
+      const list = e.target.closest('.custom-select-options');
+      if (!list) return;
+      list.querySelectorAll('.custom-select-option').forEach(opt => {
+        const text = opt.dataset.search || opt.textContent.toLowerCase();
+        opt.style.display = text.includes(q) ? '' : 'none';
+      });
+      return;
+    }
+    if (e.target.id === 'productSearch') {
+      const list = $('#productList');
+      if (list) list.innerHTML = productListHTML(e.target.value);
+    }
+    if (e.target.id === 'customerSearch') {
+      const q = e.target.value.trim().toLowerCase();
+      const filtered = customers.filter(c =>
+        c.name.toLowerCase().includes(q) || (c.phone || '').includes(q)
+      ).sort((a,b) => a.name.localeCompare(b.name));
+      const list = $('#customerList');
+      if (list) list.innerHTML = filtered.map(c => {
+        const bal = customerBalance(c.id, c.name, c.phone);
+        const dueHtml = bal.due > 0
+          ? `<span class="list-item-badge badge-out">Due ${settings.currency} ${money(bal.due)}</span>`
+          : (bal.total > 0 ? `<span class="list-item-badge badge-ok">Clear</span>` : '');
+        return `<div class="list-item" data-action="view-customer" data-id="${c.id}">
+          <div class="list-item-icon">${initials(c.name)}</div>
+          <div class="list-item-body">
+            <div class="list-item-title">${escapeHtml(c.name)}</div>
+            <div class="list-item-sub">${escapeHtml(c.phone || 'No phone')}</div>
+            ${dueHtml}
+          </div>
+          <div class="list-item-right"><div class="list-item-price">${bal.total ? settings.currency + ' ' + money(bal.total) : '—'}</div></div>
+        </div>`;
+      }).join('') || '<div class="text-center text-secondary" style="padding:32px 0">No customers found</div>';
+    }
+  });
+
+  document.addEventListener('change', e => {
+    if (e.target.id === 'bulkImportFile') {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      if (file.size > 5 * 1024 * 1024) { toast('File too large (max 5 MB)'); return; }
+      const reader = new FileReader();
+      reader.onload = () => openImportPreview(String(reader.result || ''));
+      reader.onerror = () => toast('Could not read the file');
+      reader.readAsText(file, 'utf-8');
+    } else if (e.target.id === 'importUpdateStock' && pendingImportText) {
+      renderImportPreview(e.target.checked);
+    }
+  });
+
+  $('#backBtn').addEventListener('click', () => {
+    if (viewStack && viewStack.length) {
+      const prev = viewStack.pop();
+      setView(prev, { keepHistory: true });
+    } else if (previousView && previousView !== currentView) {
+      setView(previousView, { keepHistory: true });
+    } else {
+      setView('more', { keepHistory: true });
+    }
+  });
+
+
+  // ---------- Cloud sync (record-level, last-write-wins) ----------
+  let _syncAgain = false;
+
+  function emptyRemote(shop) {
+    const r = { shop: shop || null };
+    SYNC_COLLECTIONS.forEach(n => { r[DB_TABLE[n] || n] = { live: [], tombs: {} }; });
+    return r;
+  }
+
+  // Merge one collection with what the cloud has. Pure + synchronous, so nothing the
+  // user does can slip in between "read local" and "write local".
+  function mergeCollection(name, remote) {
+    const local = getList(name);
+    const myTombs = tombs[name] || {};
+    const rMap = new Map(remote.live.map(r => [r.id, r]));
+    const seen = new Set();
+    const out = [];
+    const push = [];
+    local.forEach(l => {
+      seen.add(l.id);
+      const rt = remote.tombs[l.id];
+      if (rt) {
+        if (ts(rt) >= ts(l.updatedAt)) return;       // deleted on another device -> drop here too
+        out.push(l); push.push(l);                    // edited after that delete -> keep + restore
+        return;
+      }
+      const r = rMap.get(l.id);
+      if (!r) { out.push(l); push.push(l); return; }  // not in cloud yet
+      if (ts(l.updatedAt) > ts(r.updatedAt)) { out.push(l); push.push(l); }
+      else out.push(Object.assign({}, l, r));         // cloud copy is newer (or same)
+    });
+    remote.live.forEach(r => {
+      if (!seen.has(r.id) && !myTombs[r.id]) out.push(r);   // new from another device
+    });
+    return { list: out, push };
+  }
+
+  function mergeSettings(remoteSettings) {
+    const r = (remoteSettings && typeof remoteSettings === 'object') ? remoteSettings : {};
+    const rt = ts(r.updatedAt), lt = ts(settings.updatedAt);
+    if (rt > lt) { settings = Object.assign({}, settings, r); return null; }
+    if (lt > rt) return settings;
+    return null;
+  }
+
+  function canRenderNow() {
+    const modal = $('#modalRoot');
+    return currentView !== 'create-invoice' && !(modal && modal.innerHTML.trim());
+  }
+
+  async function doCloudSync(opts = {}) {
+    const silent = !!opts.silent;
+    if (!window.HisablyCloud || !HisablyCloud.ready()) {
+      if (!silent) toast('Online features are not available right now. Please try again later.');
+      return false;
+    }
+    if (!HisablyCloud.getSession()) {
+      if (!silent) toast('Sign in first (More → Cloud account)');
+      return false;
+    }
+    if (!navigator.onLine) {
+      if (!silent) toast('You are offline – changes are saved on this phone and will sync later');
+      return false;
+    }
+    if (_cloudSyncing) { _syncAgain = true; return false; }
+    _cloudSyncing = true;
+    let ok = false;
+    try {
+      if (!silent) toast('Syncing…');
+      let remote = await HisablyCloud.fetchRemote();      // throws if ANY read fails -> local data untouched
+      if (localStorage.getItem(LEGACY_FLAG)) {
+        await HisablyCloud.wipeRemoteData();               // one-time: v1 left random-id copies in the cloud
+        remote = emptyRemote(remote.shop);
+      }
+
+      // ---- merge (synchronous) ----
+      const changes = { tombs: JSON.parse(JSON.stringify(tombs)) };
+      SYNC_COLLECTIONS.forEach(n => {
+        const m = mergeCollection(n, remote[DB_TABLE[n] || n] || { live: [], tombs: {} });
+        setList(n, m.list);
+        changes[n] = m.push;
+      });
+      const sPush = mergeSettings(remote.shop && remote.shop.settings);
+      if (sPush) changes.settings = sPush;
+      normalizeData();
+      invoices.sort((a, b) => ts(b.date) - ts(a.date));
+      stockMovements.sort((a, b) => ts(b.date) - ts(a.date));
+      resnap();                         // merged state is the new baseline (no re-stamping)
+      saveAll();
+      if (remote.shop) applyShopToPlan(remote.shop);
+      if (canRenderNow()) render();
+
+      // ---- push only what changed ----
+      await HisablyCloud.push(changes);
+      SYNC_COLLECTIONS.forEach(n => {
+        Object.keys(changes.tombs[n] || {}).forEach(id => { if (tombs[n]) delete tombs[n][id]; });
+      });
+      save(STORAGE.tombs, tombs);
+      localStorage.removeItem(LEGACY_FLAG);
+      localStorage.setItem('billaura_last_sync', new Date().toISOString());
+      ok = true;
+      if (!silent) toast('Synced');
+      if (typeof maybeShopifySync === 'function' && !opts.noShopify) setTimeout(() => { maybeShopifySync().catch(() => {}); }, 50);
+    } catch (err) {
+      console.error('sync', err);
+      const msg = String((err && err.message) || 'Sync failed').replace(/^LIMIT:\s*/, '');
+      if (!silent || /free plan|inactive/i.test(msg)) toast(msg, 4000);
+    } finally {
+      _cloudSyncing = false;
+      if (_syncAgain) { _syncAgain = false; scheduleCloudPush(); }
+    }
+    return ok;
+  }
+
+  async function initCloudAutoSync() {
+    if (!window.HisablyCloud || !HisablyCloud.ready()) return;
+    try {
+      await HisablyCloud.init();
+      const sess = HisablyFreemium.getSession();
+      if (!HisablyCloud.getSession()) {
+        if (sess && sess.mode === 'cloud' && navigator.onLine) {
+          toast('Cloud session expired – sign in again (More → Cloud account)', 5000);
+        }
+        return;
+      }
+      await refreshPlanFromCloud();
+      await doCloudSync({ silent: true });
+      // Quiet sync every 5 minutes, when the app returns to the foreground, and when back online
+      let tick = 0;
+      setInterval(() => { tick++; if (!document.hidden && (shopifyOn() || tick % 5 === 0)) doCloudSync({ silent: true }); }, 60 * 1000);
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) doCloudSync({ silent: true });
+      });
+      window.addEventListener('online', () => doCloudSync({ silent: true }));
+    } catch (err) {
+      console.error('Cloud init', err);
+    }
+  }
+
+  // Local data belongs to ONE account. If someone else signs in on this phone,
+  // start clean so one shop's data can never be uploaded into another shop.
+  function wipeLocalData() {
+    products = []; invoices = []; customers = []; suppliers = []; expenses = []; stockMovements = []; purchases = [];
+    settings = defaultSettings();
+    invoiceCounter = 1001;
+    tombs = {};
+    localStorage.removeItem(LEGACY_FLAG);
+    localStorage.removeItem('billaura_last_sync');
+    HisablyFreemium.clearPlanCache();
+    resnap();
+    saveAll();
+  }
+  function claimDataFor(email) {
+    const id = (email || '').trim().toLowerCase();
+    const owner = localStorage.getItem(OWNER_KEY);
+    if (owner && owner !== id) wipeLocalData();
+    localStorage.setItem(OWNER_KEY, id);
+  }
+
+  async function signOutUser() {
+    toast('Signing out…');
+    try {
+      if (window.HisablyCloud && HisablyCloud.ready() && HisablyCloud.getSession()) {
+        // last chance to upload unsynced work (max 4s so sign-out never hangs offline)
+        await Promise.race([doCloudSync({ silent: true }), new Promise(r => setTimeout(r, 4000))]);
+        await HisablyCloud.signOut();
+      }
+    } catch (e) { console.error(e); }
+    HisablyFreemium.clearSession();
+    location.reload();
+  }
+
+  async function submitPayment() {
+    const plan = ($('#paidPlanSelect') || {}).value || 'basic';
+    const note = (($('#paidNote') || {}).value || '').trim();
+    const sess = HisablyFreemium.getSession() || {};
+    const shopName = sess.shopName || settings.businessName;
+    if (!note) { toast('Enter your transaction ID or the phone number you paid from'); return; }
+    if (window.HisablyCloud && HisablyCloud.ready() && HisablyCloud.getSession()) {
+      try {
+        await HisablyCloud.submitPaymentRequest({ planId: plan, note, shopName });
+      } catch (err) {
+        toast(err.message || 'Could not send. Check your internet and try again.', 4000);
+        return;
+      }
+    } else {
+      // Not connected to the cloud: keep it on this device only (testing)
+      const key = 'billaura_payment_requests_v1';
+      const list = JSON.parse(localStorage.getItem(key) || '[]');
+      list.unshift({ id: uid(), email: sess.email, shopName, plan, note, status: 'pending', createdAt: new Date().toISOString() });
+      localStorage.setItem(key, JSON.stringify(list));
+    }
+    toast('Payment reported. Admin will activate your plan.', 3500);
+    closeModal();
+  }
+
+  function openCloudAuthModal() {
+    if (!window.HisablyCloud || !HisablyCloud.ready()) {
+      toast('Cloud is not set up for this app');
+      return;
+    }
+    const signed = HisablyCloud.getSession();
+    $('#modalRoot').innerHTML = `
+      <div class="modal-overlay">
+        <div class="modal-sheet">
+          <div class="modal-handle"></div>
+          <div class="modal-header">
+            <h3 class="modal-title">Cloud account</h3>
+            <button class="modal-close" data-action="close-modal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+          </div>
+          ${signed ? `
+            <p class="text-sm text-secondary mb-8">Signed in as <strong>${escapeHtml((signed.user && signed.user.email) || '')}</strong>. Auto-sync is <strong>on</strong>.</p>
+            <p class="text-sm text-secondary mb-16">Changes upload a few seconds after you edit, and other devices' changes are merged in. It also works offline – everything syncs when you are back online.${lastSyncLabel()}</p>
+            <button class="btn btn-primary btn-block" data-action="cloud-sync">Sync now</button>
+          ` : `
+            <p class="text-sm text-secondary mb-12">Your cloud session expired. Sign in again to keep syncing. Your data on this phone is safe.</p>
+            <div class="form-group"><label class="form-label">Email</label><input type="email" class="form-input" id="cloudEmail" value="${escapeHtml((HisablyFreemium.getSession() || {}).email || '')}" /></div>
+            <div class="form-group"><label class="form-label">Password</label><input type="password" class="form-input" id="cloudPassword" /></div>
+            <button class="btn btn-primary btn-block" data-action="cloud-signin">Sign in</button>
+          `}
+        </div>
+      </div>`;
+  }
+
+  // ---------- Auth gate + freemium ----------
+  function hideBoot() {
+    const boot = document.getElementById('bootScreen');
+    if (boot) boot.hidden = true;
+  }
+  function showAuth() {
+    hideBoot();
+    const appEl = document.getElementById('app');
+    const auth = document.getElementById('authScreen');
+    if (appEl) appEl.hidden = true;
+    if (auth) {
+      auth.hidden = false;
+      auth.innerHTML = renderAuthHTML('login');
+      bindAuthScreen();
+    }
+  }
+
+  function showAppShell() {
+    hideBoot();
+    const appEl = document.getElementById('app');
+    const auth = document.getElementById('authScreen');
+    if (auth) auth.hidden = true;
+    if (appEl) appEl.hidden = false;
+  }
+
+  function renderAuthHTML(mode) {
+    const isLogin = mode !== 'register';
+    return `<div class="auth-card">
+      <div class="auth-brand">
+        <div class="logo-circle">B</div>
+        <h1>Billaura</h1>
+        <p>Inventory & invoices for micro sellers</p>
+      </div>
+      <div class="auth-tabs">
+        <button type="button" class="auth-tab ${isLogin ? 'active' : ''}" data-auth-tab="login">Sign in</button>
+        <button type="button" class="auth-tab ${!isLogin ? 'active' : ''}" data-auth-tab="register">Sign up</button>
+      </div>
+      <div id="authMsg" class="auth-msg" role="alert"></div>
+      <form id="authForm">
+        ${!isLogin ? `<div class="form-group"><label class="form-label">Full name</label><input class="form-input" name="fullName" placeholder="Your name" /></div>
+        <div class="form-group"><label class="form-label">Shop name</label><input class="form-input" name="shopName" placeholder="Business name" /></div>
+        <div class="form-group"><label class="form-label">Phone</label><input class="form-input" name="phone" type="tel" placeholder="03XX..." /></div>` : ''}
+        <div class="form-group"><label class="form-label">Email</label><input class="form-input" name="email" type="email" required placeholder="you@email.com" /></div>
+        <div class="form-group"><label class="form-label">Password</label><input class="form-input" name="password" type="password" required minlength="6" placeholder="Min 6 characters" /></div>
+        <button type="submit" class="btn btn-primary btn-block">${isLogin ? 'Sign in' : 'Create free account'}</button>
+      </form>
+      <button type="button" class="btn btn-outline btn-block" id="guestBtn" style="margin-top:12px">Continue offline (demo)</button>
+      <p class="auth-hint">Cloud login syncs across devices. Offline demo stores data only on this device.</p>
+    </div>`;
+  }
+
+  function bindAuthScreen() {
+    const auth = document.getElementById('authScreen');
+    if (!auth) return;
+    auth.onclick = (e) => {
+      const tab = e.target.closest('[data-auth-tab]');
+      if (tab) {
+        auth.innerHTML = renderAuthHTML(tab.dataset.authTab);
+        bindAuthForm();
+        bindGuestBtn();
+      }
+    };
+    bindAuthForm();
+    bindGuestBtn();
+  }
+
+  function bindGuestBtn() {
+    const g = document.getElementById('guestBtn');
+    if (!g) return;
+    g.onclick = () => {
+      try {
+        // Ensure local signup is allowed for demo
+        try { localStorage.setItem('billaura_allow_local_signup', '1'); } catch (e) {}
+        const email = 'demo@billaura.local';
+        const password = 'demo1234';
+        try {
+          HisablyFreemium.localSignIn(email, password);
+        } catch (_) {
+          try {
+            HisablyFreemium.localRegister({
+              email, password,
+              fullName: 'Demo Owner',
+              shopName: settings.businessName || 'My Shop',
+              phone: ''
+            });
+          } catch (e2) {
+            // Force session even if register rules block
+            HisablyFreemium.setSession({
+              email, fullName: 'Demo Owner', shopName: settings.businessName || 'My Shop',
+              phone: '', userId: 'guest_demo', mode: 'local'
+            });
+            if (HisablyFreemium.setPlanCache) {
+              HisablyFreemium.setPlanCache({
+                planId: 'trial', status: 'trial',
+                trialEndsAt: new Date(Date.now() + 14*864e5).toISOString(),
+                freemiumEnabled: true
+              });
+            }
+          }
+        }
+        if (settings.businessName === 'My Business') {
+          settings.businessName = 'My Shop';
+          persist();
+        }
+        enterApp();
+        toast('Offline demo mode — data stays on this device');
+      } catch (err) {
+        console.error(err);
+        authSay(String(err.message || err), 'error');
+      }
+    };
+  }
+
+  // Show messages on the sign-in card itself (always visible) AND as a toast
+  function authSay(msg, kind) {
+    toast(msg, 5000);
+    const el = document.getElementById('authMsg');
+    if (el) { el.textContent = msg; el.className = 'auth-msg show ' + (kind || 'info'); }
+  }
+
+  function bindAuthForm() {
+    const form = document.getElementById('authForm');
+    if (!form) return;
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const email = (fd.get('email') || '').trim().toLowerCase();
+      const password = fd.get('password') || '';
+      const fullName = (fd.get('fullName') || '').trim();
+      const shopName = (fd.get('shopName') || '').trim();
+      const phone = (fd.get('phone') || '').trim();
+      const isRegister = !!form.querySelector('[name="fullName"]');
+      const btn = form.querySelector('button[type="submit"]');
+      if (btn) btn.disabled = true;
+      try {
+        const cloudReady = window.HisablyCloud && HisablyCloud.ready();
+        // Local signup is disabled — accounts must be created via cloud (Supabase)
+        if (isRegister && !cloudReady) {
+          // Fall back to local account when cloud is offline
+          try { localStorage.setItem('billaura_allow_local_signup', '1'); } catch (e) {}
+        }
+        if (isRegister && (!fullName || !shopName)) {
+          authSay('Please enter your name and shop name', 'error');
+          return;
+        }
+        authSay(isRegister ? 'Creating account…' : 'Signing in…', 'info');
+        let profShopName = shopName;
+        if (cloudReady) {
+          if (isRegister) {
+            const res = await HisablyCloud.signUp({ email, password, fullName, shopName, phone });
+            if (res.needsConfirm) {
+              const auth = document.getElementById('authScreen');
+              auth.innerHTML = renderAuthHTML('login');
+              bindAuthForm();
+              authSay('Account created! Open the confirmation email we sent, then sign in.', 'ok');
+              return;
+            }
+          } else {
+            await HisablyCloud.signIn(email, password);
+          }
+          claimDataFor(email);
+          const prof = HisablyCloud.getProfile() || {};
+          profShopName = (prof.shops && prof.shops.name) || shopName || 'My Shop';
+          HisablyFreemium.setSession({
+            email,
+            fullName: prof.full_name || fullName || email,
+            shopName: profShopName,
+            phone: prof.phone || phone,
+            mode: 'cloud'
+          });
+          await refreshPlanFromCloud();
+        } else {
+          // Offline / local accounts
+          try { localStorage.setItem('billaura_allow_local_signup', '1'); } catch (e) {}
+          if (isRegister) {
+            HisablyFreemium.localRegister({ email, password, fullName, shopName, phone });
+            profShopName = shopName || 'My Shop';
+          } else {
+            HisablyFreemium.localSignIn(email, password);
+          }
+          claimDataFor(email);
+        }
+        if (settings.businessName === 'My Business' && profShopName && profShopName !== 'My Shop') {
+          settings.businessName = profShopName;
+          const s = HisablyFreemium.getSession() || {};
+          settings.ownerName = settings.ownerName || s.fullName || '';
+          settings.phone = settings.phone || s.phone || '';
+          persist();
+        }
+        enterApp();
+        toast(isRegister ? 'Welcome! 14-day trial started' : 'Welcome back');
+      } catch (err) {
+        console.error(err);
+        const m = String((err && err.message) || 'Auth failed');
+        authSay(/invalid login/i.test(m) ? 'Wrong email or password' : /confirm/i.test(m) ? 'Please confirm your email first, then sign in' : /failed to fetch|network/i.test(m) ? 'No internet connection or server unreachable. Check your connection and try again.' : friendlyMsg(m), 'error');
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    };
+  }
+
+  // Pull plan + payment details + server clock from the cloud into the offline cache
+  function applyShopToPlan(shop, plat, offsetMs) {
+    const patch = {};
+    if (shop) {
+      Object.assign(patch, {
+        planId: shop.plan_id || 'free',
+        status: shop.status || 'trial',
+        trialEndsAt: shop.trial_ends_at || null,
+        paidUntil: shop.paid_until || null,
+        shopId: shop.id
+      });
+    }
+    if (typeof offsetMs === 'number' && isFinite(offsetMs)) patch.serverOffsetMs = offsetMs;
+    if (plat) {
+      patch.freemiumEnabled = plat.freemium_enabled !== false;
+      patch.payment = Object.assign({}, HisablyFreemium.DEFAULT_PAY, {
+        jazzcash: plat.jazzcash || '',
+        easypaisa: plat.easypaisa || '',
+        bankName: plat.bank_name || '',
+        bankAccount: plat.bank_account || '',
+        bankTitle: plat.bank_title || '',
+        note: plat.payment_note || HisablyFreemium.DEFAULT_PAY.note,
+        basicPrice: Number(plat.basic_price) || HisablyFreemium.DEFAULT_PAY.basicPrice,
+        proPrice: Number(plat.pro_price) || HisablyFreemium.DEFAULT_PAY.proPrice,
+        lifetimePrice: Number(plat.lifetime_price) || HisablyFreemium.DEFAULT_PAY.lifetimePrice,
+        currency: plat.currency || 'PKR'
+      });
+    }
+    HisablyFreemium.setPlanCache(patch);
+  }
+
+  async function refreshPlanFromCloud() {
+    try {
+      if (window.HisablyCloud && HisablyCloud.ready() && HisablyCloud.getSession()) {
+        const [shop, plat, offset] = await Promise.all([
+          HisablyCloud.fetchShop(),
+          HisablyCloud.fetchPlatformSettings().catch(() => null),
+          HisablyCloud.serverOffsetMs().catch(() => undefined)
+        ]);
+        applyShopToPlan(shop, plat, offset);
+        if (currentView === 'dashboard' && canRenderNow()) render();
+      }
+    } catch (e) {
+      console.error('plan refresh', e);
+      // Don't silently show "Free": tell the user their plan could not be loaded
+      if (navigator.onLine) toast('Could not load your plan. Check your internet connection, then reopen the app.', 6000);
+    }
+  }
+
+  function planBannerHTML() {
+    const { key, limits, cache } = HisablyFreemium.effectivePlan();
+    if (key === 'pro' || key === 'basic' || key === 'trial') {
+      if (key === 'trial' && cache.trialEndsAt) {
+        const days = Math.max(0, Math.ceil((new Date(cache.trialEndsAt) - new Date()) / 86400000));
+        return `<div class="plan-banner"><strong>Trial:</strong> ${days} day(s) left · full access. <button type="button" class="linkish" data-action="open-plans">View plans</button></div>`;
+      }
+      return '';
+    }
+    if (key === 'blocked') {
+      return `<div class="plan-banner" style="background:#FEE2E2;border-color:#EF4444;color:#991B1B"><strong>Account inactive.</strong> <button type="button" class="linkish" data-action="open-plans">Upgrade / pay</button></div>`;
+    }
+    return `<div class="plan-banner"><strong>Free plan:</strong> ${limits.products} products · ${limits.invoices} invoices · ${limits.customers} customers. <button type="button" class="linkish" data-action="open-plans">Upgrade</button></div>`;
+  }
+
+
+  // ---------- Shopify store connection (Pro) ----------
+  const SHOPIFY_FLAG = 'billaura_shopify_on';
+  let _shopifySyncing = false, _shopifyLast = 0;
+
+  function shopifyOn() { try { return localStorage.getItem(SHOPIFY_FLAG) === '1'; } catch (e) { return false; } }
+  function setShopifyOn(v) { try { v ? localStorage.setItem(SHOPIFY_FLAG, '1') : localStorage.removeItem(SHOPIFY_FLAG); } catch (e) {} }
+
+  // After the normal cloud sync: let the server exchange price / stock / orders with Shopify,
+  // then pull whatever it changed.
+  async function maybeShopifySync(force) {
+    if (!shopifyOn() || _shopifySyncing) return null;
+    if (!window.HisablyCloud || !HisablyCloud.getSession() || !navigator.onLine) return null;
+    if (!HisablyFreemium.hasFeature('shopify')) return null;
+    if (!force && Date.now() - _shopifyLast < 60000) return null;
+    _shopifySyncing = true;
+    try {
+      const r = await HisablyCloud.shopifyCall('sync', {});
+      _shopifyLast = Date.now();
+      if (r && r.changed) await doCloudSync({ silent: true });
+      return r;
+    } catch (e) {
+      console.error('shopify sync', e);
+      if (e && (e.status === 402 || e.status === 400)) toast(e.message, 5000);
+      throw e;
+    } finally { _shopifySyncing = false; }
+  }
+
+  function shopifyBusy(msg) {
+    $('#modalRoot').innerHTML = `<div class="modal-overlay"><div class="modal-sheet"><div class="modal-handle"></div>
+      <p class="text-secondary" style="text-align:center;padding:30px 0">${escapeHtml(msg)}</p></div></div>`;
+  }
+
+  async function openShopifyModal() {
+    if (!window.HisablyCloud || !HisablyCloud.ready() || !HisablyCloud.getSession()) { toast('Sign in to your cloud account first'); return; }
+    if (!HisablyFreemium.hasFeature('shopify')) {
+      toast('Shopify connection is a Pro feature. Upgrade to Pro or Lifetime.', 4500);
+      openPlansModal();
+      return;
+    }
+    shopifyBusy('Loading…');
+    let st;
+    try { st = await HisablyCloud.shopifyCall('status', {}); }
+    catch (e) { closeModal(); toast(e.message, 5500); return; }
+    setShopifyOn(!!st.connected);
+    renderShopifyModal(st);
+  }
+
+  function renderShopifyModal(st) {
+    const head = `<div class="modal-header"><h3 class="modal-title">Shopify store</h3>
+      <button class="modal-close" data-action="close-modal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>`;
+    if (st.connected) {
+      const when = (d) => d ? formatDate(d) + ' ' + new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+      $('#modalRoot').innerHTML = `<div class="modal-overlay"><div class="modal-sheet"><div class="modal-handle"></div>${head}
+        <div class="card mb-12" style="padding:14px">
+          <div class="font-semibold">${escapeHtml(st.domain)}</div>
+          <div class="text-sm" style="color:var(--success);margin-top:4px">● Connected</div>
+          <div class="text-sm text-secondary mt-8">Last sync: ${escapeHtml(when(st.last_push_at || st.last_pull_at))}</div>
+          ${st.last_error ? `<div class="text-sm mt-8" style="color:var(--danger)">The last sync had a problem. Tap “Sync now” to retry. If it keeps happening, check that your Shopify app still has the permissions listed below, or contact support.</div>` : ''}
+        </div>
+        ${(st.locations || []).length > 1 ? `<div class="form-group"><label class="form-label">Stock location (stock is synced for this one)</label>
+          <select class="form-input" id="shopifyLoc">${st.locations.map(l => `<option value="${escapeHtml(l.id)}" ${l.id === st.location_id ? 'selected' : ''}>${escapeHtml(l.name)}</option>`).join('')}</select></div>`
+          : `<div class="text-sm text-secondary mb-12">Stock location: <strong>${escapeHtml(st.location_name || '—')}</strong></div>`}
+        <ul class="text-sm text-secondary mb-12" style="padding-left:18px;line-height:1.6">
+          <li>Shopify products, prices and stock appear in Billaura automatically.</li>
+          <li>Price / stock changes you make in Billaura are sent to Shopify.</li>
+          <li>Online orders become invoices (<strong>SHP-…</strong>); customers are added.</li>
+        </ul>
+        <button class="btn btn-primary btn-block" data-action="shopify-sync">Sync now</button>
+        <button class="btn btn-secondary btn-block mt-8" data-action="shopify-full">Re-import everything from Shopify</button>
+        <button class="btn btn-ghost btn-block mt-8" style="color:var(--danger)" data-action="shopify-disconnect">Disconnect store</button>
+      </div></div>`;
+      const loc = document.getElementById('shopifyLoc');
+      if (loc) loc.addEventListener('change', async () => {
+        shopifyBusy('Changing location and re-syncing stock…');
+        try { await HisablyCloud.shopifyCall('set_location', { locationId: loc.value }); await doCloudSync({ silent: true }); toast('Location updated'); }
+        catch (e) { toast(e.message, 5000); }
+        openShopifyModal();
+      });
+      return;
+    }
+    $('#modalRoot').innerHTML = `<div class="modal-overlay"><div class="modal-sheet"><div class="modal-handle"></div>${head}
+      <p class="text-sm text-secondary mb-12">Connect your Shopify store: products, prices, stock, customers and online orders flow into Billaura, and your price / stock changes flow back.</p>
+      <details class="help-box"><summary>How do I get these details?</summary>
+        <div class="text-sm">
+          <p><strong>Your store address</strong> is the one that ends with <em>.myshopify.com</em> (Shopify admin → Settings → Domains).</p>
+          <p><strong>Option 1 – new Shopify apps (Dev Dashboard)</strong></p>
+          <ol>
+            <li>Go to <strong>dev.shopify.com</strong> and sign in with the store owner account.</li>
+            <li>Create an app named <em>Billaura</em>.</li>
+            <li>Give it these permissions: read &amp; write <em>products</em> and <em>inventory</em>; read <em>orders</em>, <em>customers</em> and <em>locations</em>.</li>
+            <li>Release it and <strong>install it on your store</strong>.</li>
+            <li>Open the app’s Settings, copy the <strong>Client ID</strong> and <strong>Client secret</strong> and paste them below.</li>
+          </ol>
+          <p><strong>Option 2 – older custom app</strong></p>
+          <ol>
+            <li>Shopify admin → Settings → Apps and sales channels → <strong>Develop apps</strong> → create an app.</li>
+            <li>Give it the same permissions as above and install it.</li>
+            <li>Copy the <strong>Admin API access token</strong> (starts with <em>shpat_</em>, shown only once) and the <strong>API secret key</strong>, and paste them below.</li>
+          </ol>
+          <p>Tip: try it first with one test product. Your existing Billaura products are matched by barcode/SKU or name, so nothing is duplicated.</p>
+        </div>
+      </details>
+      <form id="shopifyForm" autocomplete="off">
+        <div class="form-group"><label class="form-label">Store address</label>
+          <input class="form-input" name="domain" placeholder="mystore.myshopify.com" autocapitalize="none" required /></div>
+        <div class="form-group"><label class="form-label">Admin API access token <span class="text-secondary">(starts with shpat_)</span></label>
+          <input class="form-input" name="accessToken" placeholder="shpat_…" autocapitalize="none" /></div>
+        <p class="text-sm text-secondary mb-8" style="text-align:center">— or, for apps made in the Dev Dashboard —</p>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">Client ID</label><input class="form-input" name="clientId" autocapitalize="none" /></div>
+          <div class="form-group"><label class="form-label">Client secret</label><input class="form-input" name="clientSecret" type="password" autocapitalize="none" /></div>
+        </div>
+        <div class="form-group"><label class="form-label">API secret key <span class="text-secondary">(verifies Shopify messages; leave empty if you used Client secret)</span></label>
+          <input class="form-input" name="apiSecret" type="password" autocapitalize="none" /></div>
+        <button type="submit" class="btn btn-primary btn-block" id="shopifyConnectBtn">Connect &amp; import</button>
+        <p class="text-sm text-secondary mt-8">The first import can take a minute for big stores. Existing Billaura products are matched by barcode/SKU or name instead of duplicated.</p>
+      </form></div></div>`;
+    document.getElementById('shopifyForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const btn = document.getElementById('shopifyConnectBtn');
+      btn.disabled = true; btn.textContent = 'Connecting… please wait';
+      try {
+        const payload = {};
+        ['domain', 'accessToken', 'clientId', 'clientSecret', 'apiSecret'].forEach(k => { payload[k] = (fd.get(k) || '').trim(); });
+        const r = await HisablyCloud.shopifyCall('connect', payload);
+        setShopifyOn(true);
+        const p = r.products || {};
+        toast(`Connected to ${r.shopName || 'Shopify'} · ${p.added || 0} products added`, 5000);
+        await doCloudSync({ silent: true });
+        openShopifyModal();
+      } catch (err) {
+        btn.disabled = false; btn.textContent = 'Connect & import';
+        toast(err.message, 6500);
+      }
+    });
+  }
+
+  async function shopifyManualSync(full) {
+    shopifyBusy(full ? 'Re-importing from Shopify…' : 'Syncing with Shopify…');
+    try {
+      await doCloudSync({ silent: true });
+      const r = await HisablyCloud.shopifyCall('sync', { full: !!full });
+      _shopifyLast = Date.now();
+      await doCloudSync({ silent: true });
+      const p = r.products || {}, o = r.orders || {};
+      toast(`Synced · ${p.added || 0} new, ${p.updated || 0} updated products · ${o.added || 0} new orders`, 4500);
+    } catch (e) { toast(e.message, 6000); }
+    openShopifyModal();
+  }
+
+  function needPro(what) {
+    if (HisablyFreemium.hasFeature('bulkTools')) return true;
+    toast(what + ' is a Pro feature. Upgrade to Pro to use it.', 4500);
+    openPlansModal && openPlansModal();
+    return false;
+  }
+
+  function enforceLimit(type, count) {
+    const r = HisablyFreemium.canAdd(type, count);
+    if (!r.ok) {
+      toast(r.reason);
+      openPlansModal();
+      return false;
+    }
+    return true;
+  }
+
+  function openPlansModal() {
+    const pay = HisablyFreemium.getPlanCache().payment || HisablyFreemium.DEFAULT_PAY;
+    const { key, cache } = HisablyFreemium.effectivePlan();
+    $('#modalRoot').innerHTML = `
+      <div class="modal-overlay">
+        <div class="modal-sheet">
+          <div class="modal-handle"></div>
+          <div class="modal-header">
+            <h3 class="modal-title">Plans & payment</h3>
+            <button class="modal-close" data-action="close-modal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+          </div>
+          <p class="text-sm text-secondary mb-12">Current: <strong>${escapeHtml(cache.planId === 'lifetime' && cache.status === 'active' ? 'lifetime' : key)}</strong>${cache.status ? ' · ' + escapeHtml(cache.status) : ''}${cache.paidUntil && key !== 'free' && cache.planId !== 'lifetime' ? ' · paid until ' + formatDate(cache.paidUntil) : ''}</p>
+          <div class="card mb-12" style="padding:14px">
+            <div class="font-semibold">Free</div>
+            <div class="text-sm text-secondary">25 products · 40 invoices · 20 customers</div>
+            <div class="text-sm" style="color:var(--primary);margin-top:4px">${pay.currency} 0 / month</div>
+          </div>
+          <div class="card mb-12" style="padding:14px;border-color:var(--primary)">
+            <div class="font-semibold">Basic</div>
+            <div class="text-sm text-secondary">300 products · 1,500 invoices · 200 customers · cloud sync · payment QR on invoices</div>
+            <div class="text-sm" style="color:var(--primary);margin-top:4px;font-weight:700">${escapeHtml(pay.currency)} ${escapeHtml(pay.basicPrice)} / month</div>
+          </div>
+          <div class="card mb-16" style="padding:14px">
+            <div class="font-semibold">Pro</div>
+            <div class="text-sm text-secondary">Unlimited everything · bulk import &amp; bulk price change · Shopify store connection · priority support</div>
+            <div class="text-sm" style="color:var(--primary);margin-top:4px;font-weight:700">${pay.currency} ${pay.proPrice} / month</div>
+          </div>
+          <div class="card mb-16" style="padding:14px;border-color:#F59E0B;background:#FFFBEB">
+            <div class="font-semibold">Lifetime <span style="font-size:11px;background:#F59E0B;color:#fff;border-radius:6px;padding:2px 6px;margin-left:4px">BEST VALUE</span></div>
+            <div class="text-sm text-secondary">All Pro features forever · pay once, no monthly renewal</div>
+            <div class="text-sm" style="color:var(--primary);margin-top:4px;font-weight:700">${escapeHtml(pay.currency)} ${escapeHtml(pay.lifetimePrice || 14999)} one-time</div>
+          </div>
+          <div class="section-header"><h2 class="section-title">Pay to upgrade</h2></div>
+          <div class="text-sm mb-8">JazzCash: <strong>${escapeHtml(pay.jazzcash || '—')}</strong></div>
+          <div class="text-sm mb-8">EasyPaisa: <strong>${escapeHtml(pay.easypaisa || '—')}</strong></div>
+          ${pay.bankAccount ? `<div class="text-sm mb-8">Bank: ${escapeHtml(pay.bankName || '')} · ${escapeHtml(pay.bankAccount)} · ${escapeHtml(pay.bankTitle || '')}</div>` : ''}
+          <p class="text-sm text-secondary mb-12">${escapeHtml(pay.note || '')}</p>
+          <div class="form-group">
+            <label class="form-label">Plan you paid for</label>
+            <select class="form-input" id="paidPlanSelect">
+              <option value="basic">Basic (${pay.currency} ${pay.basicPrice})</option>
+              <option value="pro">Pro (${pay.currency} ${pay.proPrice})</option>
+              <option value="lifetime">Lifetime (${pay.currency} ${pay.lifetimePrice || 14999})</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Your phone / txn note</label>
+            <input class="form-input" id="paidNote" placeholder="Txn ID or phone used to pay" />
+          </div>
+          <div id="payReqStatus" class="text-sm text-secondary mb-8"></div>
+          <button class="btn btn-primary btn-block" data-action="submit-payment">I paid – notify admin</button>
+        </div>
+      </div>`;
+    if (window.HisablyCloud && HisablyCloud.ready() && HisablyCloud.getSession()) {
+      HisablyCloud.latestPaymentRequest().then(r => {
+        const el = document.getElementById('payReqStatus');
+        if (!el || !r) return;
+        const label = { pending: 'Pending – admin will review it soon', approved: 'Approved', rejected: 'Rejected – contact support' }[r.status] || r.status;
+        el.innerHTML = `Last request (${escapeHtml(r.plan_id || '')}): <strong>${escapeHtml(label)}</strong>`;
+      }).catch(() => {});
+    }
+  }
+
+  function enterApp() {
+    showAppShell();
+    if (lockEnabled() && !getRole()) showLock();
+    migrateData();
+    // Cloud mode gets payment details from the database; this same-browser shortcut is for local testing only
+    try {
+      const pay = (window.HisablyCloud && HisablyCloud.ready()) ? null : JSON.parse(localStorage.getItem('billaura_platform_pay_v1') || 'null');
+      if (pay) {
+        HisablyFreemium.setPlanCache({
+          payment: Object.assign({}, HisablyFreemium.DEFAULT_PAY, pay),
+          freemiumEnabled: pay.freemiumEnabled !== false
+        });
+      }
+    } catch (e) {}
+    setView('home', { replace: true });
+    viewStack = [];
+    initCloudAutoSync();
+    maybeAutoBackup();
+    startPlanHeartbeat();
+  }
+
+  let _planHeartbeat = null;
+  function startPlanHeartbeat() {
+    if (_planHeartbeat) clearInterval(_planHeartbeat);
+    // When online, refresh plan every 10 minutes
+    _planHeartbeat = setInterval(() => {
+      if (navigator.onLine) refreshPlanFromCloud();
+    }, 10 * 60 * 1000);
+    if (!startPlanHeartbeat._bound) {
+      startPlanHeartbeat._bound = true;
+      window.addEventListener('online', () => refreshPlanFromCloud());
+    }
+  }
+
+  // Init
+  try {
+    migrateData();
+    if (!window.HisablyFreemium || !HisablyFreemium.isLoggedIn()) {
+      showAuth();
+    } else {
+      enterApp();
+    }
+  } catch (err) {
+    console.error('Billaura init error', err);
+    const boot = document.getElementById('bootMsg');
+    if (boot) boot.textContent = 'Startup error: ' + (err && err.message ? err.message : err);
+    // Last resort: show app shell empty so user is not stuck on pure white
+    try { showAuth(); } catch (e2) {
+      hideBoot();
+      const appEl = document.getElementById('app');
+      if (appEl) { appEl.hidden = false; }
+    }
+  }
+
+  // PWA install prompt (hidden once installed; "✕" is remembered for 7 days)
+  let deferredInstall = null;
+  const INSTALL_DISMISS_KEY = 'billaura_install_dismissed';
+  function hideInstallBanner(remember) {
+    const ban = document.getElementById('installBanner');
+    if (ban) { ban.hidden = true; ban.style.display = 'none'; }
+    if (remember) { try { localStorage.setItem(INSTALL_DISMISS_KEY, String(Date.now())); } catch (e) {} }
+  }
+  function installDismissedRecently() {
+    try { return Date.now() - Number(localStorage.getItem(INSTALL_DISMISS_KEY) || 0) < 7 * 864e5; } catch (e) { return false; }
+  }
+  const isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+  if (isStandalone) hideInstallBanner(false);
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredInstall = e;
+    if (isStandalone || installDismissedRecently()) return;
+    const ban = document.getElementById('installBanner');
+    if (ban) { ban.style.display = ''; ban.hidden = false; }
+  });
+  window.addEventListener('appinstalled', () => { deferredInstall = null; hideInstallBanner(false); });
+  document.getElementById('installBtn')?.addEventListener('click', async () => {
+    if (!deferredInstall) { hideInstallBanner(false); return; }
+    deferredInstall.prompt();
+    try { await deferredInstall.userChoice; } catch (e) {}
+    deferredInstall = null;
+    hideInstallBanner(false);
+  });
+  document.getElementById('installDismiss')?.addEventListener('click', () => hideInstallBanner(true));
+
+
+  // App update banner (new service worker)
+  function setupUpdateBanner() {
+    const banner = document.getElementById('updateBanner');
+    const btn = document.getElementById('updateBtn');
+    if (!('serviceWorker' in navigator)) return;
+    navigator.serviceWorker.getRegistration().then(reg => {
+      if (!reg) return;
+      reg.addEventListener('updatefound', () => {
+        const nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener('statechange', () => {
+          if (nw.state === 'installed' && navigator.serviceWorker.controller && banner) {
+            banner.hidden = false;
+          }
+        });
+      });
+      // periodic check
+      setInterval(() => reg.update().catch(() => {}), 60 * 60 * 1000);
+    });
+    if (btn) btn.addEventListener('click', () => {
+      navigator.serviceWorker.getRegistration().then(reg => {
+        if (reg && reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+        window.location.reload();
+      });
+    });
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (refreshing) return;
+      refreshing = true;
+      window.location.reload();
+    });
+  }
+  try { setupUpdateBanner(); } catch (e) {}
+
+  // Boot logo from settings
+  try {
+    const bootLogo = document.querySelector('.logo-circle, .auth-brand img, #bootLogo');
+    if (settings.logo) {
+      const img = document.createElement('img');
+      img.src = settings.logo;
+      img.alt = 'Logo';
+      img.style.cssText = 'width:64px;height:64px;border-radius:16px;object-fit:contain;margin:0 auto 12px;display:block';
+      const circle = document.querySelector('.logo-circle');
+      if (circle && circle.parentNode) circle.replaceWith(img);
+    }
+    const hl = document.getElementById('headerLogo');
+    if (hl && settings.logo) { hl.src = settings.logo; hl.style.display = ''; }
+  } catch (e) {}
+
+})();
