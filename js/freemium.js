@@ -152,6 +152,8 @@
       // Platform turned freemium off -> everyone gets full access
       return { key: 'pro', limits: LIMITS.pro, cache };
     }
+    // Lifetime = every Pro feature, forever, whatever the stored status text says
+    if (cache.planId === 'lifetime') return { key: 'pro', limits: LIMITS.pro, cache };
     const now = nowMs(cache);
     if (status === 'trial') {
       if (cache.trialEndsAt && new Date(cache.trialEndsAt).getTime() > now) {

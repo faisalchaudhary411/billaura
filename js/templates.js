@@ -17,6 +17,8 @@
     { id: 'classic', name: 'Classic' },
     { id: 'banner', name: 'Bold Banner' },
     { id: 'frame', name: 'Elegant Frame' },
+    { id: 'french', name: 'French Elite' },
+    { id: 'divine', name: 'Double Divine' },
     { id: 'minimal', name: 'Minimal' },
     { id: 'landscape', name: 'Landscape Theme', landscape: true }
   ];
@@ -95,6 +97,7 @@
     if (contact) lines.push(contact);
     if (flag(s, 'printTIN', false) && s.taxId) lines.push('NTN/Tax: ' + esc(s.taxId));
     const logo = flag(s, 'printLogo', true) && s.logo ? `<img class="logo" src="${esc(s.logo)}" alt="">` : '';
+    const addrTxt = esc([s.address, s.city].filter(Boolean).join(', ')), phoneTxt = esc([s.phone, s.phone2].filter(Boolean).join(' / ')), emailTxt = esc(s.email || '');
     const bname = flag(s, 'printCompanyName', true) ? `<div class="bn">${esc(s.businessName || 'Business')}</div>` : '';
     const brand = `<div class="brand">${logo}<div>${bname}${lines.map(l => `<div class="sm">${l}</div>`).join('')}</div></div>`;
     const dt = ctx.formatDate(inv.date) + (s.enableTxnTime ? ', ' + new Date(inv.date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '');
@@ -108,7 +111,7 @@
     const extraF = Object.entries(m.extra || {}).filter(([, v]) => v);
     metaRows.push(...extraF.map(([k, v]) => [esc(k), esc(v)]));
     const metaHTML = metaRows.map(r => `<div class="mr"><span>${r[0]}</span><b>${r[1]}</b></div>`).join('');
-    const billTo = `<div class="lbl">${isRet ? 'Credit to' : (o.deliveryNote ? 'Deliver to' : 'Bill to')}</div><div class="pn">${esc(inv.customerName || 'Walk-in Customer')}</div>${inv.customerPhone ? `<div class="sm">${esc(inv.customerPhone)}</div>` : ''}${inv.customerAddress ? `<div class="sm">${esc(inv.customerAddress)}</div>` : ''}`;
+    const billTo = `<div class="lbl">${isRet ? 'Credit to' : (o.deliveryNote ? 'Deliver to' : 'Bill to')}</div><div class="pn">${esc(m.billingName || inv.customerName || 'Walk-in Customer')}</div>${inv.customerPhone ? `<div class="sm">${esc(inv.customerPhone)}</div>` : ''}${inv.customerAddress ? `<div class="sm">${esc(inv.customerAddress)}</div>` : ''}`;
 
     // totals
     const T = [];
@@ -147,7 +150,7 @@
 @page{size:${W}px ${H}px;margin:0}
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;background:#fff}
-body{width:${W}px;min-height:${H}px;padding:${land ? 28 : 36}px ${land ? 36 : 40}px;font:${fs}px/1.45 "Inter","Roboto","Noto Nastaliq Urdu","Noto Naskh Arabic",system-ui,-apple-system,"Segoe UI",Arial,sans-serif;color:#1c2233;-webkit-print-color-adjust:exact;print-color-adjust:exact;position:relative}
+body{width:${W}px;min-height:${H}px;padding:${land ? 28 : 36}px ${land ? 36 : 40}px;font:${fs}px/1.45 Roboto,Arial,Helvetica,"Segoe UI","Noto Nastaliq Urdu","Noto Naskh Arabic",sans-serif;word-spacing:normal;letter-spacing:normal;color:#1c2233;-webkit-print-color-adjust:exact;print-color-adjust:exact;position:relative}
 .sm{font-size:${fs - 1.5}px;color:#556075}
 .lbl{font-size:${fs - 3}px;letter-spacing:.07em;text-transform:uppercase;color:#8a93a6;font-weight:700;margin-bottom:3px}
 .logo{width:62px;height:62px;object-fit:contain;border-radius:6px}
@@ -205,6 +208,14 @@ table th{border:1px solid #222;background:#f1f1f1;color:#111}table td{border:1px
 th{background:${soft(accent, .1)};color:${accent};border-top:1px solid ${accent};border-bottom:1px solid ${accent}}td{border-bottom:1px dashed #cfd6e3}`;
         head = `<div class="fr"><div class="fr2"><div class="hd">${brand}</div><div class="ttl2">${title.toUpperCase()}</div><div class="two"><div>${billTo}</div><div style="min-width:220px">${metaBlock}</div></div>`;
         break;
+      case 'french':
+        tcss = `.top{display:flex;justify-content:space-between;align-items:flex-start}.ttl3{background:${accent};color:#fff;font-weight:800;font-size:${fs + 8}px;letter-spacing:.04em;padding:8px 18px;width:55%;margin-bottom:8px}.fn{color:${accent};font-size:${fs + 4}px;font-weight:600;margin:4px 0 10px}.cols{display:flex;gap:30px;border-bottom:2px solid ${accent};padding-bottom:10px;margin-bottom:12px}.cols>div{flex:1}.two{display:flex;justify-content:space-between;margin-bottom:12px}th{background:${accent};color:#fff}td{border-bottom:1px solid #e6eaf2}.sumrow td{background:${accent};color:#fff;border:0}.grand{background:${accent};color:#fff}`;
+        head = `<div class="top"><div style="flex:1"><div class="ttl3">${title.toUpperCase()}</div><div class="fn">${esc(s.businessName || '')}</div></div>${logo}</div><div class="cols"><div><div class="lbl">Address</div>${addrTxt}</div><div><div class="lbl">Phone</div>${phoneTxt}</div><div><div class="lbl">Email</div>${emailTxt}</div></div><div class="two"><div>${billTo}</div><div style="min-width:220px">${metaBlock}</div></div>`;
+        break;
+      case 'divine':
+        tcss = `body{padding:0}.hdr{position:relative;height:128px;background:${accent};overflow:hidden}.hdr .dk{position:absolute;left:0;top:0;bottom:0;width:46%;background:#232a36;border-radius:0 0 70px 0;padding:18px 26px;color:#fff}.hdr .dk .bn{color:#fff;font-size:${fs + 5}px;margin-top:6px}.hdr .ct{position:absolute;right:28px;top:26px;color:#fff;text-align:right;font-size:${fs - 1}px;line-height:1.8}.in{padding:24px 40px}.it{font-size:${fs + 8}px;margin:0 0 10px}.two{display:flex;justify-content:space-between;margin-bottom:12px}th{background:${accent};color:#fff}td{border-bottom:1px solid #e9edf4}.sumrow td{background:${accent};color:#fff;border:0}.grand{background:${accent};color:#fff}.ft{height:12px;background:linear-gradient(90deg,${accent} 55%,#232a36 55%);position:absolute;left:0;right:0;bottom:0}`;
+        head = `<div class="hdr"><div class="dk">${logo}<div class="bn">${esc(s.businessName || '')}</div></div><div class="ct">${phoneTxt}<br>${emailTxt}<br>${addrTxt}</div></div><div class="in"><div class="it">${title}</div><div class="two"><div>${billTo}</div><div style="min-width:220px">${metaBlock}</div></div>`;
+        break;
       case 'minimal':
         tcss = `.top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:26px}.tt{font-size:${fs + 16}px;font-weight:300;letter-spacing:.04em;color:${accent}}.two{display:flex;justify-content:space-between;margin-bottom:18px}
 th{font-size:${fs - 3}px;text-transform:uppercase;color:#8a93a6;border-bottom:1px solid #1c2233;padding-left:0}td{border-bottom:1px solid #eef1f6;padding-left:0}.grand{background:none;border-top:2px solid ${accent};border-radius:0;padding-left:0;padding-right:0}`;
@@ -221,7 +232,7 @@ th{font-size:${fs - 3}px;text-transform:uppercase;color:#8a93a6;border-bottom:1p
 th{background:${soft(accent, .12)};color:${accent};border-radius:0}th:first-child{border-radius:8px 0 0 8px}th:last-child{border-radius:0 8px 8px 0}td{border-bottom:1px solid #edf0f6}`;
         head = `<div class="top">${brand}<div><div class="tt">${title}</div><div style="text-align:right;margin-top:4px">${stamp}</div></div></div><div class="two"><div class="box">${billTo}</div><div class="box">${metaBlock}</div></div>`;
     }
-    const close = o.template === 'tally' ? '</div>' : o.template === 'banner' ? '</div>' : o.template === 'frame' ? '</div></div>' : '';
+    const close = o.template === 'tally' ? '</div>' : o.template === 'divine' ? '</div><div class="ft"></div>' : o.template === 'banner' ? '</div>' : o.template === 'frame' ? '</div></div>' : '';
     const bodyHTML = `${orig}${head}
 <table><thead>${thead}</thead><tbody>${tbody}</tbody><tfoot>${qtyRow}</tfoot></table>
 <div class="bottom"><div class="bl">${words}${desc}${terms}${qr}</div>${showPrices ? totalsHTML : ''}</div>

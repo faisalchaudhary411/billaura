@@ -491,6 +491,10 @@
 
   // ---------- Navigation ----------
   function setView(view, options = {}) {
+    if (settings.warnUnsaved && currentView === 'create-invoice' && view !== 'create-invoice' && !window._docSaved && window._docLines && window._docLines.length) {
+      if (!confirm('Discard this unsaved bill?')) return;
+      window._docLines.length = 0;
+    }
     closeModal();
     if (isStaff()) {
       if (!STAFF_VIEWS.includes(view)) { toast('Only the owner can open that'); view = 'dashboard'; }
@@ -510,7 +514,7 @@
       invoices: 'home', 'create-invoice': 'home', customers: 'more', suppliers: 'more',
       reports: 'more', expenses: 'more', purchases: 'more', daybook: 'more', 'stock-history': 'more',
       settings: 'more', 'business-profile': 'more',
-      'txn-settings': 'more', 'print-settings': 'more', 'invoice-theme': 'more', 'item-settings': 'more',
+      'txn-settings': 'more', 'print-settings': 'more', 'invoice-theme': 'more', account: 'more', 'item-settings': 'more',
       'party-settings': 'more', 'tax-settings': 'more', 'general-settings': 'more', 'cash-in-hand': 'more', 'daybook-detail': 'more', 'multi-currency': 'more', reminders: 'more', 'online-store': 'more', 'sale-report': 'more', 'profit-loss': 'more', 'trial-balance': 'more', 'stock-summary': 'more', 'low-stock': 'more', 'party-pl': 'more', 'item-pl': 'more', banks: 'more', 'bank-ledger': 'more', loans: 'more', 'other-income': 'more', 'barcode-gen': 'more', 'balance-sheet': 'more', pos: 'home', 'stock-adjust': 'more', 'payments-in': 'more', 'payments-out': 'more', cheques: 'more', sync: 'more', companies: 'more', verify: 'more', recycle: 'more', 'bill-pnl': 'more' };
     const activeNav = navMap[view] || view;
     $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.view === activeNav));
@@ -555,6 +559,7 @@
       'business-profile': () => { title.textContent = 'Business Profile'; content.innerHTML = viewBusinessProfile(); },
       'txn-settings': () => { title.textContent = 'Transaction'; content.innerHTML = viewTxnSettings(); },
       'print-settings': () => { title.textContent = 'Invoice Print'; content.innerHTML = viewPrintSettings(); },
+      account: () => { title.textContent = 'Account & Data'; content.innerHTML = viewAccount(); },
       'invoice-theme': () => { title.textContent = 'Change Theme'; content.innerHTML = viewInvoiceTheme(); },
       'item-settings': () => { title.textContent = 'Item'; content.innerHTML = viewItemSettings(); },
       'party-settings': () => { title.textContent = 'Party'; content.innerHTML = viewPartySettings(); },
@@ -613,8 +618,10 @@
     if (hdr) {
       hdr.classList.toggle('is-home', currentView === 'home');
       let st = hdr.querySelector('.header-store-ic');
-      if (currentView === 'home' && !st) { const hl = $('#headerLogo'); const sp = document.createElement('span'); sp.className = 'header-store-ic'; sp.innerHTML = ico('store'); hl.parentNode.insertBefore(sp, hl); }
+      if (currentView === 'home' && !st) { const hl = $('#headerLogo'); const sp = document.createElement('button'); sp.type = 'button'; sp.className = 'header-store-ic'; sp.setAttribute('data-action', 'open-account'); sp.setAttribute('aria-label', 'Profile'); sp.innerHTML = acctAvatar(); hl.parentNode.insertBefore(sp, hl); }
+      else if (currentView === 'home' && st) st.innerHTML = acctAvatar();
       else if (currentView !== 'home' && st) st.remove();
+      document.body.classList.toggle('plan-pro', (() => { try { return HisablyFreemium.effectivePlan().key === 'pro'; } catch (e) { return false; } })());
       const hl2 = $('#headerLogo'); if (hl2) hl2.style.display = 'none';
     }
   }
@@ -1450,9 +1457,10 @@
     discount = round2(Math.min(Math.max(discount, 0), sub));
     const taxable = round2(sub - discount);
     const taxRate = Math.max(0, Number(o.taxRate) || 0);
-    const tax = round2(taxable * taxRate / 100);
+    const inc = !!settings.enableInclusiveTax;
+    const tax = inc ? round2(taxable - taxable / (1 + taxRate / 100)) : round2(taxable * taxRate / 100);
     const charges = round2(Math.max(0, Number(o.charges) || 0));
-    const raw = taxable + tax + charges;
+    const raw = inc ? taxable + charges : taxable + tax + charges;
     const total = o.roundOff ? Math.round(raw) : round2(raw);
     const roundOff = round2(total - raw);
     return { sub, discount, taxable, taxRate, tax, charges, roundOff, total };
@@ -1508,6 +1516,8 @@
             <input type="text" class="form-input" name="customerName" id="customerNameInput" placeholder="${isPur ? 'Or type supplier name' : 'Or type customer name'}" />
             <input type="tel" class="form-input" name="customerPhone" id="customerPhoneInput" placeholder="Phone (optional)" />
           </div>
+          ${(!isPur && settings.enableBillingName) ? '<input type="text" class="form-input mt-8" name="billingName" placeholder="Billing name (printed on invoice)" />' : ''}
+          ${(!isPur && !isRet && settings.enablePODetails) ? '<div class="form-row mt-8"><input type="text" class="form-input" name="poNo" placeholder="PO number" /><input type="date" class="form-input" name="poDate" /></div>' : ''}
         </div>
 
         <div class="doc-card">
@@ -1523,15 +1533,15 @@
 
         <div class="doc-card" id="docTotals" style="display:none">
           <div class="tot-row"><span>Subtotal</span><b id="tSub"></b></div>
-          <div class="tot-row tot-input">
+          <div class="tot-row tot-input"${settings.enableTxnDiscount === false ? ' style="display:none"' : ''}>
             <span>Discount</span>
             <span class="tot-ctl">
               <span class="seg" id="discSeg"><button type="button" data-dt="amt" class="on">${escapeHtml(cur)}</button><button type="button" data-dt="pct">%</button></span>
               <input type="number" inputmode="decimal" min="0" step="any" id="discIn" placeholder="0" />
             </span>
           </div>
-          <div class="tot-row tot-input">
-            <span>Tax %</span>
+          <div class="tot-row tot-input"${settings.enableTxnTax === false ? ' style="display:none"' : ''}>
+            <span>${settings.enableInclusiveTax ? 'Tax % (included)' : 'Tax %'}</span>
             <span class="tot-ctl"><input type="number" inputmode="decimal" min="0" step="any" id="taxIn" placeholder="0" value="${(isRet && ref && ref.meta && ref.meta.taxRate) ? ref.meta.taxRate : (from && from.meta && from.meta.taxRate != null ? (from.meta.taxRate || '') : (settings.taxRate ? settings.taxRate : ''))}" /></span>
           </div>
           <div class="tot-row tot-input">
@@ -1589,6 +1599,8 @@
     const capOf = p => (isEst || isPur) ? Infinity : (!isRet ? p.stock : (ref ? (refQty[p.id] || 0) : Infinity));
     window._docIsReturn = isRet;
     window._docLines = lines;
+    window._docSaved = false;
+    if (settings.enableRoundOff) { const _r = document.getElementById('roundIn'); if (_r) _r.checked = true; }
 
     const val = id => { const el = document.getElementById(id); return el ? el.value : ''; };
     function opts() {
@@ -1645,7 +1657,14 @@
       if (!isRet && !isEst && !isPur && next > (p.stock || 0)) {
         // allow, but flag
       }
-      if (l) l.qty = next; else lines.push({ productId: p.id, name: p.name, price: isPur ? (p.cost || 0) : p.price, cost: p.cost || 0, qty: next });
+      if (l) l.qty = next; else {
+        let _price = isPur ? (p.cost || 0) : p.price;
+        if (settings.enableLastSalePrice && !isPur && !isEst) {
+          const cid = (document.querySelector('[name="customerId"]') || {}).value;
+          if (cid) { const last = invoices.filter(i => i.customerId === cid && (i.docType || 'sale') === 'sale').sort((a, b) => new Date(b.date) - new Date(a.date)).map(i => (i.items || []).find(x => x.productId === p.id)).find(Boolean); if (last) _price = last.price; }
+        }
+        lines.push({ productId: p.id, name: p.name, price: _price, cost: p.cost || 0, qty: next });
+      }
       if (!isRet && !isEst && !isPur && (p.stock || 0) < next) {
         toast((p.stock || 0) <= 0 ? (p.name + ' is out of stock') : (p.name + ' — only ' + p.stock + ' in stock'), 2500);
       }
@@ -1697,6 +1716,7 @@
         recalc();
       });
     });
+    if (settings.enableCashSaleDefault && !isRet && !isPur && !isEst) { const _pf = document.getElementById('paidFull'); if (_pf) _pf.checked = true; }
     document.getElementById('paidFull').addEventListener('change', () => {
       const f = document.getElementById('paidFull');
       if (!f.checked) document.getElementById('paidIn').value = '';
@@ -1805,6 +1825,7 @@
         const dd = fd.get('dueDate'); if (dd && paymentStatus !== 'paid') pmeta.dueDate = dd;
         const pur = { id: uid(), number: pnum, supplierId: sid, supplierName: sname, supplierPhone: sphone, items: pitems, total: c.total, paymentStatus, paidAmount, meta: pmeta, date: pDate };
         purchases.unshift(pur);
+        window._docSaved = true;
         persist();
         toast('Purchase saved. Stock added.');
         setView('purchases');
@@ -1841,13 +1862,14 @@
 
       const meta = {
         subtotal: c.sub, discount: c.discount, discType: o.discType, discValue: Number(o.discValue) || 0,
-        taxName: 'Tax', taxRate: c.taxRate, tax: c.tax,
+        taxName: 'Tax', taxRate: c.taxRate, tax: c.tax, inclTax: !!settings.enableInclusiveTax,
         chargeLabel: (document.getElementById('chLabel')?.value || '').trim(), charges: c.charges,
         roundOff: c.roundOff, paymentMode: paidAmount > 0 ? st.mode : ''
       };
       if (isRet && ref) { meta.refId = ref.id; meta.refNumber = ref.number; }
       if (isEst) { const vu = fd.get('validUntil'); if (vu) meta.validUntil = vu; }
       if (isStaff()) meta.by = 'Staff';
+      { const bn = (fd.get('billingName') || '').trim(); if (bn) meta.billingName = bn; const po = (fd.get('poNo') || '').trim(); if (po) meta.po = po; const pd = fd.get('poDate'); if (pd) meta.poDate = pd; }
       { const dd = fd.get('dueDate'); if (dd && !isRet && !isEst && paymentStatus !== 'paid') meta.dueDate = dd; }
       if (from) { meta.fromId = from.id; meta.fromNumber = from.number; }
       const inv = {
@@ -1855,14 +1877,16 @@
         customerId: customerId || null, customerName, customerPhone,
         items, total: c.total, paymentStatus, paidAmount, meta, date: dateIso
       };
+      if (settings.enableUpdateSalePrice && !isRet && !isEst) items.forEach(it => { const pr = products.find(x => x.id === it.productId); if (pr && Number(it.price) > 0 && pr.price !== it.price) { pr.price = it.price; pr.updatedAt = new Date().toISOString(); } });
       invoices.unshift(inv);
+      window._docSaved = true;
       persist();
       if (isRet) { toast('Return saved. Stock added back.'); setView('invoices'); openInvoiceDetail(inv); return; }
       if (isEst) { toast('Quotation saved'); invFilter = 'estimate'; setView('invoices'); openInvoiceDetail(inv); return; }
       if (from) { const q = invoices.find(x => x.id === from.id); if (q) { q.meta = Object.assign({}, q.meta, { convertedTo: inv.number, convertedId: inv.id }); q.updatedAt = new Date().toISOString(); persist(); } }
       toast(paymentStatus === 'paid' ? 'Invoice saved (Paid)' : paymentStatus === 'partial' ? 'Invoice saved (Advance recorded)' : 'Invoice saved (Unpaid)');
       setView('invoices');
-      openInvoiceDetail(inv);
+      if (settings.enableInvoicePreview !== false) openInvoiceDetail(inv);
     });
   }
 
@@ -2539,15 +2563,93 @@
     return round2(bal);
   }
 
+  const PROFILE_FIELDS = [['businessName', 'Business name'], ['phone', 'Phone'], ['email', 'Email'], ['address', 'Address'], ['city', 'City / Pincode'], ['taxId', 'Tax ID'], ['ownerName', 'Owner name'], ['businessDesc', 'Description'], ['logo', 'Logo'], ['signature', 'Signature']];
+  function profileFilled(k) {
+    const v = settings[k];
+    if (k === 'businessName') return !!v && !/^my (business|shop)$/i.test(String(v).trim());
+    return !!(v && String(v).trim());
+  }
   function profileCompleteness() {
-    let score = 20;
-    if (settings.businessName && settings.businessName !== 'My Business') score += 20;
-    if (settings.phone) score += 15;
-    if (settings.email) score += 10;
-    if (settings.address) score += 15;
-    if (settings.logo) score += 10;
-    if (settings.taxId) score += 10;
-    return Math.min(100, score);
+    return Math.round(PROFILE_FIELDS.filter(f => profileFilled(f[0])).length / PROFILE_FIELDS.length * 100);
+  }
+
+
+  function planLabel() {
+    try { const { key, cache } = HisablyFreemium.effectivePlan(); return cache.planId === 'lifetime' ? 'Lifetime' : (HisablyFreemium.LIMITS[key] || {}).label || key; } catch (e) { return 'Free'; }
+  }
+  function acctAvatar() {
+    return settings.logo ? `<img src="${settings.logo}" alt="">` : escapeHtml(((settings.businessName || 'B').trim().charAt(0) || 'B').toUpperCase());
+  }
+  function viewAccount() {
+    const s = HisablyFreemium.getSession() || {};
+    const cloud = s.mode === 'cloud';
+    const pct = profileCompleteness();
+    const rowA = (label, attr, danger) => `<div class="list-row" ${attr}><div class="list-row-left"><div class="list-row-label" ${danger ? 'style="color:#E11D48"' : ''}>${label}</div></div><svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div>`;
+    return `<div class="fade-in" style="padding:16px 0 28px">
+      <div class="acct-hero"><div class="acct-av big">${acctAvatar()}</div>
+        <div style="min-width:0"><div class="acct-name">${escapeHtml(s.fullName || settings.businessName || 'My Account')}</div>
+        <div class="acct-sub">${escapeHtml(s.email || 'Not signed in')}</div>
+        <span class="plan-pill">${escapeHtml(planLabel())} plan</span></div></div>
+      <div class="doc-card" style="margin:12px 16px"><div style="font-weight:700">Profile ${pct}% complete</div><div class="prog" style="margin:8px 0"><div style="width:${pct}%"></div></div>
+        ${pct < 100 ? `<div class="text-sm text-secondary">Missing: ${PROFILE_FIELDS.filter(f => !profileFilled(f[0])).map(f => f[1]).join(', ')}</div>` : '<div class="text-sm text-secondary">All set!</div>'}
+        <button class="btn btn-outline btn-block" style="margin-top:10px" data-view="business-profile">Edit Business Profile &amp; Card</button></div>
+      <div class="section-title">Account</div><div class="list-group">
+        ${cloud ? rowA('Sign out', 'data-action="sign-out-user"') : `${rowA('Sign in', 'data-action="show-auth" data-tab="login"')}${rowA('Sign up (create free account)', 'data-action="show-auth" data-tab="register"')}`}
+        ${rowA('Plans &amp; Pricing', 'data-action="open-plans"')}
+        ${rowA('Shopify Sync', 'data-action="open-shopify"')}
+        ${rowA('My Online Store', 'data-view="online-store"')}
+      </div>
+      <div class="section-title">Your data</div><div class="list-group">
+        ${rowA('Download CSV (sales, items, parties…)', 'data-action="open-csv"')}
+        ${rowA('Backup to phone (JSON)', 'data-action="export-data"')}
+        ${rowA('Restore backup', 'data-action="import-data"')}
+        ${rowA('Clear All Data', 'data-action="clear-data"', true)}
+      </div>
+    </div>`;
+  }
+  function csvDatasets() {
+    const cur = settings.currency || '';
+    const d = x => x ? new Date(x).toISOString().slice(0, 10) : '';
+    return {
+      sales: ['sales', ['Number', 'Type', 'Date', 'Customer', 'Phone', 'Items', 'Total', 'Paid', 'Balance', 'Payment mode'],
+        () => invoices.map(i => [i.number, i.docType || 'sale', d(i.date), i.customerName, i.customerPhone || '', (i.items || []).map(x => x.name + ' x' + x.qty).join('; '), i.total, i.paidAmount || 0, Math.max(0, (i.total || 0) - (i.paidAmount || 0)), (i.meta && i.meta.paymentMode) || ''])],
+      purchases: ['purchases', ['Number', 'Date', 'Supplier', 'Items', 'Total', 'Paid', 'Balance'],
+        () => purchases.map(i => [i.number, d(i.date), i.supplierName, (i.items || []).map(x => x.name + ' x' + x.qty).join('; '), i.total, i.paidAmount || 0, Math.max(0, (i.total || 0) - (i.paidAmount || 0))])],
+      items: ['items', CSV_COLUMNS, () => products.map(p => [p.name, p.category || '', p.price, p.cost || 0, p.stock, p.unit || 'pcs', p.lowStock ?? '', p.barcode || '', p.notes || ''])],
+      parties: ['parties', ['Name', 'Phone', 'Address', 'Balance due'], () => customers.map(c => [c.name, c.phone || '', c.address || '', customerBalance(c.id, c.name, c.phone).due])],
+      suppliers: ['suppliers', ['Name', 'Phone', 'You owe'], () => suppliers.map(c => [c.name, c.phone || '', (supplierBalance(c) || {}).due || 0])],
+      expenses: ['expenses', ['Date', 'Category', 'Amount', 'Note'], () => expenses.map(e => [d(e.date), e.category || '', e.amount, e.note || ''])]
+    };
+  }
+  function exportCSV(key) {
+    const sets = csvDatasets();
+    const keys = key === 'all' ? Object.keys(sets) : [key];
+    keys.forEach((k, n) => {
+      const [name, cols, fn] = sets[k];
+      const rows = [cols.join(',')].concat(fn().map(r => r.map((v, i) => csvCell(v, typeof v === 'string')).join(',')));
+      setTimeout(() => downloadText(`billaura-${name}-${new Date().toISOString().slice(0, 10)}.csv`, rows.join('\r\n')), n * 400);
+    });
+    toast(key === 'all' ? 'Downloading 6 CSV files…' : 'CSV downloaded');
+  }
+  function openCsvModal() {
+    const b = (k, l, n) => `<button class="btn btn-secondary btn-block mt-8" data-action="csv-export" data-set="${k}">${l} <span class="text-secondary">(${n})</span></button>`;
+    $('#modalRoot').innerHTML = modalShell('Download CSV', `<p class="text-sm text-secondary">Opens in Excel / Google Sheets.</p>
+      ${b('sales', 'All sales &amp; documents', invoices.length)}${b('purchases', 'Purchases', purchases.length)}${b('items', 'Items', products.length)}${b('parties', 'Parties (customers)', customers.length)}${b('suppliers', 'Suppliers', suppliers.length)}${b('expenses', 'Expenses', expenses.length)}
+      <button class="btn btn-primary btn-block mt-16" data-action="csv-export" data-set="all">Download everything</button>`);
+  }
+  function clearAllData() {
+    if (!confirm('Delete ALL data (items, parties, invoices, expenses, purchases, banks, loans…)? If you are signed in to cloud it is deleted there too. This cannot be undone.')) return;
+    if (!confirm('Last check: a backup file will download first. Continue and delete everything?')) return;
+    try {
+      const data = { products, invoices, customers, suppliers, expenses, stockMovements, purchases, banks, bankTxns, otherIncome, loans, settings, invoiceCounter, exportedAt: new Date().toISOString() };
+      downloadText(`billaura-backup-before-clear-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(data), 'application/json');
+    } catch (e) {}
+    products = []; invoices = []; customers = []; suppliers = []; expenses = []; stockMovements = []; purchases = [];
+    banks = []; bankTxns = []; otherIncome = []; loans = [];
+    invoiceCounter = 1001;
+    persist();
+    toast('All data cleared. A backup file was downloaded.', 4000);
+    setView('home', { replace: true });
   }
 
   function viewSettings() {
@@ -2582,6 +2684,14 @@
           <div class="list-row-left"><div class="list-row-label">General</div></div>
           <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
         </div>
+        <div class="list-row" data-view="account">
+          <div class="list-row-left"><div class="list-row-label">Account, Sign in / Sign out &amp; Data</div></div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="list-row" data-action="open-shopify">
+          <div class="list-row-left"><div class="list-row-label">Shopify Sync ${crown}</div></div>
+          <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
       </div>
     </div>`;
   }
@@ -2597,10 +2707,9 @@
     ];
     const curTheme = settings.invoiceTheme || 'royal';
     const cardStyle = settings.businessCardStyle || 'modern';
-    const bpKeys = ['businessName','phone','email','address','city','taxId','ownerName','logo','signature','businessDesc'];
-    const bpPct = Math.round(bpKeys.filter(k => settings[k]).length / bpKeys.length * 100);
+    const bpPct = profileCompleteness();
     return `<div class="fade-in" style="padding:16px 16px 32px">
-      <div style="font-weight:700;margin-bottom:2px">Profile completeness: ${bpPct}%</div><div class="prog" style="margin:6px 0 4px"><div style="width:${bpPct}%"></div></div>
+      <div style="font-weight:700;margin-bottom:2px">Profile ${bpPct}% complete</div><div class="prog" style="margin:6px 0 4px"><div style="width:${bpPct}%"></div></div>
       <div class="section-label">Business details</div>
       <div class="field has-value">
         <input type="text" id="bpName" value="${escapeHtml(settings.businessName||'')}" placeholder=" " />
@@ -2761,11 +2870,8 @@
         </div>
         ${toggleRow('Barcode scanning for items', 'enableBarcode', { info: true })}
         ${toggleRow('Stock maintenance', 'enableStock', { info: true })}
-        ${toggleRow('Manufacturing', 'enableManufacturing', { info: true, premium: true })}
         ${toggleRow('Item Units', 'enableItemUnits', { info: true })}
-        ${toggleRow('Default Unit', 'enableDefaultUnit', { info: true })}
         ${toggleRow('Item Category', 'enableItemCategory', { info: true })}
-        ${toggleRow('Party wise item rate', 'enablePartyRate', { info: true, premium: true })}
         ${toggleRow('Wholesale Price', 'enableWholesale', { info: true, premium: true })}
         ${stepperRow('Quantity (Upto Decimal places)', 'qtyDecimals')}
         ${toggleRow('Item wise tax', 'enableItemTax', { info: true })}
@@ -2785,8 +2891,6 @@
         ${toggleRow('Party Grouping', 'enablePartyGrouping', { info: true })}
         ${navRow('Party Additional Fields', 'open-party-fields')}
         ${toggleRow('Party Shipping Address', 'enablePartyShipping', { info: true })}
-        ${toggleRow('Invite parties to add themselves', 'enablePartyInvite', { info: true })}
-        ${toggleRow('Loyalty Points', 'enableLoyalty', { info: true, premium: true })}
       </div>
     </div>`;
   }
@@ -2795,7 +2899,6 @@
     return `<div class="fade-in">
       <div class="section-title">Transaction Header</div>
       <div class="list-group">
-        ${toggleRow('Invoice/Bill Number', 'enableInvoiceNumber', { info: true })}
         ${toggleRow('Cash Sale by default', 'enableCashSaleDefault', { info: true })}
         ${toggleRow('Billing name of Parties', 'enableBillingName', { info: true })}
         ${toggleRow('PO Details (of customer)', 'enablePODetails', { info: true })}
@@ -2806,7 +2909,6 @@
         ${toggleRow('Allow Inclusive/Exclusive tax on Rate', 'enableInclusiveTax', { info: true })}
         ${toggleRow('Display Purchase Price', 'enableDisplayPurchasePrice', { info: true })}
         ${toggleRow('Show Last 5 Sale Price of Items', 'enableLastSalePrice', { info: true })}
-        ${toggleRow('Free Item quantity', 'enableFreeQty', { info: true })}
         ${toggleRow('Barcode scanning for items', 'enableBarcode', { info: true })}
       </div>
       <div class="section-title">Taxes, Discount & Total</div>
@@ -2876,7 +2978,6 @@
         <div class="list-row" data-action="set-thermal-size" data-value="80"><div class="list-row-left"><div class="list-row-label">80 mm</div></div>${paper==='80'?'<span class="chip">Selected</span>':''}</div>
         <div class="list-row" data-action="set-thermal-size" data-value="88"><div class="list-row-left"><div class="list-row-label">88 mm</div></div>${paper==='88'?'<span class="chip">Selected</span>':''}</div>
         ${stepperRow('Copies', 'printCopies')}
-        ${toggleRow('Text styling (bold headers)', 'printTextStyle', { info: true })}
         ${toggleRow('Print logo on thermal', 'printLogo', { info: true })}
         ${toggleRow('Print phone', 'printPhone', { info: true })}
         ${toggleRow('Amount in words', 'printAmountInWords', { info: true })}
@@ -3016,12 +3117,11 @@
       </div>
       <div class="section-title">Security</div>
       <div class="list-group">
-        ${toggleRow('Passcode / FingerPrint', 'enablePasscode', { info: true })}
+        ${navRow('App Lock &amp; Staff PIN', 'open-settings')}
       </div>
       <div class="section-title">More Transactions</div>
       <div class="list-group">
         ${toggleRow('Estimate / Quotation', 'enableEstimate', { info: true })}
-        ${toggleRow('Sale / Purchase Order', 'enableOrders', { info: true })}
         ${toggleRow('Delivery Note', 'enableDeliveryNote', { info: true })}
         ${toggleRow('Goods Return on Delivery Note', 'enableGoodsReturn', { info: true })}
       </div>
@@ -3418,51 +3518,58 @@
     </div>`;
   }
 
+  function storeUrl() {
+    let u = new URL('store.html', location.href).href;
+    if (settings._storeHash) u += '#c=' + settings._storeHash;
+    return u;
+  }
   function viewOnlineStore() {
     const planKey = (window.HisablyFreemium && HisablyFreemium.effectivePlan) ? HisablyFreemium.effectivePlan().key : 'free';
     const isPro = planKey === 'pro' || planKey === 'trial';
     if (!products.length) {
-      return `<div class="fade-in">
-        <div class="empty-state" style="padding-top:48px">
-          <h3>Start Selling Online instantly</h3>
-          <p>Please add an Item before proceeding.</p>
-          <button class="btn btn-primary" data-view="products">Add Item</button>
-        </div>
-      </div>`;
+      return `<div class="fade-in"><div class="empty-state" style="padding-top:48px"><h3>Start Selling Online instantly</h3><p>Please add an Item before proceeding.</p><button class="btn btn-primary" data-view="products">Add Item</button></div></div>`;
     }
-    const storeUrl = (location.origin + location.pathname.replace(/index\.html?$/i, '') + 'store.html');
+    const links = settings.storeLinks || [];
     const published = !!localStorage.getItem('billaura_public_store');
-    return `<div class="fade-in">
-      <div style="margin:16px;background:linear-gradient(135deg,#1E40AF,#3B82F6);border-radius:16px;padding:24px;color:white;text-align:center">
-        <div style="font-size:1.25rem;font-weight:700;margin-bottom:8px">Your public product page</div>
-        <div style="opacity:0.9;font-size:0.875rem;margin-bottom:12px">Share a link customers can open in any browser</div>
-        <div style="font-size:0.75rem;opacity:0.85;word-break:break-all">${escapeHtml(storeUrl)}</div>
-      </div>
+    const url = storeUrl();
+    return `<div class="fade-in" style="padding-bottom:24px">
+      <div class="store-hero"><div class="acct-av big">${acctAvatar()}</div>
+        <div class="sh-name">${escapeHtml(settings.businessName || 'My Store')}</div>
+        <div class="sh-tag">${escapeHtml(settings.storeTagline || settings.businessDesc || 'Add a short tagline for your store')}</div>
+        <div class="sh-stats"><div><b>${products.length}</b><span>Items</span></div><div><b>${published ? 'Live' : 'Draft'}</b><span>Status</span></div><div><b>${links.length}</b><span>Links</span></div></div>
+        <button class="sh-edit" data-action="store-edit-info">Edit store info</button></div>
       ${isPro ? `
-        <div class="list-group">
-          <div class="list-row" style="cursor:default">
-            <div class="list-row-left"><div class="list-row-label">Catalog items</div></div>
-            <div class="list-row-right">${products.length}</div>
-          </div>
-          <div class="list-row" style="cursor:default">
-            <div class="list-row-left"><div class="list-row-label">Store status</div></div>
-            <div class="list-row-right ${published?'text-success':'text-secondary'}">${published ? 'Published' : 'Not published yet'}</div>
-          </div>
-        </div>
-        <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
-          <button class="btn btn-primary btn-lg btn-block" data-action="publish-store-page">Publish / Update Store Page</button>
-          <button class="btn btn-outline btn-block" data-action="open-store-page">Open Store Page</button>
-          <button class="btn btn-outline btn-block" data-action="share-store-link">Share Link (WhatsApp)</button>
-          <button class="btn btn-ghost btn-block" data-action="publish-store">Share catalog list only</button>
-        </div>` : `
-        <div class="dash-card" style="text-align:center">
-          <h3 style="margin-bottom:8px">Upgrade your Plan</h3>
-          <p class="text-secondary text-sm mb-3">Online Store is a Premium Feature.</p>
-          <button class="btn btn-primary" data-action="open-plans">Get Billaura Premium</button>
-        </div>`}
+      <div class="doc-card" style="margin:14px 16px 0"><div class="doc-label">Your store link</div>
+        <div class="store-url">${escapeHtml(url.length > 90 ? url.slice(0, 60) + '…' : url)}</div>
+        <div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-outline" style="flex:1" data-action="copy-store-link">Copy link</button><button class="btn btn-primary" style="flex:1" data-action="share-store-link">Share on WhatsApp</button></div></div>
+      <div style="padding:12px 16px;display:flex;flex-direction:column;gap:10px">
+        <button class="btn btn-primary btn-lg btn-block" data-action="publish-store-page">${published ? 'Update' : 'Publish'} Store Page</button>
+        <button class="btn btn-outline btn-block" data-action="open-store-page">Preview Store Page</button>
+        <button class="btn btn-ghost btn-block" data-action="publish-store">Share catalog list only</button>
+      </div>
+      <div class="section-title">Custom links</div>
+      <div class="list-group">
+        ${links.map(l => `<div class="list-row" style="cursor:default"><div class="list-row-left" style="min-width:0"><div><div class="list-row-label">${escapeHtml(l.label)}</div><div class="text-sm text-secondary" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60vw">${escapeHtml(l.url)}</div></div></div>
+          <div class="list-row-right" style="gap:6px;display:flex"><button class="chip-btn" data-action="store-edit-link" data-id="${l.id}">Edit</button><button class="chip-btn" style="color:#E11D48" data-action="store-del-link" data-id="${l.id}">Delete</button></div></div>`).join('') || '<div class="doc-empty">No links yet – add Instagram, Facebook, website, maps…</div>'}
+        <div class="list-row" data-action="store-edit-link"><div class="list-row-left"><div class="list-row-label" style="color:#0A6FE0">+ Add custom link</div></div></div>
+      </div>
+      <p class="text-sm text-secondary" style="padding:8px 16px">Links show as buttons on your store page. Tap <b>Update Store Page</b> after changing them.</p>` : `
+      <div class="dash-card" style="text-align:center"><h3 style="margin-bottom:8px">Upgrade your Plan</h3><p class="text-secondary text-sm mb-3">Online Store is a Premium Feature.</p><button class="btn btn-primary" data-action="open-plans">Get Billaura Premium</button></div>`}
     </div>`;
   }
-
+  function openStoreLinkModal(id) {
+    const l = (settings.storeLinks || []).find(x => x.id === id) || {};
+    $('#modalRoot').innerHTML = modalShell(l.id ? 'Edit link' : 'Add custom link', `
+      <div class="form-group"><label class="form-label">Button name</label><input class="form-input" id="slLabel" maxlength="30" placeholder="e.g. Instagram" value="${escapeHtml(l.label || '')}" /></div>
+      <div class="form-group"><label class="form-label">Link (https://…)</label><input class="form-input" id="slUrl" inputmode="url" placeholder="https://instagram.com/yourshop" value="${escapeHtml(l.url || '')}" /></div>
+      <button class="btn btn-primary btn-block" data-action="store-save-link" data-id="${l.id || ''}">Save link</button>`);
+  }
+  function openStoreInfoModal() {
+    $('#modalRoot').innerHTML = modalShell('Store info', `
+      <div class="form-group"><label class="form-label">Tagline</label><input class="form-input" id="siTag" maxlength="80" value="${escapeHtml(settings.storeTagline || '')}" placeholder="e.g. Quality hardware at fair prices" /></div>
+      <div class="form-group"><label class="form-label">WhatsApp number for orders</label><input class="form-input" id="siWa" type="tel" value="${escapeHtml(settings.storeWhatsapp || settings.phone || '')}" /></div>
+      <button class="btn btn-primary btn-block" data-action="store-save-info">Save</button>`);
+  }
 
   function openSettingsModal() {
     $('#modalRoot').innerHTML = `
@@ -4134,6 +4241,7 @@
     if (!inv) return;
     try {
       const pr = HisablyReceipt.getPrefs();
+      if (pr.paper === 'a4' && window.BillauraTemplates) { await shareInvoiceImage(inv); return; }
       const dots = pr.paper === 'a4' ? 576 : (HisablyReceipt.PAPER[pr.paper] || HisablyReceipt.PAPER['80']).dots;
       const cv = await HisablyReceipt.renderCanvas(inv, receiptCtx(), dots);
       cv.toBlob(async (blob) => {
@@ -4155,6 +4263,7 @@
     if (!inv) return;
     try {
       const pr = HisablyReceipt.getPrefs();
+      if (pr.paper === 'a4' && window.BillauraTemplates) { BillauraTemplates.printDoc(inv, tplCtx(), {}); return; }
       await HisablyReceipt.printHTML(HisablyReceipt.receiptHTML(inv, receiptCtx(), pr.paper));
     } catch (e) { console.error(e); toast('Could not open the print dialog'); }
   }
@@ -5146,9 +5255,12 @@
   function viewMore() {
     if (isStaff()) return staffMoreHTML();
     const tg = (key, ic, label) => mrow(ic, label, `data-action="menu-toggle" data-key="${key}"`, { toggle: true, open: menuOpen[key] });
+    const _s = HisablyFreemium.getSession() || {};
+    const _pro = HisablyFreemium.hasFeature('shopify');
     return `<div class="fade-in" style="padding-bottom:20px">
-      <div class="menu-card" style="margin-top:14px"><div class="menu-h">My Business</div>
-        ${tg('sale', 'sale', 'Sale')}${msub('sale', [['Sale Invoice', 'data-action="list-sales"'], ['Payment-In', 'data-view="payments-in"'], ['Sale Return (Credit Note)', 'data-action="list-returns"'], ['Estimate/Quotation', 'data-action="list-estimates"'], ['Delivery Note', 'data-action="list-sales-dn"'], ['Mobile POS', 'data-view="pos"']])}
+      <div class="menu-card acct-card" style="margin-top:14px" data-action="open-account"><div class="acct-row"><div class="acct-av">${acctAvatar()}</div><div class="acct-txt"><div class="acct-name">${escapeHtml(_s.fullName || settings.businessName || 'My Account')}</div><div class="acct-sub">${escapeHtml(_s.email || 'Not signed in')} · ${escapeHtml(planLabel())}</div></div><svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div></div>
+      <div class="menu-card"><div class="menu-h">My Business</div>
+        ${tg('sale', 'sale', 'Sale')}${msub('sale', [['Sale Invoice', 'data-action="list-sales"'], ['Payment-In', 'data-view="payments-in"'], settings.enableGoodsReturn !== false && ['Sale Return (Credit Note)', 'data-action="list-returns"'], settings.enableEstimate !== false && ['Estimate/Quotation', 'data-action="list-estimates"'], settings.enableDeliveryNote !== false && ['Delivery Note', 'data-action="list-sales-dn"'], ['Mobile POS', 'data-view="pos"']].filter(Boolean))}
         ${tg('purchase', 'cart', 'Purchase')}${msub('purchase', [['Purchase Bills', 'data-view="purchases"'], ['Payment - Out', 'data-view="payments-out"'], ['Suppliers', 'data-view="suppliers"']])}
         ${mrow('wallet', 'Expenses', 'data-view="expenses"')}${mrow('users', 'Parties (Customers)', 'data-view="customers"')}${mrow('store', 'My Online Store', 'data-view="online-store"')}${mrow('report', 'Reports', 'data-view="reports"')}
         ${mrow('box', 'Stock Adjustment', 'data-view="stock-adjust"')}${mrow('chart', 'Other Income', 'data-view="other-income"')}</div>
@@ -5159,8 +5271,8 @@
         ${tg('util', 'inbox', 'Utilities')}${msub('util', [['Verify my data', 'data-view="verify"'], ['Open Calculator', 'data-action="open-calc"'], ['Import Items', 'data-action="bulk-tools"'], ['Bulk Update Tax Slab', 'data-action="bulk-tax"'], ['Export Items', 'data-action="bulk-export"'], ['Import Parties', 'data-action="import-parties"'], ['Recycle Bin', 'data-view="recycle"'], ['Close Financial Year', 'data-action="close-fy"'], ['Barcode Generator', 'data-view="barcode-gen"']])}</div>
       <div class="menu-card"><div class="menu-h">Others</div>
         ${mrow('crown', 'Plans &amp; Pricing', 'data-action="open-plans"')}
-        ${tg('grow', 'whatsapp', 'Grow Your Business')}${msub('grow', [['Payment Reminders', 'data-view="reminders"'], ['Business Card &amp; Profile', 'data-view="business-profile"'], ['Share Catalog', 'data-view="online-store"']])}
-        ${mrow('gear', 'Settings', 'data-view="settings"')}${mrow('lock', 'App Lock &amp; Staff PIN', 'data-action="open-settings"')}</div>
+        ${tg('grow', 'whatsapp', 'Grow Your Business')}${msub('grow', [['Payment Reminders', 'data-view="reminders"'], ['Business Card &amp; Profile', 'data-view="business-profile"'], ['Share Catalog', 'data-view="online-store"'], ['Shopify Sync' + (_pro ? '' : ' (Pro)'), 'data-action="open-shopify"']])}
+        ${mrow('gear', 'Settings', 'data-view="settings"')}${mrow('users', 'Account &amp; Data', 'data-view="account"')}${mrow('lock', 'App Lock &amp; Staff PIN', 'data-action="open-settings"')}</div>
       <div style="text-align:center;padding:14px;color:#8F95A8;font-size:.8rem">Billaura v${APP_VERSION}${profileCompleteness() < 100 ? ` · <a href="#" data-view="business-profile" style="color:#0A6FE0">Complete profile (${profileCompleteness()}%)</a>` : ''}</div></div>`;
   }
   IC.lock = '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>';
@@ -5236,7 +5348,7 @@
     invoices.forEach(i => {
       const sub = round2((i.items || []).reduce((s, it) => s + (it.price || 0) * (it.qty || 0), 0));
       const m = i.meta || {};
-      const expect = round2(sub - (m.discount || 0) + (m.tax || 0) + (m.charges || 0) + (m.roundOff || 0));
+      const expect = round2(sub - (m.discount || 0) + (m.inclTax ? 0 : (m.tax || 0)) + (m.charges || 0) + (m.roundOff || 0));
       if (Math.abs(expect - (i.total || 0)) > 0.51) issues.push({ t: `${i.number}: total ${money(i.total)} does not match items (${money(expect)})` });
       if ((i.paidAmount || 0) > (i.total || 0) + 0.01) issues.push({ t: `${i.number}: received more than the invoice total` });
       const ps = (i.paidAmount || 0) >= (i.total || 0) && i.total > 0 ? 'paid' : ((i.paidAmount || 0) > 0 ? 'partial' : 'unpaid');
@@ -5652,6 +5764,9 @@
           phone: settings.phone || '',
           email: settings.email || '',
           address: [settings.address, settings.city].filter(Boolean).join(', '),
+          tagline: settings.storeTagline || settings.businessDesc || '',
+          wa: settings.storeWhatsapp || settings.phone || '',
+          links: (settings.storeLinks || []).map(l => ({ label: l.label, url: l.url })),
           currency: settings.currency || 'PKR',
           updatedAt: new Date().toISOString(),
           items: products.map(p => ({
@@ -5668,6 +5783,20 @@
         render();
         break;
       }
+      case 'store-edit-info': openStoreInfoModal(); break;
+      case 'store-save-info': settings.storeTagline = ($('#siTag') || {}).value.trim(); settings.storeWhatsapp = ($('#siWa') || {}).value.trim(); persist(); closeModal(); render(); toast('Saved. Update the store page to publish it.'); break;
+      case 'store-edit-link': openStoreLinkModal(id || t.dataset.id); break;
+      case 'store-save-link': {
+        const label = ($('#slLabel') || {}).value.trim(); let url = ($('#slUrl') || {}).value.trim();
+        if (!label || !url) { toast('Enter a name and a link'); break; }
+        if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+        const arr = settings.storeLinks = settings.storeLinks || [];
+        const eid = t.dataset.id; const ex = eid && arr.find(x => x.id === eid);
+        if (ex) { ex.label = label; ex.url = url; } else arr.push({ id: uid(), label, url });
+        persist(); closeModal(); render(); toast('Link saved. Tap Update Store Page to publish.'); break;
+      }
+      case 'store-del-link': if (confirm('Delete this link?')) { settings.storeLinks = (settings.storeLinks || []).filter(x => x.id !== (id || t.dataset.id)); persist(); render(); } break;
+      case 'copy-store-link': { const u = storeUrl(); (navigator.clipboard ? navigator.clipboard.writeText(u) : Promise.reject()).then(() => toast('Link copied'), () => { prompt('Copy this link', u); }); break; }
       case 'open-store-page': {
         let u = new URL('store.html', location.href).href;
         if (settings._storeHash) u += '#c=' + settings._storeHash;
@@ -6387,15 +6516,17 @@
         input.click();
         break;
       }
-      case 'clear-data':
-        if (confirm('Delete ALL data? This also deletes it from your cloud account and cannot be undone.')) {
-          products = []; invoices = []; customers = []; suppliers = []; expenses = []; stockMovements = []; purchases = [];
-          invoiceCounter = 1001;
-          persist();
-          toast('All data cleared');
-          setView('dashboard');
-        }
+      case 'clear-data': clearAllData(); break;
+      case 'open-account': setView('account'); break;
+      case 'open-csv': openCsvModal(); break;
+      case 'csv-export': exportCSV(t.dataset.set); break;
+      case 'show-auth': {
+        if (!confirm('Go to sign in / sign up? Your data on this phone stays.')) break;
+        HisablyFreemium.clearSession(); showAuth();
+        const au = document.getElementById('authScreen');
+        if (au && t.dataset.tab === 'register') { au.innerHTML = renderAuthHTML('register'); bindAuthForm(); }
         break;
+      }
     }
   });
 
@@ -6703,6 +6834,7 @@
       auth.hidden = false;
       auth.innerHTML = renderAuthHTML('login');
       bindAuthScreen();
+      try { if (localStorage.getItem('billaura_demo_removed')) { localStorage.removeItem('billaura_demo_removed'); authSay('Demo mode was removed. Create a free account or sign in – your data on this phone is kept.', 'info'); } } catch (e) {}
     }
   }
 
@@ -6735,8 +6867,7 @@
         <div class="form-group"><label class="form-label">Password</label><input class="form-input" name="password" type="password" required minlength="6" placeholder="Min 6 characters" /></div>
         <button type="submit" class="btn btn-primary btn-block">${isLogin ? 'Sign in' : 'Create free account'}</button>
       </form>
-      <button type="button" class="btn btn-outline btn-block" id="guestBtn" style="margin-top:12px">Continue offline (demo)</button>
-      <p class="auth-hint">Cloud login syncs across devices. Offline demo stores data only on this device.</p>
+      <p class="auth-hint">Sign in to sync your shop across devices. Your data on this phone is kept.</p>
     </div>`;
   }
 
@@ -6756,6 +6887,7 @@
   }
 
   function bindGuestBtn() {
+    return; // demo account removed
     const g = document.getElementById('guestBtn');
     if (!g) return;
     g.onclick = () => {
@@ -7135,23 +7267,26 @@
             <button class="modal-close" data-action="close-modal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
           </div>
           <p class="text-sm text-secondary mb-12">Current: <strong>${escapeHtml(cache.planId === 'lifetime' && cache.status === 'active' ? 'lifetime' : key)}</strong>${cache.status ? ' · ' + escapeHtml(cache.status) : ''}${cache.paidUntil && key !== 'free' && cache.planId !== 'lifetime' ? ' · paid until ' + formatDate(cache.paidUntil) : ''}</p>
-          <div class="card mb-12" style="padding:14px">
+          ${(() => { const L = HisablyFreemium.effectivePlan().limits; const f = (ok, t) => `<div class="feat ${ok ? 'on' : 'off'}"><span>${ok ? '✓' : '🔒'}</span> ${t}</div>`; const unl = L.products >= 9999;
+            return `<div class="plan-now"><div class="pn-h">${escapeHtml(planLabel())} plan ${key === 'pro' || key === 'trial' ? '— Pro features unlocked' : ''}</div>
+              ${f(unl, unl ? 'Unlimited items, invoices &amp; parties' : `Up to ${L.products} items · ${L.invoices} invoices · ${L.customers} parties`)}${f(L.cloudSync, 'Cloud sync')}${f(L.paymentQrOnInvoice, 'Payment QR on invoices')}${f(L.bulkTools, 'Bulk import / price change')}${f(L.shopify, 'Shopify store sync')}${f(L.themes, 'All invoice themes &amp; colours')}${f(L.passcode, 'App lock &amp; staff PIN')}</div>`; })()}
+          <div class="card mb-12" style="padding:14px${key === 'free' ? ';border-color:var(--primary)' : ''}">
             <div class="font-semibold">Free</div>
             <div class="text-sm text-secondary">25 products · 40 invoices · 20 customers</div>
             <div class="text-sm" style="color:var(--primary);margin-top:4px">${pay.currency} 0 / month</div>
           </div>
-          <div class="card mb-12" style="padding:14px;border-color:var(--primary)">
+          <div class="card mb-12" style="padding:14px${key === 'basic' ? ';border:2px solid var(--primary)' : ''}">
             <div class="font-semibold">Basic</div>
             <div class="text-sm text-secondary">300 products · 1,500 invoices · 200 customers · cloud sync · payment QR on invoices</div>
             <div class="text-sm" style="color:var(--primary);margin-top:4px;font-weight:700">${escapeHtml(pay.currency)} ${escapeHtml(pay.basicPrice)} / month</div>
           </div>
-          <div class="card mb-16" style="padding:14px">
+          <div class="card mb-16" style="padding:14px${(key === 'pro' && cache.planId !== 'lifetime') ? ';border:2px solid var(--primary)' : ''}">
             <div class="font-semibold">Pro</div>
             <div class="text-sm text-secondary">Unlimited everything · bulk import &amp; bulk price change · Shopify store connection · priority support</div>
             <div class="text-sm" style="color:var(--primary);margin-top:4px;font-weight:700">${pay.currency} ${pay.proPrice} / month</div>
           </div>
           <div class="card mb-16" style="padding:14px;border-color:#F59E0B;background:#FFFBEB">
-            <div class="font-semibold">Lifetime <span style="font-size:11px;background:#F59E0B;color:#fff;border-radius:6px;padding:2px 6px;margin-left:4px">BEST VALUE</span></div>
+            <div class="font-semibold">Lifetime <span style="font-size:11px;background:#F59E0B;color:#fff;border-radius:6px;padding:2px 6px;margin-left:4px">${cache.planId === 'lifetime' ? 'ACTIVE ✓' : 'BEST VALUE'}</span></div>
             <div class="text-sm text-secondary">All Pro features forever · pay once, no monthly renewal</div>
             <div class="text-sm" style="color:var(--primary);margin-top:4px;font-weight:700">${escapeHtml(pay.currency)} ${escapeHtml(pay.lifetimePrice || 14999)} one-time</div>
           </div>
@@ -7223,6 +7358,16 @@
   // Init
   try {
     migrateData();
+    // The old offline demo account is gone: end any demo session (data on the phone is kept)
+    try {
+      const _ds = window.HisablyFreemium && HisablyFreemium.getSession();
+      if (_ds && (_ds.userId === 'guest_demo' || _ds.email === 'demo@billaura.local')) {
+        HisablyFreemium.clearSession(); HisablyFreemium.clearPlanCache();
+        localStorage.setItem('billaura_demo_removed', '1');
+      }
+      const _lu = JSON.parse(localStorage.getItem('billaura_local_users_v1') || '[]').filter(u => u.email !== 'demo@billaura.local');
+      localStorage.setItem('billaura_local_users_v1', JSON.stringify(_lu));
+    } catch (e) {}
     if (!window.HisablyFreemium || !HisablyFreemium.isLoggedIn()) {
       showAuth();
     } else {
