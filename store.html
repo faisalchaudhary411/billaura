@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#2563EB" />
+  <title>Store – Billaura</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root { --primary:#2563EB; --bg:#F8FAFC; --text:#0F172A; --muted:#64748B; --card:#fff; --border:#E2E8F0; --cta:#E11D48; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Inter, system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+    .hero { background: linear-gradient(135deg,#1E40AF,#3B82F6); color: #fff; padding: 28px 20px 32px; text-align: center; }
+    .hero h1 { font-size: 1.5rem; margin-bottom: 6px; }
+    .hero p { opacity: .9; font-size: .875rem; }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 16px; }
+    .search { width: 100%; padding: 12px 16px; border: 1.5px solid var(--border); border-radius: 12px; font-size: 1rem; margin-bottom: 16px; font-family: inherit; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(150px,1fr)); gap: 12px; }
+    .card { background: var(--card); border-radius: 14px; padding: 14px; border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,.04); }
+    .card h3 { font-size: .9375rem; margin-bottom: 4px; }
+    .price { font-weight: 700; color: var(--primary); margin-top: 8px; }
+    .meta { font-size: .75rem; color: var(--muted); }
+    .empty { text-align: center; padding: 48px 16px; color: var(--muted); }
+    .footer { text-align: center; padding: 24px; font-size: .75rem; color: var(--muted); }
+    .wa { display: inline-block; margin-top: 12px; background: #25D366; color: #fff; padding: 10px 18px; border-radius: 24px; text-decoration: none; font-weight: 600; font-size: .875rem; }
+    .badge { display: inline-block; background: rgba(255,255,255,.2); padding: 4px 10px; border-radius: 20px; font-size: .75rem; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="hero" id="hero">
+    <h1 id="shopName">Store</h1>
+    <p id="shopSub">Loading catalog…</p>
+  </div>
+  <div class="wrap">
+    <input class="search" id="q" type="search" placeholder="Search products…" />
+    <div class="grid" id="grid"></div>
+    <div class="empty" id="empty" hidden>No products published yet. Open Billaura → Online Store → Publish.</div>
+  </div>
+  <div class="footer">Powered by <strong>Billaura</strong></div>
+  <script>
+    function money(n) {
+      n = Number(n) || 0;
+      return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+    }
+    function loadCatalog() {
+      try {
+        if (location.hash && location.hash.length > 2) {
+          const h = location.hash.slice(1);
+          if (h.startsWith('c=')) {
+            const json = decodeURIComponent(escape(atob(h.slice(2).replace(/-/g,'+').replace(/_/g,'/'))));
+            return JSON.parse(json);
+          }
+        }
+      } catch (e) {}
+      try {
+        const raw = localStorage.getItem('billaura_public_store');
+        if (raw) return JSON.parse(raw);
+      } catch (e) {}
+      return null;
+    }
+    const data = loadCatalog();
+    const hero = document.getElementById('hero');
+    const grid = document.getElementById('grid');
+    const empty = document.getElementById('empty');
+    if (!data || !data.items || !data.items.length) {
+      document.getElementById('shopSub').textContent = 'Catalog not published on this device';
+      empty.hidden = false;
+    } else {
+      document.getElementById('shopName').textContent = data.shop || 'Store';
+      const bits = [data.phone, data.address].filter(Boolean).join(' · ');
+      document.getElementById('shopSub').textContent = bits || (data.items.length + ' products');
+      const cur = data.currency || 'Rs';
+      let items = data.items;
+      function render(list) {
+        grid.innerHTML = list.map(it => `
+          <div class="card">
+            <h3>${escapeHtml(it.name)}</h3>
+            <div class="meta">${escapeHtml([it.category, it.unit].filter(Boolean).join(' · '))}</div>
+            <div class="price">${cur} ${money(it.price)}</div>
+          </div>`).join('');
+        empty.hidden = list.length > 0;
+      }
+      function escapeHtml(s) {
+        return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+      }
+      render(items);
+      document.getElementById('q').addEventListener('input', e => {
+        const q = e.target.value.trim().toLowerCase();
+        render(items.filter(it => !q || (it.name || '').toLowerCase().includes(q) || (it.category || '').toLowerCase().includes(q)));
+      });
+      if (data.phone) {
+        const a = document.createElement('a');
+        a.className = 'wa';
+        a.href = 'https://wa.me/' + String(data.phone).replace(/\D/g, '').replace(/^0/, '92');
+        a.target = '_blank';
+        a.textContent = 'Order on WhatsApp';
+        document.querySelector('.wrap').appendChild(a);
+      }
+    }
+  </script>
+</body>
+</html>
