@@ -517,7 +517,11 @@
     if (!options._pop) {
       try {
         const n0 = (history.state && history.state.n) || 0;
-        if (options.replace || !_histInit) { history.replaceState({ v: view, n: n0 }, '', '#' + view); }
+        if (!_histInit && !(history.state && history.state.v)) {
+          // first load: a guard entry underneath lets us ask "press back again to exit" at the home screen
+          history.replaceState({ guard: 1 }, '', location.pathname + location.search);
+          history.pushState({ v: view, n: 0 }, '', '#' + view);
+        } else if (options.replace || !_histInit) { history.replaceState({ v: view, n: n0 }, '', '#' + view); }
         else if (!options.keepHistory) { history.pushState({ v: view, n: n0 + 1 }, '', '#' + view); }
         else { history.replaceState({ v: view, n: n0 }, '', '#' + view); }
         _histInit = true;
@@ -584,7 +588,8 @@
       'payment-reminders': () => { title.textContent = 'Payment Reminders'; content.innerHTML = viewPaymentReminders(); },
       'service-reminders': () => { title.textContent = 'Service Reminders'; content.innerHTML = viewServiceReminders(); },
       reminders: () => { title.textContent = 'Reminders'; content.innerHTML = viewReminders(); },
-      'online-store': () => { title.textContent = 'Online Store'; content.innerHTML = viewOnlineStore(); },
+      'online-store': () => {
+        if (settings._storeHash && !window._storeChecked) { window._storeChecked = true; republishStore(true).then(() => { if (currentView === 'online-store') render(); }).catch(() => {}); } title.textContent = 'Online Store'; content.innerHTML = viewOnlineStore(); },
       pos: () => { title.textContent = 'Quick Sale (POS)'; content.innerHTML = viewPOS(); bindPOS(); },
       'stock-adjust': () => { title.textContent = 'Stock Adjustment'; content.innerHTML = viewStockAdjust(); },
       'payments-in': () => { title.textContent = 'Payment-In'; content.innerHTML = paymentList('in'); },
@@ -3532,6 +3537,25 @@
     </div>`;
   }
 
+  // Rebuilds the public store snapshot from the current business details + items.
+  // Silent mode only touches storage when something actually changed (keeps the link in sync with the app).
+  async function republishStore(silent) {
+    const catalog = {
+      shop: settings.businessName || 'My Shop', phone: settings.phone || '', email: settings.email || '',
+      address: [settings.address, settings.city].filter(Boolean).join(', '),
+      tagline: settings.storeTagline || settings.businessDesc || '', wa: settings.storeWhatsapp || settings.phone || '',
+      color: settings.invoiceColor || '#EF1A3C',
+      links: (settings.storeLinks || []).map(l => ({ label: l.label, url: l.url })),
+      currency: settings.currency || 'PKR',
+      items: products.map(p => ({ name: p.name, price: p.price, unit: p.unit || '', category: p.category || '', stock: p.stock })).slice(0, 150)
+    };
+    const h = await packCatalog(catalog);
+    if (silent && h === settings._storeHash) return catalog.items.length;
+    catalog.updatedAt = new Date().toISOString();
+    try { localStorage.setItem('billaura_public_store', JSON.stringify(catalog)); } catch (e) {}
+    if (h !== settings._storeHash) { settings._storeHash = h; persist(); }
+    return catalog.items.length;
+  }
   async function packCatalog(c) {
     const compact = { n: c.shop, p: c.phone, e: c.email, a: c.address, c: c.currency, t: c.tagline, w: c.wa, k: c.color, l: (c.links || []).map(l => [l.label, l.url]), i: c.items.map(x => [x.name, x.price, x.unit, x.category, x.stock]) };
     const json = JSON.stringify(compact);
@@ -5832,17 +5856,7 @@
         break;
       }
       case 'publish-store-page': {
-        const catalog = {
-          shop: settings.businessName || 'My Shop', phone: settings.phone || '', email: settings.email || '',
-          address: [settings.address, settings.city].filter(Boolean).join(', '),
-          tagline: settings.storeTagline || settings.businessDesc || '', wa: settings.storeWhatsapp || settings.phone || '',
-          color: settings.invoiceColor || '#EF1A3C',
-          links: (settings.storeLinks || []).map(l => ({ label: l.label, url: l.url })),
-          currency: settings.currency || 'PKR', updatedAt: new Date().toISOString(),
-          items: products.map(p => ({ name: p.name, price: p.price, unit: p.unit || '', category: p.category || '', stock: p.stock })).slice(0, 150)
-        };
-        localStorage.setItem('billaura_public_store', JSON.stringify(catalog));
-        packCatalog(catalog).then(h => { settings._storeHash = h; persist(); toast('Store published (' + catalog.items.length + ' items). Share the link on WhatsApp.'); render(); }).catch(() => toast('Could not publish'));
+        republishStore(false).then(n => { toast('Store published (' + n + ' items). Share the link on WhatsApp.'); render(); }).catch(() => toast('Could not publish'));
         break;
       }
       case 'store-edit-info': openStoreInfoModal(); break;
@@ -5858,14 +5872,16 @@
         persist(); closeModal(); render(); toast('Link saved. Tap Update Store Page to publish.'); break;
       }
       case 'store-del-link': if (await askConfirm('Delete this link?')) { settings.storeLinks = (settings.storeLinks || []).filter(x => x.id !== (id || t.dataset.id)); persist(); render(); } break;
-      case 'copy-store-link': { const u = storeUrl(); (navigator.clipboard ? navigator.clipboard.writeText(u) : Promise.reject()).then(() => toast('Link copied'), () => { askPrompt('Copy this link', u); }); break; }
+      case 'copy-store-link': { await republishStore(true).catch(() => {}); const u = storeUrl(); (navigator.clipboard ? navigator.clipboard.writeText(u) : Promise.reject()).then(() => toast('Link copied'), () => { askPrompt('Copy this link', u); }); break; }
       case 'open-store-page': {
+        await republishStore(true).catch(() => {});
         let u = new URL('store.html', location.href).href;
         if (settings._storeHash) u += '#' + (/^[zj]=/.test(settings._storeHash) ? settings._storeHash : 'c=' + settings._storeHash);
         window.open(u, '_blank');
         break;
       }
       case 'share-store-link': {
+        await republishStore(true).catch(() => {});
         let u = new URL('store.html', location.href).href;
         if (settings._storeHash) u += '#' + (/^[zj]=/.test(settings._storeHash) ? settings._storeHash : 'c=' + settings._storeHash);
         else {
@@ -6659,9 +6675,18 @@
     }
   });
 
+  let _lastGuardHit = 0;
   window.addEventListener('popstate', (e) => {
     if (!document.getElementById('app') || document.getElementById('app').hidden) return;
     const st = e.state;
+    if (st && st.guard) {
+      if (Date.now() - _lastGuardHit < 2200) { _lastGuardHit = 0; history.back(); return; }
+      _lastGuardHit = Date.now();
+      try { history.pushState({ v: 'home', n: 0 }, '', '#home'); } catch (x) {}
+      if (currentView !== 'home') { viewStack = []; setView('home', { _pop: true, keepHistory: true }); }
+      toast('Press back again to exit', 2000);
+      return;
+    }
     const mr = document.getElementById('modalRoot');
     if (mr && mr.innerHTML.trim()) { closeModal(); try { history.pushState({ v: currentView, n: (st && st.n || 0) + 1 }, '', '#' + currentView); } catch (x) {} return; }
     const v = (st && st.v) || 'home';
@@ -6910,7 +6935,11 @@
   // ---------- Auth gate + freemium ----------
   function hideBoot() {
     const boot = document.getElementById('bootScreen');
-    if (boot) boot.hidden = true;
+    if (!boot || boot.dataset.hiding) return;
+    boot.dataset.hiding = '1';
+    // keep the splash visible for a moment so the Billaura name registers, then fade it out
+    const wait = Math.max(0, 1100 - (window.performance ? performance.now() : 1100));
+    setTimeout(() => { boot.classList.add('out'); setTimeout(() => { boot.hidden = true; }, 350); }, wait);
   }
   function showAuth() {
     hideBoot();
@@ -7427,6 +7456,7 @@
       const ok = h && !['create-invoice', 'daybook-detail', 'bank-ledger', 'pos', 'auth'].includes(h);
       setView(ok ? h : 'home', { replace: true }); }
     viewStack = [];
+    if (settings._storeHash) republishStore(true).catch(() => {});
     initCloudAutoSync();
     maybeAutoBackup();
     startPlanHeartbeat();

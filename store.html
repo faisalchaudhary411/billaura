@@ -10,13 +10,13 @@
   :root { --brand:#EF1A3C; --bg:#F4F6FB; --text:#1B2133; --muted:#6B7287; --card:#fff; --border:#E5E8F0; }
   * { box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
   body { font-family:Roboto,Arial,Helvetica,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); min-height:100vh; padding-bottom:90px; }
-  .hero { background:var(--brand); color:#fff; padding:30px 20px 56px; text-align:center; position:relative; }
+  .hero { background:var(--brand); color:#fff; padding:30px 20px 64px; text-align:center; position:relative; }
   .hero::after { content:""; position:absolute; left:0; right:0; bottom:-1px; height:28px; background:var(--bg); border-radius:28px 28px 0 0; }
   .av { width:76px; height:76px; border-radius:50%; background:#fff; color:var(--brand); font-size:2rem; font-weight:800; display:flex; align-items:center; justify-content:center; margin:0 auto 12px; box-shadow:0 6px 18px rgba(0,0,0,.2); }
   .hero h1 { font-size:1.45rem; font-weight:800; }
   .hero p { opacity:.92; font-size:.9rem; margin-top:4px; }
   .wrap { max-width:720px; margin:0 auto; padding:0 16px; }
-  .acts { display:flex; gap:10px; margin:-6px 0 14px; }
+  .acts { display:flex; gap:10px; margin:0 0 14px; position:relative; z-index:2; }
   .act { flex:1; display:flex; align-items:center; justify-content:center; gap:6px; background:#fff; border:1px solid var(--border); border-radius:12px; padding:11px 6px; font-size:.85rem; font-weight:700; color:var(--text); text-decoration:none; box-shadow:0 1px 3px rgba(0,0,0,.04); }
   .act.wa { background:#25D366; border-color:#25D366; color:#fff; }
   .links { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
