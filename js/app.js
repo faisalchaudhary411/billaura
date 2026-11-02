@@ -502,8 +502,8 @@
     }
     closeModal();
     if (isStaff()) {
-      if (!STAFF_VIEWS.includes(view)) { toast('Only the owner can open that'); view = 'dashboard'; }
-      if (view === 'create-invoice' && docCtx.type === 'purchase') docCtx = {};
+      const need = viewPerm(view, docCtx.type);
+      if (need && !can(need)) { toast('Your role does not allow that'); if (view === 'create-invoice') docCtx = {}; view = 'home'; }
     }
     if (!options.keepHistory && !options.replace) {
       if (currentView && currentView !== view) {
@@ -544,6 +544,7 @@
 
   // ---------- Render Router ----------
   function render() {
+    try { applyNavPerms(); } catch (e) {}
     const content = $('#appContent');
     const title = $('#headerTitle');
     const right = $('#headerRight');
@@ -559,7 +560,7 @@
       dashboard: () => { title.textContent = 'Dashboard'; content.innerHTML = viewDashboard(); },
       products: () => {
         title.textContent = 'Items';
-        if (!isStaff()) right.innerHTML = `<button class="btn btn-outline btn-sm" data-action="bulk-tools" style="margin-right:8px">Bulk</button><button class="icon-btn" data-action="add-product" aria-label="Add"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`;
+        if (can('items_edit')) right.innerHTML = `<button class="btn btn-outline btn-sm" data-action="bulk-tools" style="margin-right:8px">Bulk</button><button class="icon-btn" data-action="add-product" aria-label="Add"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`;
         content.innerHTML = viewProducts();
       },
       invoices: () => { title.textContent = 'Transactions'; content.innerHTML = viewInvoices(); },
@@ -1084,6 +1085,52 @@
   const STAFF_NAME_KEY = 'billaura_staff_name_v1';
   function staffName() { try { return sessionStorage.getItem(STAFF_NAME_KEY) || 'Staff'; } catch (e) { return 'Staff'; } }
   function isStaff() { return lockEnabled() && getRole() === 'staff'; }
+  // Roles: what each kind of staff member may do. The owner (owner PIN) can always do everything.
+  const PERMS = [
+    ['sales', 'Create sales & quotations'], ['returns', 'Sale returns'], ['receive_payment', 'Receive payments'],
+    ['discount', 'Change price, discount & tax on a bill'], ['delete', 'Delete transactions & items'],
+    ['items_view', 'View items & stock'], ['items_edit', 'Add / edit items & stock'], ['parties', 'Customers & suppliers'],
+    ['purchases', 'Purchases'], ['expenses', 'Expenses'], ['reports', 'Reports & dashboard'],
+    ['banks', 'Bank, cash & loans'], ['export', 'Backup & export'], ['settings', 'Business settings']
+  ];
+  const ROLES = {
+    manager: { name: 'Manager', hint: 'Everything except business settings', perms: PERMS.map(x => x[0]).filter(x => x !== 'settings') },
+    accountant: { name: 'Accountant', hint: 'Payments, expenses, bank, reports, export', perms: ['receive_payment', 'items_view', 'parties', 'purchases', 'expenses', 'reports', 'banks', 'export'] },
+    cashier: { name: 'Cashier', hint: 'Sales, receive payments, customers', perms: ['sales', 'receive_payment', 'items_view', 'parties'] },
+    salesperson: { name: 'Salesperson', hint: 'Sales and quotations only', perms: ['sales', 'items_view', 'parties'] },
+    storekeeper: { name: 'Storekeeper', hint: 'Items, stock and purchases', perms: ['items_view', 'items_edit', 'purchases'] },
+    custom: { name: 'Custom', hint: 'Choose each permission yourself', perms: [] }
+  };
+  const STAFF_ID_KEY = 'billaura_staff_id_v1';
+  function currentStaff() { try { const id = sessionStorage.getItem(STAFF_ID_KEY); return staffList().find(x => x.id === id) || null; } catch (e) { return null; } }
+  function staffPerms() { const sf = currentStaff(); if (!sf) return ROLES.cashier.perms; return Array.isArray(sf.perms) ? sf.perms : (ROLES[sf.role] || ROLES.cashier).perms; }
+  function can(p) { return !isStaff() || staffPerms().includes(p); }
+  // which permission opens a screen ('owner' = owner only, null = always allowed)
+  function viewPerm(view, type) {
+    const m = { home: null, more: null, dashboard: 'reports', products: 'items_view', invoices: 'sales', customers: 'parties', 'stock-summary': 'items_view', 'low-stock': 'items_view',
+      purchases: 'purchases', suppliers: 'purchases', expenses: 'expenses', 'sale-report': 'reports', 'profit-loss': 'reports', 'party-pl': 'reports', 'item-pl': 'reports', 'trial-balance': 'reports', 'balance-sheet': 'reports', 'bill-pnl': 'reports', 'daybook-detail': 'reports',
+      banks: 'banks', 'bank-ledger': 'banks', 'cash-in-hand': 'banks', loans: 'banks', 'other-income': 'banks', cheques: 'banks', 'payments-in': 'receive_payment', 'payments-out': 'banks',
+      'barcode-gen': 'items_edit', 'stock-adjust': 'items_edit', reminders: 'parties', 'payment-reminders': 'receive_payment', 'service-reminders': 'parties', pos: 'sales', recycle: 'delete' };
+    if (view === 'create-invoice') return type === 'purchase' ? 'purchases' : type === 'return' ? 'returns' : 'sales';
+    if (view === 'app-lock' || view === 'account') return 'owner';
+    return view in m ? m[view] : 'settings';
+  }
+  function actionPerm(action) {
+    if (/^(delete-|recycle|restore-|purge-)/.test(action)) return 'delete';
+    if (/^(add-product|edit-product|stock-|bulk-|import-items|adjust-stock|gen-barcode|lb-|pm-)/.test(action)) return 'items_edit';
+    if (/^(add-expense|edit-expense|save-expense)/.test(action)) return 'expenses';
+    if (/^(new-purchase|view-purchase|purchase-|pay-supplier|add-supplier|edit-supplier)/.test(action)) return 'purchases';
+    if (/^(add-bank|bank-|add-loan|loan-|add-other-income|cash-adjust|cheque)/.test(action)) return 'banks';
+    if (/^(receive-payment|quick-receive|record-payment|mark-paid|submit-payment|remind-|rq-)/.test(action)) return 'receive_payment';
+    if (action === 'pay-in') return 'receive_payment';
+    if (action === 'pay-out') return 'purchases';
+    if (/^(new-return|return-from-invoice)/.test(action)) return 'returns';
+    if (/^(duplicate-invoice|convert-estimate|delivery-note|new-estimate)/.test(action)) return 'sales';
+    if (/^(export-data|import-data|csv-|open-csv|backup-)/.test(action)) return 'export';
+    if (/^(pin-|staff-|cloud-auth|sign-out-user|clear-data|db-)/.test(action)) return 'owner';
+    if (STAFF_BLOCK.test(action)) return 'settings';
+    return null;
+  }
   async function pinHash(pin) {
     const str = `${settings.pinSalt || ''}:${pin}`;
     try {
@@ -1127,7 +1174,7 @@
     if (Date.now() < _pinWaitUntil) { renderLock(el, '', `Too many tries. Wait ${Math.ceil((_pinWaitUntil - Date.now()) / 1000)}s`); return; }
     const h = await pinHash(entered);
     if (h === settings.pinHash) { _pinFails = 0; setRole('owner'); hideLock(); render(); return; }
-    { const sf = staffList().find(x => x.hash === h); if (sf) { _pinFails = 0; setRole('staff'); try { sessionStorage.setItem(STAFF_NAME_KEY, sf.name); } catch (e) {} hideLock(); setView('dashboard'); return; } }
+    { const sf = staffList().find(x => x.hash === h); if (sf) { _pinFails = 0; setRole('staff'); try { sessionStorage.setItem(STAFF_NAME_KEY, sf.name); sessionStorage.setItem(STAFF_ID_KEY, sf.id); } catch (e) {} hideLock(); setView(can('reports') ? 'dashboard' : 'home'); applyNavPerms(); return; } }
     _pinFails++;
     if (_pinFails >= 5) { _pinWaitUntil = Date.now() + 30000; _pinFails = 0; }
     const box = el.querySelector('.lock-box'); if (box) box.classList.add('shake');
@@ -1152,17 +1199,40 @@
       catch (e) { toast('Wrong password'); rb.disabled = false; }
     });
   }
+  function chooseRole(cur) {
+    return new Promise(res => { let done = false;
+      pickSheet({ title: 'Staff role', search: false, selected: cur, options: Object.keys(ROLES).map(k => ({ value: k, label: ROLES[k].name + ' – ' + ROLES[k].hint })),
+        onPick: v => { done = true; res(v); } });
+      const back = document.getElementById('pickSheet');
+      if (back) new MutationObserver(() => { if (!document.getElementById('pickSheet') && !done) { done = true; res(null); } }).observe(document.body, { childList: true });
+    });
+  }
+  function openStaffPerms(id) {
+    const sf = staffList().find(x => x.id === id); if (!sf) return;
+    const cur = new Set(Array.isArray(sf.perms) ? sf.perms : (ROLES[sf.role] || ROLES.cashier).perms);
+    const draw = () => { $('#modalRoot').innerHTML = modalShell('Role & permissions – ' + escapeHtml(sf.name), `
+      <div class="chip-row" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">${Object.keys(ROLES).filter(k => k !== 'custom').map(k => `<button type="button" class="chip-btn" data-role="${k}" style="${sf.role === k ? 'background:var(--primary);color:#fff' : ''}">${ROLES[k].name}</button>`).join('')}</div>
+      <div class="text-sm text-secondary" style="margin-bottom:8px">Pick a role, or tick exactly what this person may do.</div>
+      ${PERMS.map(x => `<label style="display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><input type="checkbox" data-perm="${x[0]}" ${cur.has(x[0]) ? 'checked' : ''}> <span>${x[1]}</span></label>`).join('')}
+      <div style="display:flex;gap:8px;margin-top:14px"><button type="button" class="btn btn-primary" style="flex:1" id="spSave">Save</button></div>`);
+      document.querySelectorAll('#modalRoot [data-role]').forEach(b => b.onclick = () => { sf.role = b.dataset.role; cur.clear(); ROLES[sf.role].perms.forEach(x => cur.add(x)); draw(); });
+      document.querySelectorAll('#modalRoot [data-perm]').forEach(c => c.onchange = () => { c.checked ? cur.add(c.dataset.perm) : cur.delete(c.dataset.perm); sf.role = 'custom'; });
+      document.getElementById('spSave').onclick = () => { sf.perms = [...cur]; persist(); closeModal(); toast('Permissions saved'); if (currentView === 'app-lock') render(); };
+    };
+    draw();
+  }
   async function openPinModal(kind, staffId) {
     const staff = kind === 'staff';
     if (!window.HisablyFreemium || !HisablyFreemium.hasFeature('passcode')) { toast('PIN lock and staff mode are Pro features.', 4500); openPlansModal && openPlansModal(); return; }
     if (staff && !settings.pinHash) { toast('Set the owner PIN first'); return; }
     let sf = staff && staffId ? staffList().find(x => x.id === staffId) : null;
-    let sname = sf ? sf.name : '';
+    let sname = sf ? sf.name : ''; let newRole = '';
     if (staff && !sf) {
       sname = ((await askPrompt('Staff member name (shown on the bills they make)', '', { title: 'Add staff user' })) || '').trim();
       if (!sname) return;
+      newRole = await chooseRole('cashier'); if (!newRole) return;
     }
-    let stage = 1, first = '';
+    let stage = 1, first = '', nid = '';
     const draw = (entered, msg) => {
       const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'];
       $('#modalRoot').innerHTML = `<div class="lock-screen pin-setup"><div class="lock-box">
@@ -1170,7 +1240,7 @@
         <div class="lock-sub">${escapeHtml(msg || (stage === 1 ? 'Choose a 4-digit PIN' : 'Repeat the PIN to confirm'))}</div>
         <div class="lock-dots">${[0, 1, 2, 3].map(i => `<span class="${i < entered.length ? 'on' : ''}"></span>`).join('')}</div>
         <div class="lock-pad">${keys.map(k => k === '' ? '<span></span>' : `<button type="button" data-k="${k}">${k}</button>`).join('')}</div>
-        <div class="lock-sub" style="font-size:.78rem;margin-top:10px">${staff ? 'Staff can sell, quote, take returns and receive payments only.' : 'The owner PIN opens everything.'}</div>
+        <div class="lock-sub" style="font-size:.78rem;margin-top:10px">${staff ? 'Staff only get the permissions of their role.' : 'The owner PIN opens everything.'}</div>
         <button type="button" class="lock-link" data-pin-cancel>Cancel</button></div></div>`;
       document.querySelector('[data-pin-cancel]').onclick = () => closeModal();
       document.querySelectorAll('#modalRoot [data-k]').forEach(b => b.onclick = () => press(entered, b.dataset.k));
@@ -1187,9 +1257,10 @@
       const h = await pinHash(entered);
       const clash = (staff && h === settings.pinHash) ? 'owner' : staffList().find(x => x.hash === h && (!sf || x.id !== sf.id));
       if (clash) { stage = 1; first = ''; draw('', clash === 'owner' ? 'That is the owner PIN – pick another' : 'Used by ' + clash.name + ' – pick another'); return; }
-      if (staff) { if (sf) sf.hash = h; else staffList().push({ id: uid(), name: sname, hash: h }); }
+      if (staff) { if (sf) sf.hash = h; else { nid = uid(); staffList().push({ id: nid, name: sname, hash: h, role: newRole, perms: newRole === 'custom' ? [] : ROLES[newRole].perms.slice() }); } }
       else { settings.pinHash = h; setRole('owner'); }
       persist(); closeModal();
+      if (staff && nid && newRole === 'custom') { openStaffPerms(nid); return; }
       toast(staff ? sname + ' can now sign in with the PIN' : 'Owner PIN saved. The app will lock when you leave it.', 3500);
       if (currentView === 'app-lock') render(); else setView('app-lock');
     };
@@ -1205,12 +1276,12 @@
         ${pro ? '' : '<div class="text-sm" style="color:#B45309;margin-top:8px">PIN lock and staff mode need the Pro or Lifetime plan.</div>'}</div>
       <div class="list-group">
         ${row(on ? 'Change owner PIN' : 'Set owner PIN', 'data-action="pin-set-owner"')}
-        ${on ? staffList().map(x => `<div class="list-row" style="cursor:default"><div class="list-row-left"><div><div class="list-row-label">👤 ${escapeHtml(x.name)}</div><div class="list-row-sub">Staff user</div></div></div><div class="list-row-right" style="display:flex;gap:6px"><button class="chip-btn" data-action="staff-edit" data-id="${x.id}">Change PIN</button><button class="chip-btn" style="color:#E11D48" data-action="staff-del" data-id="${x.id}">Remove</button></div></div>`).join('') : ''}
+        ${on ? staffList().map(x => `<div class="list-row" style="cursor:default"><div class="list-row-left"><div><div class="list-row-label">👤 ${escapeHtml(x.name)}</div><div class="list-row-sub">${escapeHtml((ROLES[x.role] || ROLES.cashier).name)}</div></div></div><div class="list-row-right" style="display:flex;gap:6px"><button class="chip-btn" data-action="staff-perms" data-id="${x.id}">Role</button><button class="chip-btn" data-action="staff-edit" data-id="${x.id}">Change PIN</button><button class="chip-btn" style="color:#E11D48" data-action="staff-del" data-id="${x.id}">Remove</button></div></div>`).join('') : ''}
         ${on ? row('+ Add staff user', 'data-action="pin-set-staff"') : ''}
         ${on ? row('Lock app now', 'data-action="lock-now"') : ''}
         ${on ? row('Remove PIN lock', 'data-action="pin-remove"', true) : ''}
       </div>
-      <div class="text-sm text-secondary" style="padding:14px 16px;line-height:1.6"><b>Staff can:</b> make sales, quotations and returns, receive payments.<br><b>Staff cannot:</b> see profit, costs, reports or settings, or delete anything.<br>Forgot the PIN? Sign in to your cloud account to reset it.</div>
+      <div class="text-sm text-secondary" style="padding:14px 16px;line-height:1.6">Each staff user has a role (Manager, Accountant, Cashier, Salesperson, Storekeeper or Custom) that decides which screens and actions they can use. Tap <b>Role</b> to change it. Only the owner can change settings and PINs.<br>Forgot the PIN? Sign in to your cloud account to reset it.</div>
     </div>`;
   }
   function themePickerHTML() {
@@ -1239,13 +1310,28 @@
       </div></div>`;
   }
   function staffMoreHTML() {
+    const sf = currentStaff();
+    const item = (label, attr) => `<button class="menu-item" ${attr}>${label}<svg class="menu-item-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></button>`;
+    const rows = [];
+    if (can('parties')) rows.push(item('Customers', 'data-view="customers"'));
+    if (can('purchases')) rows.push(item('Purchases & suppliers', 'data-view="purchases"'));
+    if (can('expenses')) rows.push(item('Expenses', 'data-view="expenses"'));
+    if (can('receive_payment')) rows.push(item('Payment reminders', 'data-view="payment-reminders"'));
+    if (can('reports')) { rows.push(item('Sale report', 'data-view="sale-report"')); rows.push(item('Day book', 'data-view="daybook-detail"')); rows.push(item('Profit & loss', 'data-view="profit-loss"')); }
+    if (can('banks')) rows.push(item('Bank accounts', 'data-view="banks"'));
+    if (can('items_view')) rows.push(item('Low stock', 'data-view="low-stock"'));
+    if (can('items_edit')) rows.push(item('Barcode labels', 'data-view="barcode-gen"'));
+    if (can('export')) rows.push(item('Backup to phone', 'data-action="export-data"'));
+    rows.push(item('Sync now', 'data-action="cloud-sync"'), item('Lock app / switch user', 'data-action="lock-now"'));
     return `<div class="fade-in">
-      <div class="card mb-16"><div class="text-sm text-secondary">Signed in as</div><div class="font-semibold" style="font-size:1.0625rem">Staff</div></div>
-      <div class="menu-list mb-16">
-        <button class="menu-item" data-view="customers">Customers<svg class="menu-item-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></button>
-        <button class="menu-item" data-action="cloud-sync">Sync now<svg class="menu-item-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></button>
-        <button class="menu-item" data-action="lock-now">Lock app<svg class="menu-item-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></button>
-      </div></div>`;
+      <div class="card mb-16"><div class="text-sm text-secondary">Signed in as</div><div class="font-semibold" style="font-size:1.0625rem">${escapeHtml(sf ? sf.name : 'Staff')}</div><div class="text-sm text-secondary">${escapeHtml((ROLES[(sf && sf.role) || 'cashier'] || ROLES.cashier).name)}</div></div>
+      <div class="menu-list mb-16">${rows.join('')}</div></div>`;
+  }
+  function applyNavPerms() {
+    document.querySelectorAll('.bottom-nav .nav-item').forEach(n => {
+      const v = n.dataset.view; const need = v ? viewPerm(v) : null;
+      n.style.display = (isStaff() && need && !can(need)) ? 'none' : '';
+    });
   }
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) { _lastHidden = Date.now(); return; }
@@ -1580,9 +1666,6 @@
           ${(!isPur && settings.enableBillingName) ? '<div class="pm-f"><span class="pm-fl">Billing name (printed on invoice)</span><input type="text" name="billingName" /></div>' : ''}
           ${(!isPur && !isRet && settings.enablePODetails) ? '<div class="pm-f"><span class="pm-fl">PO number</span><input type="text" name="poNo" /></div><div class="pm-f"><span class="pm-fl">PO date</span><input type="date" name="poDate" /></div>' : ''}
         </div>
-          ${(!isPur && settings.enableBillingName) ? '<input type="text" class="form-input mt-8" name="billingName" placeholder="Billing name (printed on invoice)" />' : ''}
-          ${(!isPur && !isRet && settings.enablePODetails) ? '<div class="form-row mt-8"><input type="text" class="form-input" name="poNo" placeholder="PO number" /><input type="date" class="form-input" name="poDate" /></div>' : ''}
-        </div>
 
         <div class="doc-card">
           <div class="doc-card-head">
@@ -1700,7 +1783,7 @@
               <button type="button" class="line-x" data-del="${i}" aria-label="Remove">✕</button></div>
             <div class="line-grid">
               <div class="qty-control"><button type="button" class="qty-btn" data-q="-1" data-i="${i}">−</button><span class="qty-value">${l.qty}</span><button type="button" class="qty-btn" data-q="1" data-i="${i}">+</button></div>
-              <div class="line-rate"><span>×</span><input type="number" inputmode="decimal" min="0" step="any" data-rate="${i}" value="${l.price}"${isStaff() ? ' readonly' : ''} /></div>
+              <div class="line-rate"><span>×</span><input type="number" inputmode="decimal" min="0" step="any" data-rate="${i}" value="${l.price}"${!can('discount') ? ' readonly' : ''} /></div>
               <div class="line-amt" id="la-${i}">${cur} ${money(l.price * l.qty)}</div>
             </div>
           </div>`;
@@ -1808,7 +1891,7 @@
     }));
     { const mb = document.getElementById('modeBtn'); if (mb) mb.addEventListener('click', () => pickSheet({ title: 'Payment Type', options: PAY_MODES, selected: st.mode, onPick: v => { st.mode = v; document.getElementById('modeTxt').textContent = v; } })); }
 
-    if (isStaff()) ['discIn', 'taxIn', 'chIn', 'chLabel', 'roundIn'].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = true; });
+    if (!can('discount')) ['discIn', 'taxIn', 'chIn', 'chLabel', 'roundIn'].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = true; });
     document.getElementById('addItemsBtn').addEventListener('click', () => openItemPicker(lines, addProduct, (isEst || isPur) ? (() => true) : isRet ? (ref ? (p => (refQty[p.id] || 0) > 0) : (() => true)) : null));
     // prefill from the invoice being returned
     if (isRet && ref) {
@@ -3225,7 +3308,7 @@
       const out = low.filter(p => (Number(p.stock) || 0) <= 0).length;
       h += `<div class="home-alert warn"><div class="ha-t"><b>${low.length} item${low.length === 1 ? '' : 's'} low on stock</b><span>${out ? out + ' out of stock · ' : ''}${escapeHtml(low.slice(0, 2).map(p => p.name).join(', '))}${low.length > 2 ? '…' : ''}</span></div><button data-view="low-stock">View</button><button class="x" data-action="dismiss-low" aria-label="Dismiss">✕</button></div>`;
     }
-    if (!isStaff() && new Date().getHours() >= 19 && settings.summarySentOn !== today && settings.summaryPrompt !== false && invoices.some(i => new Date(i.date).toISOString().slice(0, 10) === today)) {
+    if (can('reports') && !isStaff() && new Date().getHours() >= 19 && settings.summarySentOn !== today && settings.summaryPrompt !== false && invoices.some(i => new Date(i.date).toISOString().slice(0, 10) === today)) {
       h += `<div class="home-alert info"><div class="ha-t"><b>Today's summary is ready</b><span>Send your sales report on WhatsApp</span></div><button data-action="send-daily-summary">Send</button><button class="x" data-action="dismiss-summary" aria-label="Dismiss">✕</button></div>`;
     }
     return h;
@@ -5316,7 +5399,7 @@
     const tabs = `<div class="vy-tabs"><button class="vy-tab ${homeTab === 'txn' ? 'active' : ''}" data-action="home-tab" data-tab="txn">Transaction Details</button><button class="vy-tab ${homeTab === 'party' ? 'active' : ''}" data-action="home-tab" data-tab="party">Party Details</button></div>`;
     const ql = (ic, label, attr, red) => `<button class="ql" ${attr}><div class="ql-ic ${red ? 'red' : ''}">${ico(ic)}</div><span>${label}</span></button>`;
     const quick = `<div class="vy-card"><h3>Quick Links</h3><div class="quick-links">
-      ${ql('receipt', 'Add Txn', 'data-action="sheet-add-txn"', true)}${ql('report', 'Sale Report', 'data-view="sale-report"')}${ql('gear', 'Txn Settings', 'data-view="txn-settings"')}${ql('chevR', 'Show All', 'data-action="sheet-more"')}</div></div>`;
+      ${ql('receipt', 'Add Txn', 'data-action="sheet-add-txn"', true)}${can('reports') ? ql('report', 'Sale Report', 'data-view="sale-report"') : ''}${can('settings') ? ql('gear', 'Txn Settings', 'data-view="txn-settings"') : ''}${ql('chevR', 'Show All', 'data-action="sheet-more"')}</div></div>`;
     let body = '';
     if (homeTab === 'txn') {
       const list = allTxns().filter(t => !q || t.name.toLowerCase().includes(q) || String(t.no).toLowerCase().includes(q)).slice(0, 60);
@@ -5353,7 +5436,14 @@
     $('#modalRoot').innerHTML = `<div class="modal-overlay"><div class="modal-sheet"><div class="modal-handle"></div>
       <div class="modal-header" style="margin:0"><h3 class="sheet-title" style="border:0;padding:0">${title}</h3><button class="modal-close" data-action="close-modal">${X_ICON}</button></div>${inner}</div></div>`;
   }
-  function sheetItem(ic, label, attr, crown) { return `<button class="ql" ${attr}><div class="ql-ic">${ico(ic)}${crown ? `<span class="crown">${ico('crown')}</span>` : ''}</div><span>${label}</span></button>`; }
+  function attrAllowed(attr) {
+    if (!isStaff()) return true;
+    let m = /data-view="([^"]+)"/.exec(attr || ''), need;
+    if (m) need = viewPerm(m[1], m[1] === 'create-invoice' ? 'sale' : undefined);
+    else if ((m = /data-action="([^"]+)"/.exec(attr || ''))) need = m[1] === 'sheet-more' ? null : actionPerm(m[1]);
+    return !need || can(need);
+  }
+  function sheetItem(ic, label, attr, crown) { if (!attrAllowed(attr)) return ''; return `<button class="ql" ${attr}><div class="ql-ic">${ico(ic)}${crown ? `<span class="crown">${ico('crown')}</span>` : ''}</div><span>${label}</span></button>`; }
   function openAddTxnSheet() {
     sheet(`<div class="sheet-grid">${sheetItem('sale', 'Sale', 'data-view="create-invoice"')}${sheetItem('cart', 'Purchase', 'data-action="new-purchase"')}
       ${sheetItem('cash', 'Payment-In', 'data-action="pay-in"')}${sheetItem('wallet', 'Payment-Out', 'data-action="pay-out"')}
@@ -5685,7 +5775,7 @@
     const action = t.dataset.action;
     const view = t.dataset.view || (t.classList.contains('nav-item') ? t.dataset.view : null);
     const id = t.dataset.id;
-    if (isStaff() && action && STAFF_BLOCK.test(action)) { toast('Only the owner can do that'); return; }
+    if (isStaff() && action) { const need = actionPerm(action); if (need && !can(need)) { toast('Your role does not allow that'); return; } }
 
     if (view) {
       setView(view);
@@ -6155,6 +6245,7 @@
       }
       case 'pin-set-owner': openPinModal('owner'); break;
       case 'pin-set-staff': openPinModal('staff'); break;
+      case 'staff-perms': openStaffPerms(id); break;
       case 'staff-edit': openPinModal('staff', id); break;
       case 'staff-del': { const x = staffList().find(y => y.id === id); if (x && await askConfirm('Remove ' + x.name + '? They will no longer be able to sign in.', { okText: 'Remove', danger: true })) { settings.staff = staffList().filter(y => y.id !== id); persist(); render(); } break; }
       case 'pin-remove':
@@ -7068,8 +7159,8 @@
     if (!boot || boot.dataset.hiding) return;
     boot.dataset.hiding = '1';
     // keep the splash visible for a moment so the Billaura name registers, then fade it out
-    const wait = Math.max(0, 1100 - (window.performance ? performance.now() : 1100));
-    setTimeout(() => { boot.classList.add('out'); setTimeout(() => { boot.hidden = true; }, 350); }, wait);
+    const wait = 0;
+    setTimeout(() => { boot.classList.add('out'); setTimeout(() => { boot.hidden = true; }, 220); }, wait);
   }
   function showAuth() {
     hideBoot();

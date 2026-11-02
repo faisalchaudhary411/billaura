@@ -54,3 +54,6 @@ All browser popups (alert/confirm/prompt), dropdowns, date pickers, suggestion l
 
 ## v9
 Barcode label printing (offline Code 128), low-stock and daily-summary alerts on Home, send-all payment reminders with statements, multiple staff users with their own PINs, floating-label Sale fields, download PDF/Image in the transaction menu.
+
+## Staff roles
+Owner PIN opens everything. Each staff user gets a role — Manager, Accountant, Cashier, Salesperson, Storekeeper or Custom — that controls which screens, menu items and actions they can use (App Lock → Role). Settings, PINs and account stay owner-only.

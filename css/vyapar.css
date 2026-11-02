@@ -514,3 +514,9 @@ select, input, textarea, button { -webkit-tap-highlight-color: transparent; }
 .pm-f.pm-sel .custom-select { flex: 1; min-width: 0; } .pm-f.pm-sel .custom-select-trigger { border: 0; background: transparent; padding: 0; height: 100%; box-shadow: none; }
 .pm-f .date-enh, .pm-f .sel-enh { border: 0; padding: 0; flex: 1; background: transparent; height: 100%; }
 .doc-card .pm-f { margin-bottom: 0; }
+
+/* Splash: same flat colour + icon + name as the phone's own launch screen, so the two read as one */
+.splash { background: #EF1A3C; transition: opacity .2s ease; }
+.splash-logo { width: 96px; height: 96px; border-radius: 22px; box-shadow: none; animation: none; }
+.splash-name { margin-top: 18px; font-size: 1.6rem; letter-spacing: .02em; animation: none; }
+.splash-tag, .splash-bar, .splash-msg, .splash-foot { display: none; }
