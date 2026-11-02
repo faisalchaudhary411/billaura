@@ -44,3 +44,10 @@ Browser localStorage. Use **Backup / Restore** regularly. Optional Supabase sync
 
 
 © 2026 Billaura. All rights reserved. See COPYRIGHT.txt.
+
+
+## v6 changes
+Category & payment-type sheets, Vyapar Sale screen (Credit/Cash switch, Share+Save), 7 new print themes, payment & service reminders, download PDF/Image buttons, flat-amount tax, no more periodic blink, fixed layout of sheets, brand logo on lock/sign-in.
+
+## v7
+All browser popups (alert/confirm/prompt), dropdowns, date pickers, suggestion lists and checkboxes now use the app's own styled controls (js/ui.js).

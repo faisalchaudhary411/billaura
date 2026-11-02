@@ -1,5 +1,5 @@
 /* Hisably service worker – offline app shell + cached libraries */
-const CACHE = 'billaura-v26';
+const CACHE = 'billaura-v29';
 
 const LOCAL_ASSETS = [
   './',
@@ -7,6 +7,7 @@ const LOCAL_ASSETS = [
   './css/styles.css',
   './js/receipt.js',
   './js/templates.js',
+  './js/ui.js',
   './css/vyapar.css',
   './js/app.js',
   './js/freemium.js',
@@ -78,18 +79,16 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // App files: stale-while-revalidate (instant/offline start, fresh copy for next open)
+  // App files: network-first (always the newest version when online), cache when offline
   e.respondWith(
-    caches.match(req, { ignoreSearch: true }).then((cached) => {
-      const network = fetch(req).then((res) => {
-        if (res && res.ok) {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(req, copy));
-        }
-        return res;
-      }).catch(() => cached || (req.mode === 'navigate' ? caches.match('./index.html') : undefined));
-      return cached || network;
-    })
+    fetch(req).then((res) => {
+      if (res && res.ok) {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(req, copy));
+      }
+      return res;
+    }).catch(() => caches.match(req, { ignoreSearch: true }).then((cached) =>
+      cached || (req.mode === 'navigate' ? caches.match('./index.html') : undefined)))
   );
 });
 

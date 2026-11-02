@@ -25,6 +25,9 @@
   };
   const OWNER_KEY = 'billaura_data_owner_v1';        // which account the local data belongs to
   const LEGACY_FLAG = 'sb_legacy_reset_pending';    // v1 -> v2 id migration needs a clean cloud
+  const askConfirm = (m, o) => BillauraUI.confirm(m, o);
+  const askPrompt = (m, d, o) => BillauraUI.prompt(m, d, o);
+  const askChoice = (m, l, o) => BillauraUI.choice(m, l, o);
   const SYNC_COLLECTIONS = ['products', 'customers', 'suppliers', 'invoices', 'expenses', 'stockMovements', 'purchases'];
   const DB_TABLE = { stockMovements: 'stock_movements' };
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -493,7 +496,8 @@
   let _histInit = false;
   function setView(view, options = {}) {
     if (settings.warnUnsaved && currentView === 'create-invoice' && view !== 'create-invoice' && !window._docSaved && window._docLines && window._docLines.length) {
-      if (!confirm('Discard this unsaved bill?')) return;
+      askConfirm('Discard this unsaved bill?', { title: 'Unsaved bill', okText: 'Discard', danger: true }).then(ok => { if (ok) { window._docSaved = true; setView(view, options); } });
+      return;
       window._docLines.length = 0;
     }
     closeModal();
@@ -525,7 +529,7 @@
       reports: 'more', expenses: 'more', purchases: 'more', daybook: 'more', 'stock-history': 'more',
       settings: 'more', 'business-profile': 'more',
       'txn-settings': 'more', 'print-settings': 'more', 'invoice-theme': 'more', account: 'more', 'app-lock': 'more', 'item-settings': 'more',
-      'party-settings': 'more', 'tax-settings': 'more', 'general-settings': 'more', 'cash-in-hand': 'more', 'daybook-detail': 'more', 'multi-currency': 'more', reminders: 'more', 'online-store': 'more', 'sale-report': 'more', 'profit-loss': 'more', 'trial-balance': 'more', 'stock-summary': 'more', 'low-stock': 'more', 'party-pl': 'more', 'item-pl': 'more', banks: 'more', 'bank-ledger': 'more', loans: 'more', 'other-income': 'more', 'barcode-gen': 'more', 'balance-sheet': 'more', pos: 'home', 'stock-adjust': 'more', 'payments-in': 'more', 'payments-out': 'more', cheques: 'more', sync: 'more', companies: 'more', verify: 'more', recycle: 'more', 'bill-pnl': 'more' };
+      'party-settings': 'more', 'tax-settings': 'more', 'general-settings': 'more', 'cash-in-hand': 'more', 'daybook-detail': 'more', 'multi-currency': 'more', reminders: 'more', 'payment-reminders': 'more', 'service-reminders': 'more', 'online-store': 'more', 'sale-report': 'more', 'profit-loss': 'more', 'trial-balance': 'more', 'stock-summary': 'more', 'low-stock': 'more', 'party-pl': 'more', 'item-pl': 'more', banks: 'more', 'bank-ledger': 'more', loans: 'more', 'other-income': 'more', 'barcode-gen': 'more', 'balance-sheet': 'more', pos: 'home', 'stock-adjust': 'more', 'payments-in': 'more', 'payments-out': 'more', cheques: 'more', sync: 'more', companies: 'more', verify: 'more', recycle: 'more', 'bill-pnl': 'more' };
     const activeNav = navMap[view] || view;
     $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.view === activeNav));
     const showBack = !['home','dashboard','products','more'].includes(view);
@@ -563,7 +567,7 @@
         right.innerHTML = `<button class="icon-btn" data-action="new-purchase"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`;
         content.innerHTML = viewPurchases();
       },
-      'create-invoice': () => { title.textContent = (docCtx.type === 'purchase' ? 'New Purchase' : docCtx.type === 'return' ? 'Sale Return' : docCtx.type === 'estimate' ? 'New Quotation' : 'New Invoice'); content.innerHTML = viewCreateInvoice(); bindCreateInvoice(); },
+      'create-invoice': () => { title.textContent = (docCtx.type === 'purchase' ? 'New Purchase' : docCtx.type === 'return' ? 'Sale Return' : docCtx.type === 'estimate' ? 'New Quotation' : 'Sale'); content.innerHTML = viewCreateInvoice(); bindCreateInvoice(); },
       more: () => { title.textContent = 'Menu'; content.innerHTML = viewMore(); },
       settings: () => { title.textContent = 'Settings'; content.innerHTML = viewSettings(); },
       'business-profile': () => { title.textContent = 'Business Profile'; content.innerHTML = viewBusinessProfile(); },
@@ -577,6 +581,8 @@
       'tax-settings': () => { title.textContent = 'Tax List'; content.innerHTML = viewTaxSettings(); },
       'general-settings': () => { title.textContent = 'General'; content.innerHTML = viewGeneralSettings(); },
       'multi-currency': () => { title.textContent = 'Multi-Currency'; content.innerHTML = viewMultiCurrency(); },
+      'payment-reminders': () => { title.textContent = 'Payment Reminders'; content.innerHTML = viewPaymentReminders(); },
+      'service-reminders': () => { title.textContent = 'Service Reminders'; content.innerHTML = viewServiceReminders(); },
       reminders: () => { title.textContent = 'Reminders'; content.innerHTML = viewReminders(); },
       'online-store': () => { title.textContent = 'Online Store'; content.innerHTML = viewOnlineStore(); },
       pos: () => { title.textContent = 'Quick Sale (POS)'; content.innerHTML = viewPOS(); bindPOS(); },
@@ -1091,7 +1097,7 @@
   function renderLock(el, entered, msg) {
     const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'];
     el.innerHTML = `<div class="lock-box">
-      <div class="logo-circle" style="margin:0 auto 12px">H</div>
+      <img src="assets/icon-192.png" alt="Billaura" class="brand-mark" width="64" height="64" />
       <div class="lock-title">${escapeHtml(settings.businessName || 'Billaura')}</div>
       <div class="lock-sub">${msg ? escapeHtml(msg) : 'Enter your PIN'}</div>
       <div class="lock-dots">${[0, 1, 2, 3].map(i => `<span class="${i < entered.length ? 'on' : ''}"></span>`).join('')}</div>
@@ -1493,12 +1499,13 @@
     const taxable = round2(sub - discount);
     const taxRate = Math.max(0, Number(o.taxRate) || 0);
     const inc = !!settings.enableInclusiveTax;
-    const tax = inc ? round2(taxable - taxable / (1 + taxRate / 100)) : round2(taxable * taxRate / 100);
+    const flat = o.taxType === 'amt';
+    const tax = flat ? round2(Math.min(taxRate, inc ? taxable : 1e12)) : inc ? round2(taxable - taxable / (1 + taxRate / 100)) : round2(taxable * taxRate / 100);
     const charges = round2(Math.max(0, Number(o.charges) || 0));
     const raw = inc ? taxable + charges : taxable + tax + charges;
     const total = o.roundOff ? Math.round(raw) : round2(raw);
     const roundOff = round2(total - raw);
-    return { sub, discount, taxable, taxRate, tax, charges, roundOff, total };
+    return { sub, discount, taxable, taxRate, tax, taxType: flat ? 'amt' : 'pct', charges, roundOff, total };
   }
   // Extra rows (discount/tax/charges/round-off) to show under the item list of a saved invoice
   function invExtraRows(inv) {
@@ -1507,7 +1514,7 @@
     const itemsSub = round2((inv.items || []).reduce((s, i) => s + (i.price || 0) * (i.qty || 0), 0));
     if (!(m.discount || m.tax || m.charges || m.roundOff)) return { sub: itemsSub, rows };
     if (m.discount) rows.push({ label: 'Discount' + (m.discType === 'pct' && m.discValue ? ` (${m.discValue}%)` : ''), amt: -m.discount });
-    if (m.tax) rows.push({ label: `${m.taxName || 'Tax'} (${m.taxRate}%)`, amt: m.tax });
+    if (m.tax) rows.push({ label: m.taxType === 'amt' ? (m.taxName || 'Tax') : `${m.taxName || 'Tax'} (${m.taxRate}%)`, amt: m.tax });
     if (m.charges) rows.push({ label: m.chargeLabel || 'Additional charges', amt: m.charges });
     if (m.roundOff) rows.push({ label: 'Round off', amt: m.roundOff });
     return { sub: itemsSub, rows };
@@ -1535,8 +1542,10 @@
       return { value: sp.id, label: sp.name + (sp.phone ? ' · ' + sp.phone : '') + (sb.due > 0 ? ` · You owe ${settings.currency} ${money(sb.due)}` : '') };
     })];
     const from = docCtx.from;
+    const isSaleDoc = !isPur && !isRet && !isEst;
     return `<div class="fade-in doc-form">
       <form id="invoiceForm" autocomplete="off">
+        ${isSaleDoc ? `<div class="vs-switch"><span id="vsCredit" class="on">Credit</span><button type="button" class="vs-tg" id="vsTg" aria-label="Cash or credit"><i></i></button><span id="vsCash">Cash</span></div>` : ''}
         <div class="doc-card doc-head">
           <div><div class="doc-label">${numLabel}</div><div class="doc-num">${escapeHtml(numText)}</div>${isRet && ref ? `<div class="text-sm text-secondary">Against ${escapeHtml(ref.number)}</div>` : ''}${from ? `<div class="text-sm text-secondary">From ${escapeHtml(from.number)}</div>` : ''}</div>
           <div class="doc-date"><div class="doc-label">Date</div><input type="date" class="doc-date-input" name="docDate" value="${today}" max="${today}" /></div>
@@ -1576,8 +1585,8 @@
             </span>
           </div>
           <div class="tot-row tot-input"${settings.enableTxnTax === false ? ' style="display:none"' : ''}>
-            <span>${settings.enableInclusiveTax ? 'Tax % (included)' : 'Tax %'}</span>
-            <span class="tot-ctl"><input type="number" inputmode="decimal" min="0" step="any" id="taxIn" placeholder="0" value="${(isRet && ref && ref.meta && ref.meta.taxRate) ? ref.meta.taxRate : (from && from.meta && from.meta.taxRate != null ? (from.meta.taxRate || '') : (settings.taxRate ? settings.taxRate : ''))}" /></span>
+            <span>${settings.enableInclusiveTax ? 'Tax (included)' : 'Tax'}</span>
+            <span class="tot-ctl"><span class="seg" id="taxSeg"><button type="button" data-tt="amt">${escapeHtml(cur)}</button><button type="button" data-tt="pct" class="on">%</button></span><input type="number" inputmode="decimal" min="0" step="any" id="taxIn" placeholder="0" value="${(isRet && ref && ref.meta && ref.meta.taxRate) ? ref.meta.taxRate : (from && from.meta && from.meta.taxRate != null ? (from.meta.taxRate || '') : (settings.taxRate ? settings.taxRate : ''))}" /></span>
           </div>
           <div class="tot-row tot-input">
             <span><input type="text" id="chLabel" class="tot-label-in" placeholder="Additional charges" maxlength="30" /></span>
@@ -1603,7 +1612,8 @@
         ${isPur ? '' : `<div class="doc-card"><label class="tot-row tot-check" style="margin:0"><span>Print “Received by / Delivered by”</span><input type="checkbox" name="rb" ${settings.printReceivedBy !== false ? 'checked' : ''} /></label></div>`}
         <div class="save-bar" id="saveBar">
           <div><div class="doc-label" style="margin:0">Total</div><div class="save-total" id="saveTotal">${escapeHtml(cur)} 0</div></div>
-          <button type="submit" class="btn btn-primary" id="createInvoiceBtn" disabled>${isPur ? 'Save Purchase' : isRet ? 'Save Return' : (isEst ? 'Save Quotation' : 'Save Invoice')}</button>
+          ${isSaleDoc ? '<button type="submit" class="btn btn-outline vs-share" id="shareSaveBtn" data-share="1" disabled>Share</button>' : ''}
+          <button type="submit" class="btn btn-primary" id="createInvoiceBtn" disabled>${isPur ? 'Save Purchase' : isRet ? 'Save Return' : (isEst ? 'Save Quotation' : 'Save')}</button>
         </div>
       </form>
     </div>`;
@@ -1619,7 +1629,7 @@
     const preLines = docCtx.posLines || null;
     docCtx = {};                              // consumed: next visit starts a normal invoice
     const lines = [];                         // { productId, name, price, cost, qty }
-    const st = { discType: 'amt', mode: 'Cash' };
+    const st = { discType: 'amt', taxType: 'pct', mode: 'Cash' };
     // most units of a product this document may contain
     const refQty = {};
     if (isRet && ref) {
@@ -1635,7 +1645,7 @@
 
     const val = id => { const el = document.getElementById(id); return el ? el.value : ''; };
     function opts() {
-      return { discType: st.discType, discValue: val('discIn'), taxRate: val('taxIn'),
+      return { discType: st.discType, discValue: val('discIn'), taxRate: val('taxIn'), taxType: st.taxType,
                charges: val('chIn'), roundOff: !!document.getElementById('roundIn')?.checked };
     }
     function recalc(fromPaid) {
@@ -1648,6 +1658,7 @@
       if (q('tTotal')) q('tTotal').textContent = `${cur} ${money(c.total)}`;
       if (q('saveTotal')) q('saveTotal').textContent = `${cur} ${money(c.total)}`;
       if (q('createInvoiceBtn')) q('createInvoiceBtn').disabled = !has;
+      if (q('shareSaveBtn')) q('shareSaveBtn').disabled = !has;
       if (q('paidFull') && q('paidFull').checked && q('paidIn')) q('paidIn').value = c.total || '';
       const paid = Math.min(parseFloat(val('paidIn')) || 0, c.total);
       if (q('tDue')) { q('tDue').textContent = `${cur} ${money(Math.max(0, round2(c.total - paid)))}`; }
@@ -1753,9 +1764,22 @@
       if (!f.checked) document.getElementById('paidIn').value = '';
       recalc();
     });
+    { const tg = document.getElementById('vsTg'); const pf = document.getElementById('paidFull');
+      if (tg && pf) {
+        const sync = () => { tg.classList.toggle('on', pf.checked); document.getElementById('vsCash').classList.toggle('on', pf.checked); document.getElementById('vsCredit').classList.toggle('on', !pf.checked); };
+        tg.addEventListener('click', () => { pf.checked = !pf.checked; if (!pf.checked) document.getElementById('paidIn').value = ''; pf.dispatchEvent(new Event('change')); sync(); });
+        pf.addEventListener('change', sync); sync();
+      }
+      const sb = document.getElementById('shareSaveBtn'); if (sb) sb.addEventListener('click', () => { window._shareAfterSave = true; });
+      const cb = document.getElementById('createInvoiceBtn'); if (cb) cb.addEventListener('click', () => { window._shareAfterSave = false; }); }
     document.querySelectorAll('#discSeg button').forEach(b => b.addEventListener('click', () => {
       st.discType = b.dataset.dt;
       document.querySelectorAll('#discSeg button').forEach(x => x.classList.toggle('on', x === b));
+      recalc();
+    }));
+    document.querySelectorAll('#taxSeg button').forEach(b => b.addEventListener('click', () => {
+      st.taxType = b.dataset.tt;
+      document.querySelectorAll('#taxSeg button').forEach(x => x.classList.toggle('on', x === b));
       recalc();
     }));
     document.querySelectorAll('[data-due]').forEach(b => b.addEventListener('click', () => {
@@ -1798,7 +1822,7 @@
     renderLines();
 
     let submitting = false;
-    $('#invoiceForm').addEventListener('submit', e => {
+    $('#invoiceForm').addEventListener('submit', async e => {
       e.preventDefault();
       if (submitting) return;
       if (!isPur && typeof enforceLimit === 'function' && !enforceLimit('invoices', invoices.length)) return;
@@ -1813,7 +1837,7 @@
         if (!p || p.stock < l.qty) short.push(`${l.name} (stock ${p ? p.stock : 0}, selling ${l.qty})`);
       });
       if (short.length) {
-        const ok = confirm('Some items are out of stock or short:\n\n' + short.join('\n') + '\n\nSave invoice anyway? Stock will go negative.');
+        const ok = await askConfirm('Some items are out of stock or short:\n\n' + short.join('\n') + '\n\nSave invoice anyway? Stock will go negative.');
         if (!ok) return;
       }
       const o = opts();
@@ -1847,7 +1871,7 @@
           stockMovements.unshift({ id: uid(), productId: it.productId, productName: it.name, type: 'in', qty: it.qty, date: nowP, note: `Purchase ${pnum}` });
         });
         const pmeta = { subtotal: c.sub, discount: c.discount, discType: o.discType, discValue: Number(o.discValue) || 0,
-          taxName: 'Tax', taxRate: c.taxRate, tax: c.tax, chargeLabel: (document.getElementById('chLabel')?.value || '').trim(), charges: c.charges,
+          taxName: 'Tax', taxRate: c.taxRate, taxType: c.taxType, tax: c.tax, chargeLabel: (document.getElementById('chLabel')?.value || '').trim(), charges: c.charges,
           roundOff: c.roundOff, paymentMode: paidAmount > 0 ? st.mode : '' };
         const bn = (fd.get('billNo') || '').trim(); if (bn) pmeta.billNo = bn;
         const dd = fd.get('dueDate'); if (dd && paymentStatus !== 'paid') pmeta.dueDate = dd;
@@ -1890,7 +1914,7 @@
 
       const meta = {
         subtotal: c.sub, discount: c.discount, discType: o.discType, discValue: Number(o.discValue) || 0,
-        taxName: 'Tax', taxRate: c.taxRate, tax: c.tax, inclTax: !!settings.enableInclusiveTax,
+        taxName: 'Tax', taxRate: c.taxRate, taxType: c.taxType, tax: c.tax, inclTax: !!settings.enableInclusiveTax,
         chargeLabel: (document.getElementById('chLabel')?.value || '').trim(), charges: c.charges,
         roundOff: c.roundOff, paymentMode: paidAmount > 0 ? st.mode : ''
       };
@@ -1915,7 +1939,8 @@
       if (from) { const q = invoices.find(x => x.id === from.id); if (q) { q.meta = Object.assign({}, q.meta, { convertedTo: inv.number, convertedId: inv.id }); q.updatedAt = new Date().toISOString(); persist(); } }
       toast(paymentStatus === 'paid' ? 'Invoice saved (Paid)' : paymentStatus === 'partial' ? 'Invoice saved (Advance recorded)' : 'Invoice saved (Unpaid)');
       setView('invoices');
-      if (settings.enableInvoicePreview !== false) openInvoiceDetail(inv);
+      if (window._shareAfterSave) { window._shareAfterSave = false; openShareSheet(inv); }
+      else if (settings.enableInvoicePreview !== false) openInvoiceDetail(inv);
     });
   }
 
@@ -2666,9 +2691,9 @@
       ${b('sales', 'All sales &amp; documents', invoices.length)}${b('purchases', 'Purchases', purchases.length)}${b('items', 'Items', products.length)}${b('parties', 'Parties (customers)', customers.length)}${b('suppliers', 'Suppliers', suppliers.length)}${b('expenses', 'Expenses', expenses.length)}
       <button class="btn btn-primary btn-block mt-16" data-action="csv-export" data-set="all">Download everything</button>`);
   }
-  function clearAllData() {
-    if (!confirm('Delete ALL data (items, parties, invoices, expenses, purchases, banks, loans…)? If you are signed in to cloud it is deleted there too. This cannot be undone.')) return;
-    if (!confirm('Last check: a backup file will download first. Continue and delete everything?')) return;
+  async function clearAllData() {
+    if (!(await askConfirm('Delete ALL data (items, parties, invoices, expenses, purchases, banks, loans…)? If you are signed in to cloud it is deleted there too. This cannot be undone.', { title: 'Clear all data', okText: 'Delete', danger: true }))) return;
+    if (!(await askConfirm('Last check: a backup file will download first. Continue and delete everything?', { title: 'Are you sure?', okText: 'Delete everything', danger: true }))) return;
     try {
       const data = { products, invoices, customers, suppliers, expenses, stockMovements, purchases, banks, bankTxns, otherIncome, loans, settings, invoiceCounter, exportedAt: new Date().toISOString() };
       downloadText(`billaura-backup-before-clear-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(data), 'application/json');
@@ -3130,6 +3155,43 @@
     </div>`;
   }
 
+
+  // ---------- Payment reminders + service reminders ----------
+  function viewPaymentReminders() {
+    const cur = settings.currency || 'Rs';
+    const rows = customers.map(c => ({ c, due: customerBalance(c.id, c.name, c.phone).due })).filter(x => x.due > 0.001).sort((a, b) => b.due - a.due);
+    const total = rows.reduce((a, x) => a + x.due, 0);
+    const overdueDoc = c => custDocs(c).filter(i => docSign(i) > 0 && (i.total || 0) - (i.paidAmount || 0) > 0.001 && i.meta && i.meta.dueDate && new Date(i.meta.dueDate) < new Date()).length;
+    return `<div class="fade-in" style="padding:14px 0 24px">
+      <div class="doc-card" style="margin:0 16px 12px"><div class="text-sm text-secondary">Total to collect from ${rows.length} part${rows.length === 1 ? 'y' : 'ies'}</div><div style="font-size:1.5rem;font-weight:800;color:#0E9F6E">${cur} ${money(total)}</div></div>
+      ${rows.length ? `<div class="list-group">${rows.map(({ c, due }) => { const od = overdueDoc(c); return `<div class="list-row" style="cursor:default"><div class="list-row-left" style="min-width:0"><div><div class="list-row-label">${escapeHtml(c.name)}</div><div class="text-sm" style="color:#0E9F6E">To get ${cur} ${money(due)}${od ? ` <span style="color:#E11D48">· ${od} overdue</span>` : ''}</div>${c.phone ? '' : '<div class="text-sm text-secondary">No phone number</div>'}</div></div>
+          <div class="list-row-right" style="display:flex;gap:6px"><button class="chip-btn" data-action="remind-sms" data-id="${c.id}">SMS</button><button class="btn btn-primary btn-sm" data-action="remind-customer" data-id="${c.id}">WhatsApp</button></div></div>`; }).join('')}</div>`
+        : '<div class="empty-state"><p>No pending balances — great job!</p></div>'}
+    </div>`;
+  }
+  function srList() { return (settings.serviceReminders = settings.serviceReminders || []); }
+  function viewServiceReminders() {
+    const today = new Date().toISOString().slice(0, 10);
+    const list = srList().slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    return `<div class="fade-in" style="padding:14px 0 90px">
+      <p class="text-sm text-secondary" style="padding:0 16px 10px">Set a date to remind a customer about a service, refill, renewal or follow-up. Due reminders appear in red.</p>
+      ${list.length ? `<div class="list-group">${list.map(r => { const due = r.date && r.date <= today && !r.done; return `<div class="list-row" style="cursor:default"><div class="list-row-left" style="min-width:0"><div><div class="list-row-label" ${r.done ? 'style="text-decoration:line-through;opacity:.6"' : ''}>${escapeHtml(r.name || 'Customer')}</div>
+        <div class="text-sm" style="color:${due ? '#E11D48' : '#6B7287'}">${escapeHtml(r.note || 'Service')} · ${r.date ? formatDate(r.date) : 'no date'}${due ? ' · due' : ''}</div></div></div>
+        <div class="list-row-right" style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${r.phone && !r.done ? `<button class="chip-btn" data-action="sr-remind" data-id="${r.id}">WhatsApp</button>` : ''}<button class="chip-btn" data-action="sr-done" data-id="${r.id}">${r.done ? 'Undo' : 'Done'}</button><button class="chip-btn" data-action="sr-edit" data-id="${r.id}">Edit</button><button class="chip-btn" style="color:#E11D48" data-action="sr-del" data-id="${r.id}">Delete</button></div></div>`; }).join('')}</div>` : '<div class="empty-state"><p>No service reminders yet.</p></div>'}
+      <div style="position:fixed;left:0;right:0;bottom:calc(var(--nav-height) + var(--safe-bottom) + 14px);max-width:480px;margin:0 auto;padding:0 16px;z-index:60"><button class="btn btn-primary btn-lg btn-block" data-action="sr-edit">+ Add Service Reminder</button></div>
+    </div>`;
+  }
+  function openSrModal(id) {
+    const r = srList().find(x => x.id === id) || { id: '', name: '', phone: '', date: '', note: '' };
+    $('#modalRoot').innerHTML = modalShell(r.id ? 'Edit Reminder' : 'New Service Reminder', `
+      <div class="form-group"><label class="form-label">Customer</label><input class="form-input" id="srName" list="srCust" value="${escapeHtml(r.name)}" placeholder="Name" /><datalist id="srCust">${customers.map(c => `<option value="${escapeHtml(c.name)}"></option>`).join('')}</datalist></div>
+      <div class="form-group"><label class="form-label">Phone (WhatsApp)</label><input class="form-input" id="srPhone" type="tel" value="${escapeHtml(r.phone)}" placeholder="03xx xxxxxxx" /></div>
+      <div class="form-group"><label class="form-label">Remind on</label><input class="form-input" id="srDate" type="date" value="${escapeHtml(r.date)}" /></div>
+      <div class="form-group"><label class="form-label">What for</label><input class="form-input" id="srNote" value="${escapeHtml(r.note)}" placeholder="e.g. Machine service, refill, renewal" /></div>
+      <button class="btn btn-primary btn-block" data-action="sr-save" data-id="${r.id}">Save</button>`);
+    const n = document.getElementById('srName'); if (n) n.addEventListener('change', () => { const c = customers.find(x => x.name === n.value); if (c && c.phone && !document.getElementById('srPhone').value) document.getElementById('srPhone').value = c.phone; });
+  }
+
   function viewReminders() {
     return `<div class="fade-in">
       <div class="list-group">
@@ -3138,7 +3200,7 @@
           <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
         </div>
         <div class="list-row" data-action="open-service-reminders">
-          <div class="list-row-left"><div class="list-row-label">Service Reminders <span class="premium-badge"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z"/></svg></span></div></div>
+          <div class="list-row-left"><div class="list-row-label">Service Reminders</div></div>
           <svg class="list-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
         </div>
       </div>
@@ -3678,19 +3740,11 @@
           </div>
           <button class="btn btn-secondary btn-block mt-8" data-action="mark-paid" data-id="${inv.id}">${inv.docType === 'return' ? 'Mark as Fully Refunded' : 'Mark as Fully Paid'}</button>
           ` : ''}
-          <div class="flex gap-8 mt-20" style="flex-wrap:wrap">
-            <button class="btn btn-secondary" style="flex:1" data-action="share-image" data-id="${inv.id}">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-              Image
-            </button>
-            <button class="btn btn-secondary" style="flex:1" data-action="pdf-invoice" data-id="${inv.id}">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-              PDF
-            </button>
-            <button class="btn btn-primary" style="flex:1" data-action="print-invoice" data-id="${inv.id}">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-              Print
-            </button>
+          <div class="dl-grid mt-20">
+            <button class="btn btn-primary" data-action="pdf-invoice" data-id="${inv.id}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 20h16"/></svg> Download PDF</button>
+            <button class="btn btn-secondary" data-action="download-image" data-id="${inv.id}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 20h16"/></svg> Download Image</button>
+            <button class="btn btn-secondary" data-action="share-image" data-id="${inv.id}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg> Share</button>
+            <button class="btn btn-secondary" data-action="print-invoice" data-id="${inv.id}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> Print</button>
           </div>
           <button class="btn btn-ghost btn-block mt-12" data-action="share-whatsapp-text" data-id="${inv.id}">Share as WhatsApp text</button>
           ${((inv.docType || 'sale') === 'sale' && due > 0) ? `<button class="btn btn-ghost btn-block mt-8" data-action="remind-invoice" data-id="${inv.id}">Send payment reminder (WhatsApp)</button>` : ''}
@@ -3922,15 +3976,15 @@
     toast('PDF downloaded');
   }
 
-  async function shareInvoiceImage(inv) {
+  async function shareInvoiceImage(inv, forceDownload) {
     if (!tplOK()) return;
     try {
       toast('Preparing image…');
       const blob = await BillauraTemplates.image(inv, tplCtx(), {});
       const file = new File([blob], `Invoice-${inv.number}.png`, { type: 'image/png' });
-      if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: 'Invoice ' + inv.number }); return; }
+      if (!forceDownload && navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: 'Invoice ' + inv.number }); return; }
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = file.name; document.body.appendChild(a); a.click(); a.remove();
-      toast('Image saved');
+      toast('Image downloaded');
     } catch (e) { if (e && e.name !== 'AbortError') { console.error(e); toast('Could not create image'); } }
   }
   async function shareInvoiceImageOld(inv) {
@@ -4525,26 +4579,7 @@
       ${plan.limited ? `<div class="plan-banner">Free plan limit reached – ${plan.limited} new product(s) not added. <button type="button" class="linkish" data-action="open-plans">Upgrade</button></div>` : ''}
       <button class="btn btn-primary btn-block" data-action="bulk-import-confirm" ${plan.adds.length + plan.updates.length === 0 ? 'disabled' : ''}>Import ${plan.adds.length + plan.updates.length} product(s)</button>`);
   }
-  function pickSheet(o) {
-    const old = document.getElementById('pickSheet'); if (old) old.remove();
-    const el = document.createElement('div'); el.id = 'pickSheet'; el.className = 'ps-back';
-    const close = () => el.remove();
-    const draw = (q) => {
-      const list = o.options.filter(x => !q || x.toLowerCase().includes(q.toLowerCase()));
-      el.querySelector('.ps-list').innerHTML = list.map(x => `<button type="button" class="ps-item ${x === o.selected ? 'sel' : ''}" data-v="${escapeHtml(x)}"><span class="ps-radio"></span>${escapeHtml(x)}</button>`).join('') || '<div class="doc-empty">Nothing found</div>';
-      el.querySelectorAll('.ps-item').forEach(b => b.onclick = () => { close(); o.onPick(b.dataset.v); });
-    };
-    el.innerHTML = `<div class="ps-sheet"><div class="ps-head"><b>${escapeHtml(o.title)}</b><button type="button" class="ps-x" aria-label="Close">✕</button></div>
-      ${o.search ? '<input class="form-input ps-q" placeholder="Search" />' : ''}<div class="ps-list"></div>
-      ${o.addNew ? `<button type="button" class="ps-add">+ ${escapeHtml(o.addNew)}</button>` : ''}</div>`;
-    document.body.appendChild(el);
-    draw('');
-    el.onclick = e => { if (e.target === el) close(); };
-    el.querySelector('.ps-x').onclick = close;
-    const q = el.querySelector('.ps-q'); if (q) q.oninput = () => draw(q.value);
-    const a = el.querySelector('.ps-add');
-    if (a) a.onclick = () => { const n = (prompt(o.addNew.replace(/^Add New /, 'New ') + ' name') || '').trim(); if (n) { close(); o.onPick(o.normalize ? o.normalize(n) : n); } };
-  }
+  function pickSheet(o) { BillauraUI.pick(o); }
   function modalShell(title, inner) {
     return `<div class="modal-overlay"><div class="modal-sheet"><div class="modal-handle"></div>
       <div class="modal-header"><h3 class="modal-title">${title}</h3>
@@ -4630,12 +4665,12 @@
     btn.disabled = false;
     btn.textContent = `${o.sign > 0 ? 'Increase' : 'Decrease'} ${o.value}${o.type === 'percent' ? '%' : ' ' + settings.currency} on ${list.length} product(s)`;
   }
-  function applyBulkPrice() {
+  async function applyBulkPrice() {
     const o = bulkPriceOptions();
     if (!o || !o.value) return;
     const list = bulkTargets(o.scope);
     if (!list.length) return;
-    if (!confirm(`${o.sign > 0 ? 'Increase' : 'Decrease'} prices of ${list.length} product(s)? You can undo this from Bulk tools.`)) return;
+    if (!await askConfirm(`${o.sign > 0 ? 'Increase' : 'Decrease'} prices of ${list.length} product(s)? You can undo this from Bulk tools.`)) return;
     const fields = o.field === 'both' ? ['price', 'cost'] : [o.field];
     const snapshot = list.map(p => ({ id: p.id, price: p.price, cost: p.cost || 0 }));
     list.forEach(p => fields.forEach(k => { p[k] = computeNewPrice(p[k] || 0, o); }));
@@ -4645,10 +4680,10 @@
     toast(`Prices updated for ${list.length} product(s)`);
     render();
   }
-  function undoBulkPrice() {
+  async function undoBulkPrice() {
     const u = load('sb_price_undo_v1', null);
     if (!u) return;
-    if (!confirm(`Restore the previous prices of ${u.items.length} product(s)?`)) return;
+    if (!await askConfirm(`Restore the previous prices of ${u.items.length} product(s)?`)) return;
     let n = 0;
     u.items.forEach(s => { const p = products.find(x => x.id === s.id); if (p) { p.price = s.price; p.cost = s.cost; n++; } });
     localStorage.removeItem('sb_price_undo_v1');
@@ -4662,7 +4697,7 @@
 
   function resizeImageFile(file, max, cb) {
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       const img = new Image();
       img.onload = () => {
         let w = img.width, h = img.height;
@@ -4849,7 +4884,7 @@
         if (!Array.from(cat.options).some(o => o.value === v)) { const o = document.createElement('option'); o.value = o.textContent = v; cat.insertBefore(o, cat.lastElementChild); }
         cat.value = v; $('#pmCatTxt').textContent = v; } });
     };
-    if (cat) cat.onchange = () => { if (cat.value === '__new') { const n = (prompt('New category name') || '').trim(); if (n) { const o = document.createElement('option'); o.value = o.textContent = normalizeCategory(n); cat.insertBefore(o, cat.lastElementChild); cat.value = o.value; } else cat.value = ''; } };
+    if (cat) cat.setAttribute('data-noenh', '1');
     $('#pmSaveBtn').onclick = () => f.requestSubmit();
     f.addEventListener('submit', e => {
       e.preventDefault();
@@ -5163,7 +5198,7 @@
           <div class="vy-txn-top"><div><div class="vy-txn-name">${escapeHtml(t.name)}</div><span class="vy-tag ${t.kind}">${tag}</span></div>
             <div class="vy-txn-no">#${escapeHtml(String(t.no).replace(/^[A-Za-z]+-/, ''))}<br>${new Date(t.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}, ${String(new Date(t.date).getFullYear()).slice(2)}</div></div>
           <div class="vy-txn-bottom"><div><div class="lbl">Total</div><div class="val">${fmtAmt(t.total)}</div></div>
-            <div><div class="lbl">Balance</div><div class="val">${fmtAmt(bal)}</div></div>
+            ${(() => { const isPur = t.kind === 'purchase', isRet = t.kind === 'return'; if (t.kind === 'estimate' || bal <= 0.001) return `<div><div class="lbl">Balance</div><div class="val">${fmtAmt(0)}</div></div>`; const pay = isPur || isRet; return `<div><div class="lbl" style="color:${pay ? '#E11D48' : '#0E9F6E'}">${pay ? 'To pay' : 'To get'}</div><div class="val" style="color:${pay ? '#E11D48' : '#0E9F6E'}">${fmtAmt(bal)}</div></div>`; })()}
             ${isInv ? `<div class="vy-txn-actions"><button data-action="print-invoice" data-id="${t.doc.id}" aria-label="Print">${ico('print')}</button><button data-action="share-txn" data-id="${t.doc.id}" aria-label="Share">${ico('share')}</button><button data-action="txn-more" data-id="${t.doc.id}" aria-label="More">${ico('dots')}</button></div>` : ''}</div></div>`;
       }).join('') : `<div class="art-empty">${ico('receipt')}<div>No transactions yet.<br>Tap <b>Add New Sale</b> to create your first invoice.</div></div>`;
     } else {
@@ -5207,7 +5242,7 @@
   }
   function openShareSheet(inv) {
     const b = (a, ic, l) => `<button class="ql" data-action="${a}" data-id="${inv.id}"><div class="ql-ic" style="background:#EEF3FA">${ico(ic)}</div><span>${l}</span></button>`;
-    sheet(`<div class="sheet-grid">${b('share-whatsapp-text', 'whatsapp', 'WhatsApp')}${b('share-sms', 'docs', 'SMS')}${b('share-image', 'share', 'Share image')}${b('pdf-invoice', 'docs', 'PDF')}</div>`, 'Share Transaction');
+    sheet(`<div class="sheet-grid">${b('share-whatsapp-text', 'whatsapp', 'WhatsApp')}${b('share-sms', 'docs', 'SMS')}${b('share-image', 'share', 'Share image')}${b('pdf-invoice', 'docs', 'Download PDF')}${b('download-image', 'docs', 'Download image')}</div>`, 'Share Transaction');
   }
   // payment-in / payment-out picker
   function openPartyPay(dir) {
@@ -5481,7 +5516,7 @@
     } catch (e) {}
   }
   // ---------- Global Event Delegation ----------
-  document.addEventListener('click', e => {
+  document.addEventListener('click', async e => {
     // Close open custom dropdowns when clicking outside
     if (!e.target.closest('.custom-select')) {
       $$('.custom-select.open').forEach(el => el.classList.remove('open'));
@@ -5660,9 +5695,9 @@
         break;
       case 'open-theme': setView('invoice-theme'); break;
       case 'add-tax-rate': {
-        const name = prompt('Tax name (e.g. GST 18%)');
+        const name = await askPrompt('Tax name (e.g. GST 18%)');
         if (!name) break;
-        const rate = parseFloat(prompt('Tax rate %', '18') || '0');
+        const rate = parseFloat(await askPrompt('Tax rate %', '18') || '0');
         if (!settings.taxRates) settings.taxRates = [];
         settings.taxRates.push({ name: name.trim(), rate: isNaN(rate) ? 0 : rate });
         if (!settings.taxRate) settings.taxRate = isNaN(rate) ? 0 : rate;
@@ -5677,9 +5712,9 @@
         break;
       }
       case 'add-tax-group': {
-        const name = prompt('Group name (e.g. GST 18%)');
+        const name = await askPrompt('Group name (e.g. GST 18%)');
         if (!name) break;
-        const rate = parseFloat(prompt('Combined rate %', '18') || '0');
+        const rate = parseFloat(await askPrompt('Combined rate %', '18') || '0');
         if (!settings.taxGroups) settings.taxGroups = [];
         settings.taxGroups.push({ name: name.trim(), rate: isNaN(rate) ? 0 : rate, rates: [] });
         persist();
@@ -5702,10 +5737,10 @@
       case 'report-item-pl': setView('item-pl'); break;
       case 'report-balance-sheet': setView('balance-sheet'); break;
       case 'add-bank': {
-        const name = prompt('Bank / wallet name (e.g. HBL, JazzCash)');
+        const name = await askPrompt('Bank / wallet name (e.g. HBL, JazzCash)');
         if (!name) break;
-        const accountNo = prompt('Account / IBAN (optional)') || '';
-        const opening = parseFloat(prompt('Opening balance', '0') || '0') || 0;
+        const accountNo = await askPrompt('Account / IBAN (optional)') || '';
+        const opening = parseFloat(await askPrompt('Opening balance', '0') || '0') || 0;
         banks.push({ id: uid(), name: name.trim(), accountNo, type: 'Bank', opening, createdAt: new Date().toISOString() });
         persist(); toast('Bank added'); setView('banks');
         break;
@@ -5718,10 +5753,12 @@
       case 'bank-adjust': {
         const bankId = t.dataset.id || settings._bankId || (banks[0] && banks[0].id);
         if (!bankId) { toast('Add a bank first'); break; }
-        const dir = confirm('OK = Deposit (money in)\nCancel = Withdraw (money out)') ? 'in' : 'out';
-        const amt = parseFloat(prompt('Amount') || '');
+        const _ch = await askChoice('What kind of bank entry is this?', ['Deposit (money in)', 'Withdraw (money out)'], { title: 'Bank entry' });
+        if (_ch < 0) break;
+        const dir = _ch === 0 ? 'in' : 'out';
+        const amt = parseFloat(await askPrompt('Amount') || '');
         if (!amt || amt <= 0) { toast('Invalid amount'); break; }
-        const note = prompt('Note', dir === 'in' ? 'Deposit' : 'Withdrawal') || '';
+        const note = await askPrompt('Note', dir === 'in' ? 'Deposit' : 'Withdrawal') || '';
         bankTxns.push({ id: uid(), bankId, dir, amount: amt, note, mode: 'Bank', date: new Date().toISOString() });
         persist(); toast('Bank entry saved');
         settings._bankId = bankId; setView('bank-ledger');
@@ -5729,9 +5766,11 @@
       }
       case 'bank-transfer': {
         if (banks.length < 1) { toast('Add a bank first'); break; }
-        const fromCash = confirm('Transfer FROM Cash to Bank?\nOK = Cash→Bank, Cancel = Bank→Cash');
+        const _tc = await askChoice('Which way do you want to move the money?', ['Cash → Bank', 'Bank → Cash'], { title: 'Transfer' });
+        if (_tc < 0) break;
+        const fromCash = _tc === 0;
         const bankId = t.dataset.id || settings._bankId || banks[0].id;
-        const amt = parseFloat(prompt('Transfer amount') || '');
+        const amt = parseFloat(await askPrompt('Transfer amount') || '');
         if (!amt || amt <= 0) break;
         if (fromCash) {
           if (!settings.cashAdjustments) settings.cashAdjustments = [];
@@ -5746,19 +5785,19 @@
         break;
       }
       case 'add-loan': {
-        const name = prompt('Loan name');
+        const name = await askPrompt('Loan name');
         if (!name) break;
-        const lender = prompt('Lender (bank / person)') || '';
-        const amount = parseFloat(prompt('Loan amount') || '0') || 0;
+        const lender = await askPrompt('Lender (bank / person)') || '';
+        const amount = parseFloat(await askPrompt('Loan amount') || '0') || 0;
         loans.push({ id: uid(), name: name.trim(), lender, amount, balance: amount, date: new Date().toISOString() });
         persist(); toast('Loan added'); setView('loans');
         break;
       }
       case 'add-other-income': {
-        const title = prompt('Income title (e.g. Interest, Rent received)');
+        const title = await askPrompt('Income title (e.g. Interest, Rent received)');
         if (!title) break;
-        const amount = parseFloat(prompt('Amount') || '0') || 0;
-        const category = prompt('Category', 'Other') || 'Other';
+        const amount = parseFloat(await askPrompt('Amount') || '0') || 0;
+        const category = await askPrompt('Category', 'Other') || 'Other';
         otherIncome.push({ id: uid(), title: title.trim(), category, amount, date: new Date().toISOString() });
         persist(); toast('Income recorded'); setView('other-income');
         break;
@@ -5818,8 +5857,8 @@
         if (ex) { ex.label = label; ex.url = url; } else arr.push({ id: uid(), label, url });
         persist(); closeModal(); render(); toast('Link saved. Tap Update Store Page to publish.'); break;
       }
-      case 'store-del-link': if (confirm('Delete this link?')) { settings.storeLinks = (settings.storeLinks || []).filter(x => x.id !== (id || t.dataset.id)); persist(); render(); } break;
-      case 'copy-store-link': { const u = storeUrl(); (navigator.clipboard ? navigator.clipboard.writeText(u) : Promise.reject()).then(() => toast('Link copied'), () => { prompt('Copy this link', u); }); break; }
+      case 'store-del-link': if (await askConfirm('Delete this link?')) { settings.storeLinks = (settings.storeLinks || []).filter(x => x.id !== (id || t.dataset.id)); persist(); render(); } break;
+      case 'copy-store-link': { const u = storeUrl(); (navigator.clipboard ? navigator.clipboard.writeText(u) : Promise.reject()).then(() => toast('Link copied'), () => { askPrompt('Copy this link', u); }); break; }
       case 'open-store-page': {
         let u = new URL('store.html', location.href).href;
         if (settings._storeHash) u += '#' + (/^[zj]=/.test(settings._storeHash) ? settings._storeHash : 'c=' + settings._storeHash);
@@ -5870,7 +5909,7 @@
         break;
       }
       case 'adjust-cash': {
-        const amt = prompt('Enter adjustment amount (positive = cash in, negative = cash out):');
+        const amt = await askPrompt('Enter adjustment amount (positive = cash in, negative = cash out):');
         if (amt === null || amt === '') break;
         const n = parseFloat(amt);
         if (isNaN(n) || n === 0) { toast('Invalid amount'); break; }
@@ -5890,9 +5929,9 @@
         setView('daybook-detail');
         break;
       case 'add-tax-rate': {
-        const name = prompt('Tax name (e.g. GST 18%)');
+        const name = await askPrompt('Tax name (e.g. GST 18%)');
         if (!name) break;
-        const rate = parseFloat(prompt('Tax rate %') || '0');
+        const rate = parseFloat(await askPrompt('Tax rate %') || '0');
         settings.taxRate = isNaN(rate) ? settings.taxRate : rate;
         persist();
         toast('Default tax set to ' + settings.taxRate + '%');
@@ -5901,7 +5940,7 @@
       }
       case 'set-base-currency':
       case 'pick-base-currency': {
-        const code = t.dataset.code || prompt('Base currency code (e.g. PKR, INR, USD)');
+        const code = t.dataset.code || await askPrompt('Base currency code (e.g. PKR, INR, USD)');
         if (!code) break;
         settings.baseCurrency = String(code).toUpperCase();
         settings.currency = settings.baseCurrency;
@@ -5911,9 +5950,9 @@
         break;
       }
       case 'add-currency': {
-        const code = prompt('Currency code (e.g. USD)');
+        const code = await askPrompt('Currency code (e.g. USD)');
         if (!code) break;
-        const rate = parseFloat(prompt('Exchange rate: 1 ' + (settings.baseCurrency||settings.currency) + ' = ? ' + code) || '1');
+        const rate = parseFloat(await askPrompt('Exchange rate: 1 ' + (settings.baseCurrency||settings.currency) + ' = ? ' + code) || '1');
         if (!settings.currencies) settings.currencies = [];
         settings.currencies = settings.currencies.filter(c => c.code !== code.toUpperCase());
         settings.currencies.push({ code: code.toUpperCase(), rate: rate || 1 });
@@ -5929,13 +5968,21 @@
         render();
         break;
       }
-      case 'open-payment-reminders':
-        setView('reminders');
-        break;
-      case 'open-service-reminders':
-        toast('Service Reminders is a Premium feature', 3000);
-        if (typeof openPlansModal === 'function') openPlansModal();
-        break;
+      case 'open-payment-reminders': setView('payment-reminders'); break;
+      case 'open-service-reminders': setView('service-reminders'); break;
+      case 'remind-sms': { const c = customers.find(x => x.id === id); if (!c) break; if (!c.phone) { toast('No phone number saved for ' + c.name); break; } window.location.href = 'sms:' + String(c.phone).replace(/[^\d+]/g, '') + '?body=' + encodeURIComponent(reminderText(c)); break; }
+      case 'sr-edit': openSrModal(id); break;
+      case 'sr-save': {
+        const g = x => (document.getElementById(x).value || '').trim();
+        if (!g('srName')) { toast('Enter customer name'); break; }
+        const rec = { id: id || uid(), name: g('srName'), phone: g('srPhone'), date: g('srDate'), note: g('srNote'), done: false };
+        const l = srList(); const i = l.findIndex(x => x.id === rec.id);
+        if (i >= 0) { rec.done = l[i].done; l[i] = rec; } else l.push(rec);
+        persist(); closeModal(); render(); toast('Reminder saved'); break;
+      }
+      case 'sr-del': { if (await askConfirm('Delete this reminder?')) { settings.serviceReminders = srList().filter(x => x.id !== id); persist(); render(); } break; }
+      case 'sr-done': { const r = srList().find(x => x.id === id); if (r) { r.done = !r.done; persist(); render(); } break; }
+      case 'sr-remind': { const r = srList().find(x => x.id === id); if (r) sendWhatsApp(r.phone, `Assalam o Alaikum ${r.name},\n\nA reminder from *${settings.businessName}*: ${r.note || 'your service'} ${r.date ? 'is due on ' + formatDate(r.date) : 'is due'}.\n${settings.phone ? 'Contact: ' + settings.phone + '\n' : ''}\nThank you!`); break; }
       case 'open-plans':
         if (typeof openPlansModal === 'function') openPlansModal();
         else toast('Plans screen unavailable');
@@ -5965,7 +6012,7 @@
       case 'pin-set-owner': openPinModal('owner'); break;
       case 'pin-set-staff': openPinModal('staff'); break;
       case 'pin-remove':
-        if (confirm('Remove the PIN lock and staff PIN?')) { settings.pinHash = ''; settings.staffHash = ''; persist(); setRole(''); toast('Lock removed'); if (currentView === 'app-lock') render(); else openSettingsModal(); }
+        if (await askConfirm('Remove the PIN lock and staff PIN?')) { settings.pinHash = ''; settings.staffHash = ''; persist(); setRole(''); toast('Lock removed'); if (currentView === 'app-lock') render(); else openSettingsModal(); }
         break;
       case 'home-tab': homeTab = t.dataset.tab; homeQuery = ''; render(); break;
       case 'sheet-add-txn': openAddTxnSheet(); break;
@@ -5977,7 +6024,7 @@
       case 'quick-receive': { const inv = invoices.find(x => x.id === id); if (inv) { const c = custOfInvoice(inv); closeModal(); if (c && c.id) openReceiveModal(c); else openInvoiceDetail(inv); } break; }
       case 'delete-invoice': {
         const inv = invoices.find(x => x.id === id); if (!inv) break;
-        if (!confirm('Delete ' + docWord(inv).toLowerCase() + ' ' + inv.number + '? Stock will be adjusted and it goes to the Recycle Bin.')) break;
+        if (!await askConfirm('Delete ' + docWord(inv).toLowerCase() + ' ' + inv.number + '? Stock will be adjusted and it goes to the Recycle Bin.')) break;
         if (inv.docType !== 'estimate') (inv.items || []).forEach(it => { const p = products.find(x => x.id === it.productId); if (p) p.stock += (inv.docType === 'return' ? -it.qty : it.qty); });
         trashPush('invoice', inv);
         invoices = invoices.filter(x => x.id !== inv.id);
@@ -6035,7 +6082,7 @@
         break;
       }
       case 'delete-product':
-        if (confirm('Delete this product?')) {
+        if (await askConfirm('Delete this product?')) {
           { const _o = products.find(p => p.id === editingId); if (_o) trashPush('product', _o); }
           products = products.filter(p => p.id !== editingId);
           persist();
@@ -6063,7 +6110,7 @@
         });
         break;
       case 'delete-customer':
-        if (confirm('Delete this customer?')) {
+        if (await askConfirm('Delete this customer?')) {
           { const _o = customers.find(c => c.id === editingId); if (_o) trashPush('customer', _o); }
           customers = customers.filter(c => c.id !== editingId);
           persist();
@@ -6079,7 +6126,7 @@
         break;
       }
       case 'delete-supplier':
-        if (confirm('Delete this supplier?')) {
+        if (await askConfirm('Delete this supplier?')) {
           { const _o = suppliers.find(c => c.id === editingId); if (_o) trashPush('supplier', _o); }
           suppliers = suppliers.filter(s => s.id !== editingId);
           persist();
@@ -6134,6 +6181,7 @@
         if (inv) generatePDF(inv);
         break;
       }
+      case 'download-image': { const inv = invoices.find(x => x.id === id); if (inv) shareInvoiceImage(inv, true); break; }
       case 'share-image': {
         const inv = invoices.find(x => x.id === id);
         if (inv) shareInvoiceImage(inv);
@@ -6282,7 +6330,7 @@
         break;
       }
       case 'delete-expense':
-        if (confirm('Delete this expense?')) {
+        if (await askConfirm('Delete this expense?')) {
           { const _o = expenses.find(c => c.id === editingId); if (_o) trashPush('expense', _o); }
           expenses = expenses.filter(x => x.id !== editingId);
           persist();
@@ -6300,7 +6348,7 @@
           if (!file) return;
           if (file.size > 500 * 1024) { toast('Logo must be under 500KB'); return; }
           const reader = new FileReader();
-          reader.onload = () => {
+          reader.onload = async () => {
             const dataUrl = reader.result;
             // Resize roughly via canvas if large
             const img = new Image();
@@ -6342,7 +6390,7 @@
           if (!file) return;
           if (file.size > 800 * 1024) { toast('QR image must be under 800KB'); return; }
           const reader = new FileReader();
-          reader.onload = () => {
+          reader.onload = async () => {
             const img = new Image();
             img.onload = () => {
               const max = 400;
@@ -6469,7 +6517,7 @@
       case 'shopify-sync': shopifyManualSync(false); break;
       case 'shopify-full': shopifyManualSync(true); break;
       case 'shopify-disconnect':
-        if (confirm('Disconnect Shopify? Your products and invoices in Billaura stay; syncing stops.')) {
+        if (await askConfirm('Disconnect Shopify? Your products and invoices in Billaura stay; syncing stops.')) {
           shopifyBusy('Disconnecting…');
           HisablyCloud.shopifyCall('disconnect', {}).then(() => { setShopifyOn(false); toast('Shopify disconnected'); }).catch(e => toast(e.message, 5000)).finally(openShopifyModal);
         }
@@ -6509,11 +6557,11 @@
           const file = input.files && input.files[0];
           if (!file) return;
           const reader = new FileReader();
-          reader.onload = () => {
+          reader.onload = async () => {
             try {
               const data = JSON.parse(reader.result);
               if (!data || typeof data !== 'object') throw new Error('Invalid');
-              if (confirm('Replace current data with this backup?')) {
+              if (await askConfirm('Replace current data with this backup?')) {
                 if (Array.isArray(data.products)) products = data.products;
                 if (Array.isArray(data.invoices)) invoices = data.invoices;
                 if (Array.isArray(data.customers)) customers = data.customers;
@@ -6548,7 +6596,7 @@
       case 'open-csv': openCsvModal(); break;
       case 'csv-export': exportCSV(t.dataset.set); break;
       case 'show-auth': {
-        if (!confirm('Go to sign in / sign up? Your data on this phone stays.')) break;
+        if (!await askConfirm('Go to sign in / sign up? Your data on this phone stays.')) break;
         HisablyFreemium.clearSession(); showAuth();
         const au = document.getElementById('authScreen');
         if (au && t.dataset.tab === 'register') { au.innerHTML = renderAuthHTML('register'); bindAuthForm(); }
@@ -6708,6 +6756,7 @@
         remote = emptyRemote(remote.shop);
       }
 
+      const _sigBefore = SYNC_COLLECTIONS.map(n => JSON.stringify(getList(n))).join('|') + JSON.stringify(settings);
       // ---- merge (synchronous) ----
       const changes = { tombs: JSON.parse(JSON.stringify(tombs)) };
       SYNC_COLLECTIONS.forEach(n => {
@@ -6723,7 +6772,8 @@
       resnap();                         // merged state is the new baseline (no re-stamping)
       saveAll();
       if (remote.shop) applyShopToPlan(remote.shop);
-      if (canRenderNow()) render();
+      const _sigAfter = SYNC_COLLECTIONS.map(n => JSON.stringify(getList(n))).join('|') + JSON.stringify(settings);
+      if (_sigAfter !== _sigBefore && canRenderNow()) render();
 
       // ---- push only what changed ----
       await HisablyCloud.push(changes);
@@ -6887,7 +6937,7 @@
     const isLogin = mode !== 'register';
     return `<div class="auth-card">
       <div class="auth-brand">
-        <div class="logo-circle">B</div>
+        <img src="assets/icon-192.png" alt="Billaura" class="brand-mark" width="64" height="64" />
         <h1>Billaura</h1>
         <p>Inventory & invoices for micro sellers</p>
       </div>
@@ -7100,7 +7150,7 @@
           HisablyCloud.serverOffsetMs().catch(() => undefined)
         ]);
         applyShopToPlan(shop, plat, offset);
-        if (currentView === 'dashboard' && canRenderNow()) render();
+        if (currentView === 'dashboard' && canRenderNow() && JSON.stringify(HisablyFreemium.effectivePlan().key) !== window._lastPlanKey) { window._lastPlanKey = JSON.stringify(HisablyFreemium.effectivePlan().key); render(); }
       }
     } catch (e) {
       console.error('plan refresh', e);

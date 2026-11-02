@@ -49,7 +49,7 @@
     if (!(m.discount || m.tax || m.charges || m.roundOff)) return { sub: 0, rows };
     const sub = (inv.items || []).reduce((s, i) => s + (Number(i.price) || 0) * (Number(i.qty) || 0), 0);
     if (m.discount) rows.push(['Discount' + (m.discType === 'pct' && m.discValue ? ' (' + m.discValue + '%)' : ''), -m.discount]);
-    if (m.tax) rows.push([(m.taxName || 'Tax') + ' (' + m.taxRate + '%)', m.tax]);
+    if (m.tax) rows.push([m.taxType === 'amt' ? (m.taxName || 'Tax') : (m.taxName || 'Tax') + ' (' + m.taxRate + '%)', m.tax]);
     if (m.charges) rows.push([m.chargeLabel || 'Charges', m.charges]);
     if (m.roundOff) rows.push(['Round off', m.roundOff]);
     return { sub, rows };

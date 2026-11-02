@@ -20,7 +20,14 @@
     { id: 'french', name: 'French Elite' },
     { id: 'divine', name: 'Double Divine' },
     { id: 'minimal', name: 'Minimal' },
-    { id: 'landscape', name: 'Landscape Theme', landscape: true }
+    { id: 'theme1', name: 'Theme 1' },
+    { id: 'theme2', name: 'Theme 2' },
+    { id: 'theme3', name: 'Theme 3' },
+    { id: 'tax1', name: 'Tax Theme 1' },
+    { id: 'tax2', name: 'Tax Theme 2' },
+    { id: 'tax3', name: 'Tax Theme 3' },
+    { id: 'landscape', name: 'Landscape Theme', landscape: true },
+    { id: 'landscape2', name: 'Landscape 2', landscape: true }
   ];
   const COLORS = ['#2A5BD7', '#EF1A3C', '#0D9488', '#111827', '#9F1239', '#B45309', '#166534', '#7C3AED', '#0891B2', '#EA580C'];
   const PAGES = { A4: [794, 1123], A5: [559, 794], Letter: [816, 1056] };
@@ -50,7 +57,7 @@
 
   function build(inv, ctx, oIn) {
     const s = ctx.settings, o = optsFrom(s, oIn), C = o.color;
-    const land = o.template === 'landscape' || o.orientation === 'landscape';
+    const land = o.template === 'landscape' || o.template === 'landscape2' || o.orientation === 'landscape';
     const base = PAGES[o.pageSize] || PAGES.A4;
     const W = land ? Math.max(base[0], base[1]) : base[0], H = land ? Math.min(base[0], base[1]) : base[1];
     const fs = TEXT[o.textSize] || 13.5;
@@ -119,7 +126,7 @@
     if (showPrices) {
       T.push(['Sub Total', num(sub)]);
       if (disc) T.push(['Discount' + (m.discType === 'pct' && m.discValue ? ` (${m.discValue}%)` : ''), '- ' + num(disc)]);
-      if (m.tax && flag(s, 'printTaxDetails', true)) T.push([esc((m.taxName || 'Tax') + ' (' + m.taxRate + '%)'), num(m.tax)]);
+      if (m.tax && flag(s, 'printTaxDetails', true)) T.push([esc(m.taxType === 'amt' ? (m.taxName || 'Tax') : (m.taxName || 'Tax') + ' (' + m.taxRate + '%)'), num(m.tax)]);
       if (m.charges) T.push([esc(m.chargeLabel || 'Charges'), num(m.charges)]);
       if (m.roundOff) T.push(['Round off', num(m.roundOff)]);
     }
@@ -222,6 +229,43 @@ th{background:${soft(accent, .1)};color:${accent};border-top:1px solid ${accent}
 th{font-size:${fs - 3}px;text-transform:uppercase;color:#8a93a6;border-bottom:1px solid #1c2233;padding-left:0}td{border-bottom:1px solid #eef1f6;padding-left:0}.grand{background:none;border-top:2px solid ${accent};border-radius:0;padding-left:0;padding-right:0}`;
         head = `<div class="top">${brand}<div style="text-align:right"><div class="tt">${title}</div></div></div><div class="two"><div>${billTo}</div><div style="min-width:220px">${metaBlock}</div></div>`;
         break;
+      case 'theme1':
+        tcss = `.top{display:flex;justify-content:space-between;align-items:center;gap:16px;padding-bottom:12px}.tt{font-size:${fs + 10}px;font-weight:800;color:${accent};text-align:right}
+.two{display:flex;gap:0;border:1px solid #c9cfdc;margin:10px 0}.two>div{flex:1;padding:10px 14px}.two>div+div{border-left:1px solid #c9cfdc}
+table{border:1px solid #c9cfdc}th{background:${accent};color:#fff}td{border-bottom:1px solid #e4e8f0}.grand{border-radius:0}`;
+        head = `<div class="top">${brand}<div class="tt">${title}</div></div><div class="two"><div>${billTo}</div><div>${metaBlock}</div></div>`;
+        break;
+      case 'theme2':
+        tcss = `.band{background:${soft(accent, .1)};border-left:6px solid ${accent};padding:16px 20px;display:flex;justify-content:space-between;align-items:center;gap:16px}.tt{font-size:${fs + 9}px;font-weight:800;color:${accent};letter-spacing:.05em}
+.two{display:flex;justify-content:space-between;gap:20px;margin:16px 0 10px}th{border-bottom:2px solid ${accent};color:${accent};padding-left:6px}td{border-bottom:1px solid #e9edf4;padding-left:6px}.grand{background:${accent};color:#fff;border-radius:6px}`;
+        head = `<div class="band">${brand}<div class="tt">${title.toUpperCase()}</div></div><div class="two"><div>${billTo}</div><div style="min-width:220px">${metaBlock}</div></div>`;
+        break;
+      case 'theme3':
+        tcss = `.hd{text-align:center}.hd .brand{justify-content:center}.ttl2{text-align:center;margin:12px 0;font-weight:800;font-size:${fs + 3}px;color:#fff;background:${accent};padding:6px 0;letter-spacing:.2em}
+.two{display:flex;justify-content:space-between;margin:12px 0}tbody tr:nth-child(even) td{background:#f5f7fb}th{background:#1c2233;color:#fff}td{border-bottom:1px solid #e9edf4}`;
+        head = `<div class="hd">${brand}</div><div class="ttl2">${title.toUpperCase()}</div><div class="two"><div>${billTo}</div><div style="min-width:220px">${metaBlock}</div></div>`;
+        break;
+      case 'tax1':
+        tcss = `body{padding:22px 26px}.wrap{border:1.5px solid #1c2233}.hd{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;border-bottom:1.5px solid #1c2233}.tt{font-weight:800;font-size:${fs + 5}px;text-align:right}
+.two{display:flex}.two>div{flex:1;padding:9px 14px}.two>div+div{border-left:1.5px solid #1c2233}.two{border-bottom:1.5px solid #1c2233}
+table th{border:1px solid #1c2233;background:#eef0f5}table td{border:1px solid #6b7488}.bottom{padding:10px 14px;margin:0;border-top:1.5px solid #1c2233}.grand{border-radius:0;background:#eef0f5;color:#111}.sig{padding:0 14px 12px}.rb{padding:0 14px}`;
+        head = `<div class="wrap"><div class="hd">${brand}<div class="tt">${(isEst ? 'QUOTATION' : isRet ? 'CREDIT NOTE' : (m.tax > 0 ? 'TAX INVOICE' : 'INVOICE'))}</div></div><div class="two"><div>${billTo}</div><div>${metaBlock}</div></div>`;
+        break;
+      case 'tax2':
+        tcss = `.top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;border-bottom:3px double ${accent};padding-bottom:12px}.tt{font-size:${fs + 8}px;font-weight:800;color:${accent};text-align:right}
+.two{display:flex;justify-content:space-between;gap:20px;margin:14px 0}.two>div{flex:1}th{background:${accent};color:#fff;border:1px solid ${accent}}td{border:1px solid #d5dae6}.grand{border-radius:0}`;
+        head = `<div class="top">${brand}<div class="tt">${(isEst ? 'QUOTATION' : isRet ? 'CREDIT NOTE' : (m.tax > 0 ? 'TAX INVOICE' : 'INVOICE'))}<div style="margin-top:4px;font-size:${fs}px;font-weight:400;color:#556075">${s.taxId ? "Tax ID: " + esc(s.taxId) : ''}</div></div></div><div class="two"><div>${billTo}</div><div>${metaBlock}</div></div>`;
+        break;
+      case 'tax3':
+        tcss = `.top{display:flex;justify-content:space-between;align-items:center;gap:16px}.tt{background:${accent};color:#fff;padding:8px 22px;font-weight:800;font-size:${fs + 4}px;letter-spacing:.08em;border-radius:0 0 0 18px}
+body{padding-top:0}.two{display:flex;gap:14px;margin:16px 0 10px}.two>div{flex:1;border:1px solid #d5dae6;border-radius:8px;padding:10px 14px}th{background:${soft(accent, .14)};color:${accent}}td{border-bottom:1px solid #e9edf4}`;
+        head = `<div class="top"><div style="padding-top:34px">${brand}</div><div class="tt">${(isEst ? 'QUOTATION' : isRet ? 'CREDIT NOTE' : (m.tax > 0 ? 'TAX INVOICE' : 'INVOICE'))}</div></div><div class="two"><div>${billTo}</div><div>${metaBlock}</div></div>`;
+        break;
+      case 'landscape2':
+        tcss = `.top{display:flex;justify-content:space-between;align-items:center;background:${accent};color:#fff;padding:14px 20px;border-radius:8px}.top .bn,.top .sm{color:#fff}.tt{font-size:${fs + 8}px;font-weight:800;letter-spacing:.06em}
+.two{display:flex;justify-content:space-between;gap:30px;margin:12px 0}th{border-bottom:2px solid ${accent};color:${accent}}td{border-bottom:1px solid #e9edf4}.tot{width:330px}`;
+        head = `<div class="top">${brand}<div class="tt">${title.toUpperCase()}</div></div><div class="two"><div>${billTo}</div><div style="min-width:240px">${metaBlock}</div></div>`;
+        break;
       case 'landscape':
         tcss = `.top{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid ${accent};padding-bottom:12px;margin-bottom:12px}.right{display:flex;gap:40px;align-items:flex-start}.tt{font-size:${fs + 10}px;font-weight:800;color:${accent};letter-spacing:.05em}
 .two{display:flex;justify-content:space-between;margin:10px 0}th{background:${soft(accent, .12)};color:${accent}}td{border-bottom:1px solid #e9edf4}.tot{width:330px}`;
@@ -233,7 +277,7 @@ th{font-size:${fs - 3}px;text-transform:uppercase;color:#8a93a6;border-bottom:1p
 th{background:${soft(accent, .12)};color:${accent};border-radius:0}th:first-child{border-radius:8px 0 0 8px}th:last-child{border-radius:0 8px 8px 0}td{border-bottom:1px solid #edf0f6}`;
         head = `<div class="top">${brand}<div><div class="tt">${title}</div><div style="text-align:right;margin-top:4px">${stamp}</div></div></div><div class="two"><div class="box">${billTo}</div><div class="box">${metaBlock}</div></div>`;
     }
-    const close = o.template === 'tally' ? '</div>' : o.template === 'divine' ? '</div><div class="ft"></div>' : o.template === 'banner' ? '</div>' : o.template === 'frame' ? '</div></div>' : '';
+    const close = (o.template === 'tally' || o.template === 'tax1') ? '</div>' : o.template === 'divine' ? '</div><div class="ft"></div>' : o.template === 'banner' ? '</div>' : o.template === 'frame' ? '</div></div>' : '';
     const bodyHTML = `${orig}${head}
 <table><thead>${thead}</thead><tbody>${tbody}</tbody><tfoot>${qtyRow}</tfoot></table>
 <div class="bottom"><div class="bl">${words}${desc}${terms}${qr}</div>${showPrices ? totalsHTML : ''}</div>
@@ -293,7 +337,7 @@ ${flag(s, 'printPageNumbers', true) ? `<div class="pg">${esc(inv.number)} · Pag
       if (p) doc.addPage([mmW, mmH], r.land ? 'landscape' : 'portrait');
       doc.addImage(sl.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, mmW, sl.height * mmW / cw);
     }
-    doc.save(filename || `Invoice-${inv.number}.pdf`);
+    { const fn = filename || `Invoice-${inv.number}.pdf`; try { const bl = doc.output('blob'); const a = document.createElement('a'); a.href = URL.createObjectURL(bl); a.download = fn; document.body.appendChild(a); a.click(); setTimeout(() => { a.remove(); URL.revokeObjectURL(a.href); }, 4000); } catch (e) { doc.save(fn); } }
   }
 
   // ===================== Business cards =====================
