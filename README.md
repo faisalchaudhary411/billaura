@@ -51,3 +51,6 @@ Category & payment-type sheets, Vyapar Sale screen (Credit/Cash switch, Share+Sa
 
 ## v7
 All browser popups (alert/confirm/prompt), dropdowns, date pickers, suggestion lists and checkboxes now use the app's own styled controls (js/ui.js).
+
+## v9
+Barcode label printing (offline Code 128), low-stock and daily-summary alerts on Home, send-all payment reminders with statements, multiple staff users with their own PINs, floating-label Sale fields, download PDF/Image in the transaction menu.

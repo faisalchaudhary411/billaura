@@ -1071,11 +1071,18 @@
   // Device-level protection (keeps casual access out). It is not a server-side permission system.
   const ROLE_KEY = 'billaura_role_v1';
   const STAFF_VIEWS = ['home', 'dashboard', 'products', 'create-invoice', 'invoices', 'customers', 'more'];
-  const STAFF_BLOCK = /^(add-product|edit-product|delete-|bulk-|stock-in|open-settings|open-plans|open-shopify|shopify-|export-data|import-data|clear-data|add-expense|edit-expense|new-purchase|view-purchase|purchase-|view-supplier|pay-supplier|add-supplier|edit-supplier|cloud-auth|sign-out-user|submit-payment|db-|pick-|remove-|pin-)/;
+  const STAFF_BLOCK = /^(add-product|edit-product|delete-|bulk-|stock-in|open-settings|open-plans|open-shopify|shopify-|export-data|import-data|clear-data|add-expense|edit-expense|new-purchase|view-purchase|purchase-|view-supplier|pay-supplier|add-supplier|edit-supplier|cloud-auth|sign-out-user|submit-payment|db-|pick-|remove-|pin-|staff-|send-daily)/;
   let _lastHidden = 0, _pinFails = 0, _pinWaitUntil = 0;
   function lockEnabled() { return !!settings.pinHash && !!(window.HisablyFreemium && HisablyFreemium.hasFeature('passcode')); }
   function getRole() { try { return sessionStorage.getItem(ROLE_KEY) || ''; } catch (e) { return ''; } }
   function setRole(r) { try { if (r) sessionStorage.setItem(ROLE_KEY, r); else sessionStorage.removeItem(ROLE_KEY); } catch (e) {} }
+  function staffList() {
+    if (!Array.isArray(settings.staff)) settings.staff = [];
+    if (settings.staffHash) { if (!settings.staff.some(x => x.hash === settings.staffHash)) settings.staff.push({ id: uid(), name: 'Staff', hash: settings.staffHash }); settings.staffHash = ''; }
+    return settings.staff;
+  }
+  const STAFF_NAME_KEY = 'billaura_staff_name_v1';
+  function staffName() { try { return sessionStorage.getItem(STAFF_NAME_KEY) || 'Staff'; } catch (e) { return 'Staff'; } }
   function isStaff() { return lockEnabled() && getRole() === 'staff'; }
   async function pinHash(pin) {
     const str = `${settings.pinSalt || ''}:${pin}`;
@@ -1120,7 +1127,7 @@
     if (Date.now() < _pinWaitUntil) { renderLock(el, '', `Too many tries. Wait ${Math.ceil((_pinWaitUntil - Date.now()) / 1000)}s`); return; }
     const h = await pinHash(entered);
     if (h === settings.pinHash) { _pinFails = 0; setRole('owner'); hideLock(); render(); return; }
-    if (settings.staffHash && h === settings.staffHash) { _pinFails = 0; setRole('staff'); hideLock(); setView('dashboard'); return; }
+    { const sf = staffList().find(x => x.hash === h); if (sf) { _pinFails = 0; setRole('staff'); try { sessionStorage.setItem(STAFF_NAME_KEY, sf.name); } catch (e) {} hideLock(); setView('dashboard'); return; } }
     _pinFails++;
     if (_pinFails >= 5) { _pinWaitUntil = Date.now() + 30000; _pinFails = 0; }
     const box = el.querySelector('.lock-box'); if (box) box.classList.add('shake');
@@ -1141,19 +1148,25 @@
       const pw = el.querySelector('#lockPw').value;
       const email = HisablyCloud.getSession().user.email;
       rb.disabled = true;
-      try { await HisablyCloud.signIn(email, pw); settings.pinHash = ''; settings.staffHash = ''; persist(); setRole('owner'); hideLock(); toast('PIN lock removed'); render(); }
+      try { await HisablyCloud.signIn(email, pw); settings.pinHash = ''; settings.staffHash = ''; settings.staff = []; persist(); setRole('owner'); hideLock(); toast('PIN lock removed'); render(); }
       catch (e) { toast('Wrong password'); rb.disabled = false; }
     });
   }
-  function openPinModal(kind) {
+  async function openPinModal(kind, staffId) {
     const staff = kind === 'staff';
     if (!window.HisablyFreemium || !HisablyFreemium.hasFeature('passcode')) { toast('PIN lock and staff mode are Pro features.', 4500); openPlansModal && openPlansModal(); return; }
     if (staff && !settings.pinHash) { toast('Set the owner PIN first'); return; }
+    let sf = staff && staffId ? staffList().find(x => x.id === staffId) : null;
+    let sname = sf ? sf.name : '';
+    if (staff && !sf) {
+      sname = ((await askPrompt('Staff member name (shown on the bills they make)', '', { title: 'Add staff user' })) || '').trim();
+      if (!sname) return;
+    }
     let stage = 1, first = '';
     const draw = (entered, msg) => {
       const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'];
       $('#modalRoot').innerHTML = `<div class="lock-screen pin-setup"><div class="lock-box">
-        <div class="lock-title">${staff ? 'Staff PIN' : 'Owner PIN'}</div>
+        <div class="lock-title">${staff ? escapeHtml(sname) + ' – PIN' : 'Owner PIN'}</div>
         <div class="lock-sub">${escapeHtml(msg || (stage === 1 ? 'Choose a 4-digit PIN' : 'Repeat the PIN to confirm'))}</div>
         <div class="lock-dots">${[0, 1, 2, 3].map(i => `<span class="${i < entered.length ? 'on' : ''}"></span>`).join('')}</div>
         <div class="lock-pad">${keys.map(k => k === '' ? '<span></span>' : `<button type="button" data-k="${k}">${k}</button>`).join('')}</div>
@@ -1172,11 +1185,12 @@
       if (entered !== first) { stage = 1; first = ''; setTimeout(() => draw('', 'PINs did not match – try again'), 250); return; }
       if (!settings.pinSalt) settings.pinSalt = uid().replace(/-/g, '');
       const h = await pinHash(entered);
-      if (staff && h === settings.pinHash) { stage = 1; first = ''; draw('', 'Staff PIN must differ from owner PIN'); return; }
-      if (!staff && settings.staffHash && h === settings.staffHash) { stage = 1; first = ''; draw('', 'Owner PIN must differ from staff PIN'); return; }
-      if (staff) settings.staffHash = h; else { settings.pinHash = h; setRole('owner'); }
+      const clash = (staff && h === settings.pinHash) ? 'owner' : staffList().find(x => x.hash === h && (!sf || x.id !== sf.id));
+      if (clash) { stage = 1; first = ''; draw('', clash === 'owner' ? 'That is the owner PIN – pick another' : 'Used by ' + clash.name + ' – pick another'); return; }
+      if (staff) { if (sf) sf.hash = h; else staffList().push({ id: uid(), name: sname, hash: h }); }
+      else { settings.pinHash = h; setRole('owner'); }
       persist(); closeModal();
-      toast(staff ? 'Staff PIN saved' : 'Owner PIN saved. The app will lock when you leave it.', 3500);
+      toast(staff ? sname + ' can now sign in with the PIN' : 'Owner PIN saved. The app will lock when you leave it.', 3500);
       if (currentView === 'app-lock') render(); else setView('app-lock');
     };
     draw('');
@@ -1187,11 +1201,12 @@
     const pro = HisablyFreemium.hasFeature('passcode');
     return `<div class="fade-in" style="padding:16px 0 28px">
       <div class="doc-card" style="margin:0 16px 12px"><div style="font-weight:800;font-size:1.05rem">${on ? '🔒 App lock is ON' : '🔓 App lock is OFF'}</div>
-        <div class="text-sm text-secondary" style="margin-top:4px">${on ? 'The app asks for a PIN when you open it.' + (settings.staffHash ? ' Staff PIN is set.' : ' No staff PIN yet.') : 'Protect your shop data with a 4-digit PIN, and give your staff a limited login.'}</div>
+        <div class="text-sm text-secondary" style="margin-top:4px">${on ? 'The app asks for a PIN when you open it.' + (staffList().length ? ' ' + staffList().length + ' staff user(s).' : ' No staff users yet.') : 'Protect your shop data with a 4-digit PIN, and give your staff a limited login.'}</div>
         ${pro ? '' : '<div class="text-sm" style="color:#B45309;margin-top:8px">PIN lock and staff mode need the Pro or Lifetime plan.</div>'}</div>
       <div class="list-group">
         ${row(on ? 'Change owner PIN' : 'Set owner PIN', 'data-action="pin-set-owner"')}
-        ${on ? row(settings.staffHash ? 'Change staff PIN' : 'Set staff PIN', 'data-action="pin-set-staff"') : ''}
+        ${on ? staffList().map(x => `<div class="list-row" style="cursor:default"><div class="list-row-left"><div><div class="list-row-label">👤 ${escapeHtml(x.name)}</div><div class="list-row-sub">Staff user</div></div></div><div class="list-row-right" style="display:flex;gap:6px"><button class="chip-btn" data-action="staff-edit" data-id="${x.id}">Change PIN</button><button class="chip-btn" style="color:#E11D48" data-action="staff-del" data-id="${x.id}">Remove</button></div></div>`).join('') : ''}
+        ${on ? row('+ Add staff user', 'data-action="pin-set-staff"') : ''}
         ${on ? row('Lock app now', 'data-action="lock-now"') : ''}
         ${on ? row('Remove PIN lock', 'data-action="pin-remove"', true) : ''}
       </div>
@@ -1216,10 +1231,10 @@
     const ok = window.HisablyFreemium && HisablyFreemium.hasFeature('passcode');
     return `<div class="doc-card" style="margin-top:12px">
       <div class="doc-label">App lock &amp; staff ${ok ? '' : '<span style="font-size:10px;background:var(--primary);color:#fff;border-radius:6px;padding:1px 6px;margin-left:6px">PRO</span>'}</div>
-      <div class="text-sm text-secondary mb-8">${settings.pinHash ? 'Lock is ON.' + (settings.staffHash ? ' Staff PIN is set.' : ' No staff PIN yet.') : 'Protect the app with a PIN and give your staff a limited login.'}</div>
+      <div class="text-sm text-secondary mb-8">${settings.pinHash ? 'Lock is ON.' + (staffList().length ? ' ' + staffList().length + ' staff user(s).' : ' No staff users yet.') : 'Protect the app with a PIN and give your staff a limited login.'}</div>
       <div class="flex gap-8" style="flex-wrap:wrap">
         <button type="button" class="btn btn-secondary btn-sm" data-action="pin-set-owner">${settings.pinHash ? 'Change owner PIN' : 'Set owner PIN'}</button>
-        ${settings.pinHash ? `<button type="button" class="btn btn-secondary btn-sm" data-action="pin-set-staff">${settings.staffHash ? 'Change staff PIN' : 'Set staff PIN'}</button>
+        ${settings.pinHash ? `<button type="button" class="btn btn-secondary btn-sm" data-action="pin-set-staff">${staffList().length ? 'Staff users' : 'Add staff user'}</button>
         <button type="button" class="btn btn-ghost btn-sm" data-action="pin-remove">Remove lock</button>` : ''}
       </div></div>`;
   }
@@ -1559,12 +1574,12 @@
         ${isPur ? `<div class="doc-card doc-head"><div class="doc-label" style="margin:0">Supplier bill no. (optional)</div><input type="text" class="doc-date-input" name="billNo" maxlength="20" style="max-width:150px;border-bottom:1px solid var(--border)" /></div>` : ''}
         ${isEst ? `<div class="doc-card doc-head"><div class="doc-label" style="margin:0">Valid until (optional)</div><input type="date" class="doc-date-input" name="validUntil" /></div>` : ''}
         <div class="doc-card">
-          <div class="doc-label">${isPur ? 'Supplier' : 'Bill to'}</div>
-          ${isPur ? customSelect('customerId', supplierOptions, '', 'Select supplier', true) : customSelect('customerId', customerOptions, '', 'Walk-in Customer', true)}
-          <div class="form-row mt-8">
-            <input type="text" class="form-input" name="customerName" id="customerNameInput" placeholder="${isPur ? 'Or type supplier name' : 'Or type customer name'}" />
-            <input type="tel" class="form-input" name="customerPhone" id="customerPhoneInput" placeholder="Phone (optional)" />
-          </div>
+          <div class="pm-f pm-sel"><span class="pm-fl">${isPur ? 'Supplier' : 'Customer'}</span>${isPur ? customSelect('customerId', supplierOptions, '', 'Select supplier', true) : customSelect('customerId', customerOptions, '', 'Walk-in Customer', true)}</div>
+          <div class="pm-f"><span class="pm-fl">${isPur ? 'Or type supplier name' : 'Or type customer name'}</span><input type="text" name="customerName" id="customerNameInput" /></div>
+          <div class="pm-f"><span class="pm-fl">Phone Number (optional)</span><input type="tel" inputmode="tel" name="customerPhone" id="customerPhoneInput" /></div>
+          ${(!isPur && settings.enableBillingName) ? '<div class="pm-f"><span class="pm-fl">Billing name (printed on invoice)</span><input type="text" name="billingName" /></div>' : ''}
+          ${(!isPur && !isRet && settings.enablePODetails) ? '<div class="pm-f"><span class="pm-fl">PO number</span><input type="text" name="poNo" /></div><div class="pm-f"><span class="pm-fl">PO date</span><input type="date" name="poDate" /></div>' : ''}
+        </div>
           ${(!isPur && settings.enableBillingName) ? '<input type="text" class="form-input mt-8" name="billingName" placeholder="Billing name (printed on invoice)" />' : ''}
           ${(!isPur && !isRet && settings.enablePODetails) ? '<div class="form-row mt-8"><input type="text" class="form-input" name="poNo" placeholder="PO number" /><input type="date" class="form-input" name="poDate" /></div>' : ''}
         </div>
@@ -1925,7 +1940,7 @@
       };
       if (isRet && ref) { meta.refId = ref.id; meta.refNumber = ref.number; }
       if (isEst) { const vu = fd.get('validUntil'); if (vu) meta.validUntil = vu; }
-      if (isStaff()) meta.by = 'Staff';
+      if (isStaff()) meta.by = staffName();
       if (!isPur) meta.rb = fd.has('rb') ? 1 : 0;
       { const bn = (fd.get('billingName') || '').trim(); if (bn) meta.billingName = bn; const po = (fd.get('poNo') || '').trim(); if (po) meta.po = po; const pd = fd.get('poDate'); if (pd) meta.poDate = pd; }
       { const dd = fd.get('dueDate'); if (dd && !isRet && !isEst && paymentStatus !== 'paid') meta.dueDate = dd; }
@@ -3162,6 +3177,80 @@
 
 
   // ---------- Payment reminders + service reminders ----------
+
+  // ---------- Daily summary, low-stock alert, reminder queue ----------
+  function lowStockItems() { return products.filter(p => (Number(p.stock) || 0) <= (Number(p.lowStock) || settings.lowStockDefault || 5)); }
+  function dailySummary(dayIso) {
+    const day = dayIso || new Date().toISOString().slice(0, 10);
+    const same = d => { const x = new Date(d); return !isNaN(x) && (x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0')) === day; };
+    const docs = invoices.filter(i => same(i.date));
+    const sales = docs.filter(i => (i.docType || 'sale') === 'sale');
+    const returns = docs.filter(i => i.docType === 'return');
+    const sum = (arr, f) => round2(arr.reduce((a, x) => a + (Number(f(x)) || 0), 0));
+    const saleTotal = sum(sales, i => i.total), retTotal = sum(returns, i => i.total);
+    const received = sum(sales, i => i.paidAmount);
+    const exp = sum(expenses.filter(e => same(e.date)), e => e.amount);
+    const buys = sum(purchases.filter(p => same(p.date)), p => p.total);
+    const byItem = {};
+    sales.forEach(i => (i.items || []).forEach(it => { byItem[it.name] = (byItem[it.name] || 0) + (it.price || 0) * (it.qty || 0); }));
+    const top = Object.entries(byItem).sort((a, b) => b[1] - a[1]).slice(0, 3);
+    return { day, count: sales.length, saleTotal, retTotal, received, credit: round2(saleTotal - received), exp, buys, top, low: lowStockItems().length };
+  }
+  function dailySummaryText() {
+    const d = dailySummary(), c = settings.currency || 'Rs';
+    let t = `📊 *${settings.businessName || 'Billaura'}* – Daily summary\n${formatDate(d.day)}\n\n`;
+    t += `🧾 Sales: *${c} ${money(d.saleTotal)}* (${d.count} bill${d.count === 1 ? '' : 's'})\n`;
+    t += `💵 Received: ${c} ${money(d.received)}\n`;
+    t += `⏳ On credit: ${c} ${money(d.credit)}\n`;
+    if (d.retTotal) t += `↩️ Returns: ${c} ${money(d.retTotal)}\n`;
+    t += `💸 Expenses: ${c} ${money(d.exp)}\n`;
+    if (d.buys) t += `🛒 Purchases: ${c} ${money(d.buys)}\n`;
+    if (d.top.length) t += `\n🏆 Top items:\n` + d.top.map((x, i) => `${i + 1}. ${x[0]} – ${c} ${money(x[1])}`).join('\n') + '\n';
+    const recv = customers.reduce((a, x) => a + customerBalance(x.id, x.name, x.phone).due, 0);
+    if (recv > 0) t += `\n📥 Total to collect: ${c} ${money(recv)}\n`;
+    if (d.low) t += `⚠️ ${d.low} item(s) low on stock\n`;
+    t += `\nGenerated with Billaura`;
+    return t;
+  }
+  function sendDailySummary() {
+    const num = settings.ownerWhatsapp || settings.storeWhatsapp || settings.phone || '';
+    settings.summarySentOn = new Date().toISOString().slice(0, 10); persist();
+    if (num) sendWhatsApp(num, dailySummaryText()); else window.open('https://wa.me/?text=' + encodeURIComponent(dailySummaryText()), '_blank');
+  }
+  function homeAlerts() {
+    let h = '';
+    const today = new Date().toISOString().slice(0, 10);
+    const low = lowStockItems();
+    if (low.length && settings.lowDismissed !== today) {
+      const out = low.filter(p => (Number(p.stock) || 0) <= 0).length;
+      h += `<div class="home-alert warn"><div class="ha-t"><b>${low.length} item${low.length === 1 ? '' : 's'} low on stock</b><span>${out ? out + ' out of stock · ' : ''}${escapeHtml(low.slice(0, 2).map(p => p.name).join(', '))}${low.length > 2 ? '…' : ''}</span></div><button data-view="low-stock">View</button><button class="x" data-action="dismiss-low" aria-label="Dismiss">✕</button></div>`;
+    }
+    if (!isStaff() && new Date().getHours() >= 19 && settings.summarySentOn !== today && settings.summaryPrompt !== false && invoices.some(i => new Date(i.date).toISOString().slice(0, 10) === today)) {
+      h += `<div class="home-alert info"><div class="ha-t"><b>Today's summary is ready</b><span>Send your sales report on WhatsApp</span></div><button data-action="send-daily-summary">Send</button><button class="x" data-action="dismiss-summary" aria-label="Dismiss">✕</button></div>`;
+    }
+    return h;
+  }
+  let _remQueue = [];
+  function openRemindQueue() {
+    const rows = customers.map(c => ({ c, due: customerBalance(c.id, c.name, c.phone).due })).filter(x => x.due > 0.001 && x.c.phone).sort((a, b) => b.due - a.due);
+    const today = new Date().toISOString().slice(0, 10);
+    _remQueue = rows.filter(x => (settings.remindedOn || {})[x.c.id] !== today).map(x => x.c.id);
+    window._rqTotal = _remQueue.length;
+    drawRemindQueue(_remQueue.length);
+  }
+  function drawRemindQueue(total) {
+    const cur = settings.currency || 'Rs';
+    const c = customers.find(x => x.id === _remQueue[0]);
+    const done = (total || 0) - _remQueue.length;
+    $('#modalRoot').innerHTML = modalShell('Send reminders', c ? `<div style="text-align:center;padding:6px 0 14px"><div class="text-sm text-secondary">${done} of ${total} done</div>
+      <div class="rq-bar"><i style="width:${total ? Math.round(done / total * 100) : 0}%"></i></div>
+      <div style="font-size:1.2rem;font-weight:800;margin-top:14px">${escapeHtml(c.name)}</div>
+      <div style="color:#E11D48;font-weight:700;margin:4px 0 14px">Due ${cur} ${money(customerBalance(c.id, c.name, c.phone).due)}</div>
+      <button class="btn btn-primary btn-block btn-lg" data-action="rq-send" data-id="${c.id}">Send on WhatsApp</button>
+      <button class="btn btn-ghost btn-block mt-8" data-action="rq-skip">Skip</button></div>`
+      : `<div style="text-align:center;padding:18px 0"><div style="font-size:2.2rem">✅</div><div style="font-weight:800;margin-top:6px">All reminders sent</div><p class="text-sm text-secondary mt-8">${total ? 'Everyone with a pending balance and a phone number has been reminded today.' : 'No customers with a pending balance and a phone number.'}</p><button class="btn btn-primary btn-block mt-12" data-action="close-modal">Done</button></div>`);
+  }
+
   function viewPaymentReminders() {
     const cur = settings.currency || 'Rs';
     const rows = customers.map(c => ({ c, due: customerBalance(c.id, c.name, c.phone).due })).filter(x => x.due > 0.001).sort((a, b) => b.due - a.due);
@@ -3169,8 +3258,9 @@
     const overdueDoc = c => custDocs(c).filter(i => docSign(i) > 0 && (i.total || 0) - (i.paidAmount || 0) > 0.001 && i.meta && i.meta.dueDate && new Date(i.meta.dueDate) < new Date()).length;
     return `<div class="fade-in" style="padding:14px 0 24px">
       <div class="doc-card" style="margin:0 16px 12px"><div class="text-sm text-secondary">Total to collect from ${rows.length} part${rows.length === 1 ? 'y' : 'ies'}</div><div style="font-size:1.5rem;font-weight:800;color:#0E9F6E">${cur} ${money(total)}</div></div>
-      ${rows.length ? `<div class="list-group">${rows.map(({ c, due }) => { const od = overdueDoc(c); return `<div class="list-row" style="cursor:default"><div class="list-row-left" style="min-width:0"><div><div class="list-row-label">${escapeHtml(c.name)}</div><div class="text-sm" style="color:#0E9F6E">To get ${cur} ${money(due)}${od ? ` <span style="color:#E11D48">· ${od} overdue</span>` : ''}</div>${c.phone ? '' : '<div class="text-sm text-secondary">No phone number</div>'}</div></div>
-          <div class="list-row-right" style="display:flex;gap:6px"><button class="chip-btn" data-action="remind-sms" data-id="${c.id}">SMS</button><button class="btn btn-primary btn-sm" data-action="remind-customer" data-id="${c.id}">WhatsApp</button></div></div>`; }).join('')}</div>`
+      ${rows.some(x => x.c.phone) ? `<div style="padding:0 16px 12px"><button class="btn btn-primary btn-block" data-action="remind-all">Send reminders to all (${rows.filter(x => x.c.phone).length})</button></div>` : ''}
+      ${rows.length ? `<div class="list-group">${rows.map(({ c, due }) => { const od = overdueDoc(c); const rem = (settings.remindedOn || {})[c.id]; return `<div class="list-row" style="cursor:default"><div class="list-row-left" style="min-width:0"><div><div class="list-row-label">${escapeHtml(c.name)}</div><div class="text-sm" style="color:#0E9F6E">To get ${cur} ${money(due)}${od ? ` <span style="color:#E11D48">· ${od} overdue</span>` : ''}${rem ? ` <span style="color:#6B7287">· reminded ${formatDate(rem)}</span>` : ''}</div>${c.phone ? '' : '<div class="text-sm text-secondary">No phone number</div>'}</div></div>
+          <div class="list-row-right" style="display:flex;gap:6px"><button class="chip-btn" data-action="open-statement" data-id="${c.id}">Statement</button><button class="chip-btn" data-action="remind-sms" data-id="${c.id}">SMS</button><button class="btn btn-primary btn-sm" data-action="remind-customer" data-id="${c.id}">WhatsApp</button></div></div>`; }).join('')}</div>`
         : '<div class="empty-state"><p>No pending balances — great job!</p></div>'}
     </div>`;
   }
@@ -3342,26 +3432,43 @@
     </div>`;
   }
 
+  // ---------- Barcode label printing ----------
+  const LB = { sel: {}, q: '' };
+  function lbCode(p) { return p.barcode || ('BIL' + String(p.id).replace(/\W/g, '').slice(-8).toUpperCase()); }
+  function lbSettings() { return Object.assign({ size: '50x30', name: true, price: true, shop: false, code: true }, settings.labelPrefs || {}); }
+  function lbItems() {
+    const pf = lbSettings();
+    return Object.keys(LB.sel).filter(id => LB.sel[id] > 0).map(id => products.find(x => x.id === id)).filter(Boolean)
+      .map(p => ({ name: p.name, code: lbCode(p), priceText: money(p.price || 0), qty: LB.sel[p.id] }));
+  }
+  function lbHTML() {
+    const pf = lbSettings();
+    return BillauraLabels.html(lbItems(), { size: pf.size, name: pf.name, price: pf.price, shop: pf.shop, code: pf.code, shopName: settings.businessName, currency: settings.currency });
+  }
   function viewBarcodeGen() {
-    const list = products.filter(p => p.name);
-    return `<div class="fade-in">
-      <div class="section-title">Generate barcodes for items</div>
-      <div class="list-group">
-        ${list.length === 0 ? '<div class="list-row" style="cursor:default"><div class="list-row-label">Add products first</div></div>' :
-          list.map(p => {
-            const code = p.barcode || ('BIL' + String(p.id).replace(/\W/g,'').slice(-8).toUpperCase());
-            return `<div class="list-row" data-action="gen-barcode" data-id="${p.id}" data-code="${escapeHtml(code)}">
-              <div class="list-row-left">
-                <div class="list-row-label">${escapeHtml(p.name)}</div>
-                <div class="list-row-sub">${escapeHtml(code)}</div>
-              </div>
-              <button class="btn btn-outline btn-sm" data-action="gen-barcode" data-id="${p.id}" data-code="${escapeHtml(code)}">Generate</button>
-            </div>`;
-          }).join('')}
+    const pf = lbSettings();
+    const q = (LB.q || '').toLowerCase();
+    const list = products.filter(p => p.name && (!q || p.name.toLowerCase().includes(q) || String(p.barcode || '').includes(q)));
+    const total = Object.values(LB.sel).reduce((a, n) => a + (n > 0 ? n : 0), 0);
+    const tg = (k, label) => `<button type="button" class="cat-chip ${pf[k] ? 'active' : ''}" data-action="lb-flag" data-k="${k}">${label}</button>`;
+    return `<div class="fade-in" style="padding-bottom:86px">
+      <div class="doc-card" style="margin:12px 16px">
+        <button type="button" class="ps-field" data-action="lb-size"><span><small style="color:#6B7287;display:block;font-size:.72rem">Label size</small><b>${escapeHtml(BillauraLabels.SIZES[pf.size].name)}</b></span><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>
+        <div class="chip-row mt-8">${tg('name', 'Item name')}${tg('price', 'Price')}${tg('code', 'Code text')}${tg('shop', 'Shop name')}</div>
       </div>
-      <div id="barcodePreview" style="padding:16px;text-align:center"></div>
-      <p class="text-sm text-secondary text-center" style="padding:0 16px 16px">Tap Generate to create a barcode label. Print from the browser print dialog.</p>
+      <div style="display:flex;gap:8px;padding:0 16px 8px"><input type="search" class="search-input" style="flex:1" id="lbSearch" placeholder="Search items…" value="${escapeHtml(LB.q || '')}" /></div>
+      <div style="display:flex;gap:8px;padding:0 16px 8px;flex-wrap:wrap"><button class="chip-btn" data-action="lb-all">Select all</button><button class="chip-btn" data-action="lb-stock">1 per stock unit</button><button class="chip-btn" data-action="lb-clear">Clear</button></div>
+      ${list.length ? `<div class="list-group">${list.map(p => { const n = LB.sel[p.id] || 0; return `<div class="list-row" data-s="${escapeHtml((p.name + ' ' + lbCode(p)).toLowerCase())}" style="cursor:default"><div class="list-row-left" style="min-width:0"><div><div class="list-row-label">${escapeHtml(p.name)}</div><div class="list-row-sub">${escapeHtml(lbCode(p))} · ${settings.currency} ${money(p.price || 0)}</div></div></div>
+        <div class="stepper-lb"><button type="button" data-action="lb-step" data-id="${p.id}" data-d="-1" aria-label="Less">−</button><b>${n}</b><button type="button" data-action="lb-step" data-id="${p.id}" data-d="1" aria-label="More">+</button></div></div>`; }).join('')}</div>` : '<div class="empty-state"><p>No items found. Add items first.</p></div>'}
+      <div class="lb-bar"><div><div class="text-sm text-secondary">Labels</div><b style="font-size:1.1rem">${total}</b></div>
+        <button class="btn btn-outline" data-action="lb-preview" ${total ? '' : 'disabled'}>Preview</button><button class="btn btn-primary" data-action="lb-print" ${total ? '' : 'disabled'}>Print</button></div>
     </div>`;
+  }
+  function lbPreview() {
+    const html = lbHTML();
+    const pf = lbSettings(), S = BillauraLabels.SIZES[pf.size];
+    $('#modalRoot').innerHTML = modalShell('Label preview', `<div style="background:#EEF0F6;border-radius:12px;padding:8px;overflow:hidden"><iframe sandbox="allow-same-origin" style="width:100%;height:${S.sheet ? 380 : 220}px;border:0;background:#fff;border-radius:8px" srcdoc="${html.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"></iframe></div>
+      <button class="btn btn-primary btn-block mt-12" data-action="lb-print">Print labels</button>`);
   }
 
   function viewBalanceSheet() {
@@ -3547,7 +3654,7 @@
       color: settings.invoiceColor || '#EF1A3C',
       links: (settings.storeLinks || []).map(l => ({ label: l.label, url: l.url })),
       currency: settings.currency || 'PKR',
-      items: products.map(p => ({ name: p.name, price: p.price, unit: p.unit || '', category: p.category || '', stock: p.stock })).slice(0, 150)
+      items: products.map(p => ({ name: p.name, price: p.price, unit: p.unit || '', category: p.category || '', stock: p.stock })).slice(0, 400)
     };
     const h = await packCatalog(catalog);
     if (silent && h === settings._storeHash) return catalog.items.length;
@@ -5235,7 +5342,7 @@
       }).join('')}</div>` : `<div class="art-empty">${ico('users')}<div>No parties yet.</div><button class="btn btn-outline" data-action="add-customer">+ Add Party</button></div>`;
     }
     return `<div class="fade-in" style="padding-bottom:90px">${tabs}
-      <div style="height:12px"></div>${quick}
+      <div style="height:12px"></div>${homeAlerts()}${quick}
       <div class="vy-search"><div class="search-wrap" style="margin:0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><input type="search" class="search-input" id="homeSearch" placeholder="Search ${homeTab === 'txn' ? 'transactions' : 'parties'}…" value="${escapeHtml(homeQuery)}"/></div></div>
       ${body}</div>
       <button class="fab-pill" data-view="create-invoice">${ico('plus')} Add New Sale</button>`;
@@ -5256,13 +5363,14 @@
   function openMoreSheet() {
     sheet(`<div class="sheet-grid">${sheetItem('bank', 'Bank Accounts', 'data-view="banks"')}${sheetItem('book', 'Day Book', 'data-view="daybook-detail"')}${sheetItem('docs', 'All Txns Report', 'data-view="invoices"')}
       ${sheetItem('pl', 'Profit & Loss', 'data-view="profit-loss"')}${sheetItem('report', 'Balance Sheet', 'data-view="balance-sheet"')}${sheetItem('pl', 'Billwise PnL', 'data-view="bill-pnl"')}
-      ${sheetItem('print', 'Print Settings', 'data-view="print-settings"')}</div>`, 'More Options');
+      ${sheetItem('print', 'Print Settings', 'data-view="print-settings"')}
+      ${sheetItem('whatsapp', 'Daily Summary', 'data-action="send-daily-summary"')}${sheetItem('docs', 'Barcode Labels', 'data-view="barcode-gen"')}${sheetItem('bell', 'Reminders', 'data-view="payment-reminders"')}</div>`, 'More Options');
   }
   function openTxnMore(inv) {
     const isSale = (inv.docType || 'sale') === 'sale';
     const due = Math.max(0, (inv.total || 0) - (inv.paidAmount || 0));
     const b = (a, l) => `<button data-action="${a}" data-id="${inv.id}">${l}</button>`;
-    sheet(`<div class="sheet-list">${b('duplicate-invoice', 'Duplicate')}${isSale && due > 0 ? b('quick-receive', 'Receive Payment') : ''}${isSale ? b('return-from-invoice', 'Return') : ''}${b('delivery-note', 'Delivery Note')}${b('pdf-invoice', 'Share as PDF')}${b('view-invoice', 'Open / Edit payments')}${b('delete-invoice', '<span style="color:#EF1A3C">Delete</span>')}</div>`, 'More Options');
+    sheet(`<div class="sheet-list">${b('duplicate-invoice', 'Duplicate')}${isSale && due > 0 ? b('quick-receive', 'Receive Payment') : ''}${isSale ? b('return-from-invoice', 'Return') : ''}${b('delivery-note', 'Delivery Note')}${b('pdf-invoice', 'Download PDF')}${b('download-image', 'Download Image')}${b('view-invoice', 'Open / Edit payments')}${b('delete-invoice', '<span style="color:#EF1A3C">Delete</span>')}</div>`, 'More Options');
   }
   function openShareSheet(inv) {
     const b = (a, ic, l) => `<button class="ql" data-action="${a}" data-id="${inv.id}"><div class="ql-ic" style="background:#EEF3FA">${ico(ic)}</div><span>${l}</span></button>`;
@@ -5540,6 +5648,12 @@
     } catch (e) {}
   }
   // ---------- Global Event Delegation ----------
+  document.addEventListener('input', e => {
+    if (e.target && e.target.id === 'lbSearch') {
+      LB.q = e.target.value; const q = LB.q.trim().toLowerCase();
+      document.querySelectorAll('.list-row[data-s]').forEach(r => { r.style.display = (!q || r.dataset.s.includes(q)) ? '' : 'none'; });
+    }
+  });
   document.addEventListener('click', async e => {
     // Close open custom dropdowns when clicking outside
     if (!e.target.closest('.custom-select')) {
@@ -5826,6 +5940,14 @@
         persist(); toast('Income recorded'); setView('other-income');
         break;
       }
+      case 'lb-flag': { const pf = lbSettings(); pf[t.dataset.k] = !pf[t.dataset.k]; settings.labelPrefs = pf; persist(); render(); break; }
+      case 'lb-size': { const pf = lbSettings(); pickSheet({ title: 'Label size', selected: pf.size, search: false, options: Object.keys(BillauraLabels.SIZES).map(k => ({ value: k, label: BillauraLabels.SIZES[k].name })), onPick: v => { pf.size = v; settings.labelPrefs = pf; persist(); render(); } }); break; }
+      case 'lb-step': { const p = products.find(x => x.id === id); if (!p) break; LB.sel[id] = Math.max(0, Math.min(500, (LB.sel[id] || 0) + Number(t.dataset.d))); if (LB.sel[id] && !p.barcode) { p.barcode = lbCode(p); persist(); } render(); break; }
+      case 'lb-all': products.forEach(p => { if (p.name) { LB.sel[p.id] = LB.sel[p.id] || 1; if (!p.barcode) p.barcode = lbCode(p); } }); persist(); render(); break;
+      case 'lb-stock': products.forEach(p => { if (p.name) { LB.sel[p.id] = Math.max(1, Math.min(500, Math.round(Number(p.stock) || 1))); if (!p.barcode) p.barcode = lbCode(p); } }); persist(); render(); break;
+      case 'lb-clear': LB.sel = {}; render(); break;
+      case 'lb-preview': lbPreview(); break;
+      case 'lb-print': { if (!lbItems().length) { toast('Pick items first'); break; } BillauraLabels.print(lbHTML()).catch(() => toast('Could not open print')); break; }
       case 'gen-barcode': {
         const code = t.dataset.code || '';
         const id = t.dataset.id;
@@ -5986,6 +6108,12 @@
       }
       case 'open-payment-reminders': setView('payment-reminders'); break;
       case 'open-service-reminders': setView('service-reminders'); break;
+      case 'remind-all': openRemindQueue(); break;
+      case 'rq-send': { const c = customers.find(x => x.id === id); if (c) { sendWhatsApp(c.phone, reminderText(c)); (settings.remindedOn = settings.remindedOn || {})[c.id] = new Date().toISOString().slice(0, 10); persist(); } const tot = _remQueue.length; _remQueue.shift(); drawRemindQueue(window._rqTotal || tot); break; }
+      case 'rq-skip': _remQueue.shift(); drawRemindQueue(window._rqTotal || 0); break;
+      case 'send-daily-summary': sendDailySummary(); render(); break;
+      case 'dismiss-summary': settings.summarySentOn = new Date().toISOString().slice(0, 10); persist(); render(); break;
+      case 'dismiss-low': settings.lowDismissed = new Date().toISOString().slice(0, 10); persist(); render(); break;
       case 'remind-sms': { const c = customers.find(x => x.id === id); if (!c) break; if (!c.phone) { toast('No phone number saved for ' + c.name); break; } window.location.href = 'sms:' + String(c.phone).replace(/[^\d+]/g, '') + '?body=' + encodeURIComponent(reminderText(c)); break; }
       case 'sr-edit': openSrModal(id); break;
       case 'sr-save': {
@@ -6027,8 +6155,10 @@
       }
       case 'pin-set-owner': openPinModal('owner'); break;
       case 'pin-set-staff': openPinModal('staff'); break;
+      case 'staff-edit': openPinModal('staff', id); break;
+      case 'staff-del': { const x = staffList().find(y => y.id === id); if (x && await askConfirm('Remove ' + x.name + '? They will no longer be able to sign in.', { okText: 'Remove', danger: true })) { settings.staff = staffList().filter(y => y.id !== id); persist(); render(); } break; }
       case 'pin-remove':
-        if (await askConfirm('Remove the PIN lock and staff PIN?')) { settings.pinHash = ''; settings.staffHash = ''; persist(); setRole(''); toast('Lock removed'); if (currentView === 'app-lock') render(); else openSettingsModal(); }
+        if (await askConfirm('Remove the PIN lock and all staff users?')) { settings.pinHash = ''; settings.staffHash = ''; settings.staff = []; persist(); setRole(''); toast('Lock removed'); if (currentView === 'app-lock') render(); else openSettingsModal(); }
         break;
       case 'home-tab': homeTab = t.dataset.tab; homeQuery = ''; render(); break;
       case 'sheet-add-txn': openAddTxnSheet(); break;
@@ -6156,7 +6286,7 @@
       case 'open-statement': { const c = customers.find(x => x.id === id); if (c) openStatement(c); break; }
       case 'statement-pdf': { const c = customers.find(x => x.id === id); if (c) statementPDF(c); break; }
       case 'statement-wa': { const c = customers.find(x => x.id === id); if (c) sendWhatsApp(c.phone, statementText(c)); break; }
-      case 'remind-customer': { const c = customers.find(x => x.id === id); if (c) sendWhatsApp(c.phone, reminderText(c)); break; }
+      case 'remind-customer': { const c = customers.find(x => x.id === id); if (c) { sendWhatsApp(c.phone, reminderText(c)); (settings.remindedOn = settings.remindedOn || {})[c.id] = new Date().toISOString().slice(0, 10); persist(); if (currentView === 'payment-reminders') setTimeout(render, 300); } break; }
       case 'remind-invoice': { const inv = invoices.find(x => x.id === id); if (inv) { const c = custOfInvoice(inv); sendWhatsApp(c.phone, reminderText(c, inv)); } break; }
       case 'db-range': dbRange = t.dataset.v; render(); break;
       case 'db-mode': dbMode = t.dataset.v; render(); break;

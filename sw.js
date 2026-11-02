@@ -1,5 +1,5 @@
 /* Hisably service worker – offline app shell + cached libraries */
-const CACHE = 'billaura-v30';
+const CACHE = 'billaura-v32';
 
 const LOCAL_ASSETS = [
   './',
@@ -8,6 +8,7 @@ const LOCAL_ASSETS = [
   './js/receipt.js',
   './js/templates.js',
   './js/ui.js',
+  './js/labels.js',
   './css/vyapar.css',
   './js/app.js',
   './js/freemium.js',
