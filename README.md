@@ -1,6 +1,6 @@
 # Billaura – Smart Billing & Business
 
-Vyapar-inspired mobile billing app for inventory, invoices, parties, reports and more.
+Modern mobile billing app for inventory, invoices, parties, reports and more.
 
 ## Branding
 - **Name**: Billaura
@@ -35,8 +35,8 @@ Add to Home Screen for PWA use.
 ## Data
 Browser localStorage. Use **Backup / Restore** regularly. Optional Supabase sync.
 
-## Billaura update (Vyapar-style)
-- New red "B" logo + icons, Vyapar-like theme (css/vyapar.css)
+## Billaura update (Billaura-style)
+- New red "B" logo + icons, theme (css/theme.css)
 - Fixed dead buttons / missing functions (modals, scanner, favourites, invoice open, custom items, POS)
 - New Invoice Theme screen: 7 templates, 10 colours, text size, page size, orientation (js/templates.js)
 - PDF / print / share-image now use the chosen template; Delivery Note
@@ -47,7 +47,7 @@ Browser localStorage. Use **Backup / Restore** regularly. Optional Supabase sync
 
 
 ## v6 changes
-Category & payment-type sheets, Vyapar Sale screen (Credit/Cash switch, Share+Save), 7 new print themes, payment & service reminders, download PDF/Image buttons, flat-amount tax, no more periodic blink, fixed layout of sheets, brand logo on lock/sign-in.
+Category & payment-type sheets, Sale screen (Credit/Cash switch, Share+Save), 7 new print themes, payment & service reminders, download PDF/Image buttons, flat-amount tax, no more periodic blink, fixed layout of sheets, brand logo on lock/sign-in.
 
 ## v7
 All browser popups (alert/confirm/prompt), dropdowns, date pickers, suggestion lists and checkboxes now use the app's own styled controls (js/ui.js).
@@ -73,3 +73,9 @@ Your store can have an address like `yoursite/billaura/store/my-shop-name` inste
 2. In the app: sign in to the cloud → Online Store → **Update Store Page**. A name is picked from your business name; tap **Change name** to choose your own.
 3. Keep `404.html` in the site root – GitHub Pages uses it to turn `/store/<name>` into the store page.
 Without the setup (or while signed out) the long link keeps working.
+
+## Desktop version
+On screens 900px wide or more, Billaura switches to a desktop layout: a left sidebar (Home, Dashboard, Sale, Purchases, Items, Parties, Expenses, Reports, Cash & Bank, Online Store, All Menu, Settings), two-column lists, centred dialogs, and an invoice form with totals/payment in a side panel. Phones keep the bottom-nav layout. On Windows/Mac open the site in Chrome or Edge and choose **Install app** to get it in its own window.
+
+## Windows app (.exe)
+Run **Actions → Build Windows app → Run workflow** on GitHub, then download the installer from the run's *Artifacts*. See `desktop/README.md`.

@@ -18,7 +18,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'" />
   <link rel="stylesheet" href="css/styles.css" />
-  <link rel="stylesheet" href="css/vyapar.css" />
+  <link rel="stylesheet" href="css/theme.css" />
 </head>
 <body>
   <div id="bootScreen" class="splash">
@@ -46,6 +46,7 @@
     <button type="button" id="updateBtn" class="btn btn-sm">Update</button>
   </div>
   <div id="app" hidden>
+    <aside class="side-nav" id="sideNav" aria-label="Main menu"></aside>
     <header class="app-header" id="appHeader">
       <div class="header-left">
         <button class="icon-btn back-btn" id="backBtn" hidden aria-label="Back">
@@ -93,6 +94,10 @@
           <line x1="3" y1="18" x2="21" y2="18"/>
         </svg>
         <span>Menu</span>
+      </button>
+      <button class="nav-item nav-desktop" id="navDesktop" data-action="desktop-info" aria-label="PC App">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="12.5" rx="2"/><path d="M8 20.5h8M12 16.5v4"/><path d="M9 10.2l2.2 2.2 3.8-4.4" stroke="#EF1A3C"/></svg>
+        <span>PC App</span>
       </button>
     </nav>
 

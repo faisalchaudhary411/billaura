@@ -1,6 +1,6 @@
 /* ============================================
    Billaura – Smart Billing & Business
-   Vyapar-inspired modern mobile UI
+   Modern mobile billing UI
    ============================================ */
 
 :root {
@@ -150,7 +150,7 @@ body {
   padding-bottom: calc(var(--nav-height) + var(--safe-bottom) + 16px);
 }
 
-/* ========== BOTTOM NAV (Vyapar style) ========== */
+/* ========== BOTTOM NAV ========== */
 .bottom-nav {
   position: fixed;
   bottom: 0;
@@ -308,7 +308,7 @@ body {
   margin: 0;
 }
 
-/* ========== TOGGLE SWITCH (Vyapar style) ========== */
+/* ========== TOGGLE SWITCH ========== */
 .toggle {
   position: relative;
   width: 44px;
@@ -478,7 +478,7 @@ body {
 }
 .input-group .form-input { flex: 1; }
 
-/* Floating label style (Vyapar-like) */
+/* Floating label style */
 .field {
   position: relative;
   margin-bottom: 16px;

@@ -90,7 +90,7 @@
       currencies: [],
       remindersEnabled: false,
 
-      // Feature flags (Vyapar-style toggles)
+      // Feature flags (toggles)
       enableStock: true,
       enableItemUnits: true,
       enableItemCategory: true,
@@ -999,6 +999,36 @@
     if (cc && d.startsWith('0')) d = cc + d.slice(1);
     return d;
   }
+  // ---- Billaura Desktop promo ----
+  const DESKTOP_REL = 'https://github.com/faisalchaudhary411/billaura/releases/latest';
+  function desktopSite() { return location.origin + location.pathname.replace(/[^/]*$/, ''); }
+  function desktopMsg() {
+    return `Billaura Desktop\n\n1) On your PC open this link in Chrome or Edge, then choose "Install app":\n${desktopSite()}\n\n2) Or download the Windows app:\n${DESKTOP_REL}\n\nSign in with the same account to see your shop data on both.`;
+  }
+  function showDesktopSplash(done) {
+    let el = document.getElementById('deskSplash');
+    if (el) el.remove();
+    el = document.createElement('div');
+    el.id = 'deskSplash'; el.className = 'desk-splash';
+    el.innerHTML = `<div class="ds-glow"></div>
+      <img class="ds-logo" src="assets/icon-512.png" alt="" width="88" height="88" />
+      <div class="ds-name">Billaura</div>
+      <div class="ds-tag">One shop · every screen</div>
+      <div class="ds-art"><svg viewBox="0 0 300 120" aria-hidden="true">
+        <rect x="22" y="22" width="44" height="82" rx="9" fill="none" stroke="#fff" stroke-width="3"/>
+        <rect x="30" y="34" width="28" height="5" rx="2.5" fill="#FF8FA3"/><rect x="30" y="45" width="28" height="5" rx="2.5" fill="#ffffff55"/><rect x="30" y="56" width="18" height="5" rx="2.5" fill="#ffffff55"/>
+        <path d="M82 62 C 112 20, 188 20, 218 62" fill="none" stroke="#FF8FA3" stroke-width="2.5" stroke-dasharray="3 7" stroke-linecap="round" class="ds-dash"/>
+        <circle r="5" fill="#fff" class="ds-dot"><animateMotion dur="1.6s" repeatCount="indefinite" path="M82 62 C 112 20, 188 20, 218 62"/></circle>
+        <rect x="204" y="30" width="78" height="52" rx="6" fill="none" stroke="#fff" stroke-width="3"/>
+        <path d="M222 100h42M243 82v18" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+        <path d="M216 70l12-12 10 8 16-20" fill="none" stroke="#FF8FA3" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div class="ds-lbl"><span>Phone</span><span>Computer</span></div></div>`;
+    document.body.appendChild(el);
+    let fin = false;
+    const finish = () => { if (fin) return; fin = true; el.classList.add('out'); setTimeout(() => el.remove(), 260); done(); };
+    el.addEventListener('click', finish);
+    setTimeout(finish, 1500);
+  }
   function sendWhatsApp(phone, text) {
     window.open(`https://wa.me/${waNumber(phone)}?text=${encodeURIComponent(text)}`, '_blank');
   }
@@ -1333,8 +1363,47 @@
       <div class="card mb-16"><div class="text-sm text-secondary">Signed in as</div><div class="font-semibold" style="font-size:1.0625rem">${escapeHtml(sf ? sf.name : 'Staff')}</div><div class="text-sm text-secondary">${escapeHtml((ROLES[(sf && sf.role) || 'cashier'] || ROLES.cashier).name)}</div></div>
       <div class="menu-list mb-16">${rows.join('')}</div></div>`;
   }
+  // ---- Desktop sidebar (shown only on wide screens, see css "Desktop layout") ----
+  const SIDE_ITEMS = [
+    ['home', 'Home', 'home'], ['dashboard', 'Dashboard', 'chart'], ['invoices', 'Sale / Transactions', 'sale'],
+    ['purchases', 'Purchases', 'cart'], ['products', 'Items', 'box'], ['customers', 'Parties', 'users'],
+    ['expenses', 'Expenses', 'wallet'], ['reports', 'Reports', 'report'], ['banks', 'Cash & Bank', 'bank'],
+    ['online-store', 'Online Store', 'store'], ['more', 'All Menu', 'docs'], ['settings', 'Settings', 'gear']
+  ];
+  function sideActiveFor(view) {
+    const ids = SIDE_ITEMS.map(x => x[0]);
+    if (ids.includes(view)) return view;
+    if (view === 'create-invoice') return 'invoices';
+    if (['suppliers'].includes(view)) return 'customers';
+    if (['cash-in-hand', 'daybook', 'daybook-detail', 'cheques', 'loans'].includes(view)) return 'banks';
+    if (['sale-report', 'profit-loss', 'bill-pnl', 'balance-sheet', 'stock-history'].includes(view)) return 'reports';
+    if (/settings|profile|lock|account|theme|currency|print/.test(view)) return 'settings';
+    return '';
+  }
+  function buildSideNav() {
+    const el = document.getElementById('sideNav');
+    if (!el) return;
+    if (!el.dataset.built) {
+      el.dataset.built = '1';
+      el.innerHTML = `<div class="side-brand"><img src="assets/icon-maskable-512.png" alt="" width="40" height="40"><div><b id="sideBiz">Billaura</b><small>Smart Billing &amp; Business</small></div></div>
+        <button class="side-cta" data-view="create-invoice">${ico('plus')} Add New Sale</button>
+        <nav class="side-list">${SIDE_ITEMS.map(x => `<button class="side-item" data-view="${x[0]}">${ico(x[2])}<span>${x[1]}</span></button>`).join('')}</nav>
+        <div class="side-foot">© 2026 Billaura</div>`;
+    }
+    const biz = document.getElementById('sideBiz'); if (biz) biz.textContent = settings.businessName || 'Billaura';
+    const act = sideActiveFor(currentView);
+    el.querySelectorAll('.side-item').forEach(b => {
+      const v = b.dataset.view; const need = viewPerm(v);
+      b.style.display = (isStaff() && need && !can(need)) ? 'none' : '';
+      b.classList.toggle('active', v === act);
+    });
+    const cta = el.querySelector('.side-cta');
+    if (cta) { const need = viewPerm('create-invoice', 'sale'); cta.style.display = (isStaff() && need && !can(need)) ? 'none' : ''; }
+  }
   function applyNavPerms() {
+    try { buildSideNav(); } catch (e) {}
     document.querySelectorAll('.bottom-nav .nav-item').forEach(n => {
+      if (n.id === 'navDesktop') { n.style.display = location.protocol === 'billaura:' ? 'none' : ''; return; }
       const v = n.dataset.view; const need = v ? viewPerm(v) : null;
       n.style.display = (isStaff() && need && !can(need)) ? 'none' : '';
     });
@@ -1622,7 +1691,7 @@
     });
   }
 
-  // ---------- Create Invoice (Vyapar-style document form) ----------
+  // ---------- Create Invoice (document form) ----------
   // Totals math shared by the form, detail view, PDF, receipt and WhatsApp text.
   function calcDoc(lines, o) {
     o = o || {};
@@ -1705,6 +1774,7 @@
           <div id="docLines"></div>
         </div>
 
+        <div class="doc-side">
         <div class="doc-card" id="docTotals" style="display:none">
           <div class="tot-row"><span>Subtotal</span><b id="tSub"></b></div>
           <div class="tot-row tot-input"${settings.enableTxnDiscount === false ? ' style="display:none"' : ''}>
@@ -1739,6 +1809,7 @@
           <div class="tot-row" id="creditRow" hidden><label class="tot-check" style="display:flex;justify-content:space-between;align-items:center;width:100%;margin:0"><span>Use customer credit <b id="creditAmt" style="color:#0E9F6E"></b></span><input type="checkbox" name="useCredit" id="useCredit" /></label></div>` : ''}
           ${isRet ? '' : `<div class="tot-row tot-input"><span>Due date</span><span class="tot-ctl"><input type="date" id="dueIn" name="dueDate" min="${today}" style="width:150px" /></span></div>
           <div class="chip-row"><button type="button" class="cat-chip" data-due="7">+7 days</button><button type="button" class="cat-chip" data-due="15">+15 days</button><button type="button" class="cat-chip" data-due="30">+30 days</button></div>`}
+        </div>
         </div>
 
         ${isPur ? '' : `<div class="doc-card"><label class="tot-row tot-check" style="margin:0"><span>Print “Received by / Delivered by”</span><input type="checkbox" name="rb" ${settings.printReceivedBy !== false ? 'checked' : ''} onchange="var f=document.getElementById('rbFields');if(f)f.hidden=!this.checked" /></label>
@@ -5526,7 +5597,7 @@
   }
 
   // ============================================================
-  //  Vyapar-style screens: Home, Dashboard, Menu, Expenses, Cash, utilities
+  //  screens: Home, Dashboard, Menu, Expenses, Cash, utilities
   // ============================================================
   const IC = {
     home: '<path d="M3 11l9-8 9 8v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>',
@@ -5737,7 +5808,7 @@
         ${mrow('box', 'Stock Adjustment', 'data-view="stock-adjust"')}${mrow('chart', 'Other Income', 'data-view="other-income"')}</div>
       <div class="menu-card"><div class="menu-h">Cash &amp; Bank</div>${mrow('bank', 'Bank Accounts', 'data-view="banks"')}${mrow('cash', 'Cash In-Hand', 'data-view="cash-in-hand"')}${mrow('cheque', 'Cheques', 'data-view="cheques"')}${mrow('loan', 'Loan Accounts', 'data-view="loans"')}</div>
       <div class="menu-card"><div class="menu-h">Important Utilities</div>
-        ${mrow('sync', 'Sync &amp; Share', 'data-view="sync"')}${mrow('company', 'Manage Companies', 'data-view="companies"')}
+        ${mrow('sync', 'Sync &amp; Share', 'data-view="sync"')}${mrow('company', 'Manage Companies', 'data-view="companies"')}${location.protocol === 'billaura:' ? '' : mrow('desktop', 'Get Desktop Version', 'data-action="desktop-info"')}
         ${tg('backup', 'backup', 'Backup/Restore')}${msub('backup', [['Auto Backup', 'data-action="auto-backup"'], ['Backup to phone', 'data-action="export-backup"'], ['Backup to e-mail', 'data-action="backup-email"'], ['Restore backup', 'data-action="import-data"']])}
         ${tg('util', 'inbox', 'Utilities')}${msub('util', [['Verify my data', 'data-view="verify"'], ['Open Calculator', 'data-action="open-calc"'], ['Import Items', 'data-action="bulk-tools"'], ['Bulk Update Tax Slab', 'data-action="bulk-tax"'], ['Export Items', 'data-action="bulk-export"'], ['Import Parties', 'data-action="import-parties"'], ['Recycle Bin', 'data-view="recycle"'], ['Close Financial Year', 'data-action="close-fy"'], ['Barcode Generator', 'data-view="barcode-gen"']])}</div>
       <div class="menu-card"><div class="menu-h">Others</div>
@@ -6995,6 +7066,37 @@
       case 'submit-payment': submitPayment(); break;
       case 'sign-out-user': signOutUser(); break;
       case 'cloud-auth': openCloudAuthModal(); break;
+      case 'desktop-info': {
+        const open = () => {
+          $('#modalRoot').innerHTML = modalShell('Use Billaura on your computer', `<div style="padding:6px 22px 22px">
+            <button class="dk-wa" data-action="desktop-wa">${ico('whatsapp')}<span>Share link on WhatsApp</span></button>
+            <div class="dk-or"><i></i><b>OR</b><i></i></div>
+            <button class="dk-mail" data-action="desktop-mail">Email me the link</button>
+            <div class="dk-more">
+              ${deferredInstall ? '<button class="dk-lnk" data-action="install-desktop">Install on this computer</button>' : ''}
+              <a class="dk-lnk" href="${DESKTOP_REL}" target="_blank" rel="noopener">Download Windows app (.exe)</a>
+              <button class="dk-lnk" data-action="copy-pay" data-v="${escapeHtml(desktopSite())}">Copy website link</button>
+            </div></div>`);
+        };
+        showDesktopSplash(open);
+        break;
+      }
+      case 'desktop-wa': {
+        const ph = settings.phone ? waNumber(settings.phone) : '';
+        window.open(`https://wa.me/${ph}?text=${encodeURIComponent(desktopMsg())}`, '_blank');
+        break;
+      }
+      case 'desktop-mail': {
+        let em = settings.email || '';
+        try { const ss = window.HisablyCloud && HisablyCloud.getSession(); if (!em && ss && ss.user) em = ss.user.email || ''; } catch (e) {}
+        window.open(`mailto:${encodeURIComponent(em).replace(/%40/g, '@')}?subject=${encodeURIComponent('Billaura Desktop link')}&body=${encodeURIComponent(desktopMsg())}`, '_self');
+        break;
+      }
+      case 'install-desktop': {
+        if (deferredInstall) { deferredInstall.prompt(); try { await deferredInstall.userChoice; } catch (e) {} deferredInstall = null; }
+        closeModal();
+        break;
+      }
       case 'cloud-sync': doCloudSync(); break;
       case 'cloud-signin': {
         const email = (($('#cloudEmail') || {}).value || '').trim();
@@ -8016,7 +8118,7 @@
       });
       // periodic check
       setInterval(() => reg.update().catch(() => {}), 60 * 60 * 1000);
-    });
+    }).catch(() => {});
     if (btn) btn.addEventListener('click', () => {
       navigator.serviceWorker.getRegistration().then(reg => {
         if (reg && reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });

@@ -1,0 +1,39 @@
+name: Build Windows app
+
+# Run it from the Actions tab (Run workflow), or push a tag like v1.0.0
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Bundle the web app into the desktop shell
+        shell: bash
+        run: |
+          mkdir -p desktop/app desktop/build
+          cp -r index.html store.html manifest.json sw.js css js assets desktop/app/
+          cp assets/icon-512.png desktop/build/icon.png
+      - name: Install and build
+        working-directory: desktop
+        run: |
+          npm install
+          npm run dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Billaura-Windows
+          path: |
+            desktop/dist/*.exe
+      - name: Attach to release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: desktop/dist/*.exe
