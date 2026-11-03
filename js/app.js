@@ -1126,7 +1126,7 @@
     if (/^(add-expense|edit-expense|save-expense)/.test(action)) return 'expenses';
     if (/^(new-purchase|view-purchase|purchase-|pay-supplier|add-supplier|edit-supplier)/.test(action)) return 'purchases';
     if (/^(add-bank|bank-|add-loan|loan-|add-other-income|cash-adjust|cheque)/.test(action)) return 'banks';
-    if (/^(receive-payment|quick-receive|record-payment|mark-paid|submit-payment|remind-|rq-)/.test(action)) return 'receive_payment';
+    if (/^(receive-payment|quick-receive|record-payment|refund-credit|mark-paid|submit-payment|remind-|rq-)/.test(action)) return 'receive_payment';
     if (action === 'pay-in') return 'receive_payment';
     if (action === 'pay-out') return 'purchases';
     if (/^(new-return|return-from-invoice)/.test(action)) return 'returns';
@@ -1483,6 +1483,22 @@
   function customerCredit() {
     return round2(invoices.reduce((a, i) => (docSign(i) > 0 && i.docType !== 'estimate') ? a + Math.max(0, (i.paidAmount || 0) - (i.total || 0)) : a, 0));
   }
+  function creditOfCustomer(cust) {
+    if (!cust) return 0;
+    return round2(custDocs(cust).reduce((a, i) => (docSign(i) > 0 && i.docType !== 'estimate') ? a + Math.max(0, (i.paidAmount || 0) - (i.total || 0)) : a, 0));
+  }
+  // move `amt` of a customer's credit (overpaid bills, oldest first) onto a new bill
+  function consumeCredit(cust, amt, usedOn) {
+    let left = round2(amt); const now = new Date().toISOString();
+    custDocs(cust).filter(i => docSign(i) > 0 && i.docType !== 'estimate' && (i.paidAmount || 0) > (i.total || 0) + 0.001)
+      .sort((a, b) => ts(a.date) - ts(b.date)).forEach(i => {
+        if (left <= 0.001) return;
+        const take = Math.min(left, round2((i.paidAmount || 0) - (i.total || 0)));
+        i.paidAmount = round2((i.paidAmount || 0) - take);
+        i.meta = i.meta || {}; (i.meta.payments = i.meta.payments || []).push({ date: now, amount: -take, mode: 'Credit used', note: 'Used on ' + usedOn });
+        i.updatedAt = now; left = round2(left - take);
+      });
+  }
   function totalGive() { return round2(totalPayable() + customerCredit()); }
   function totalPayable() {
     return round2(purchases.reduce((s, p) => s + Math.max(0, (p.total || 0) - (p.paidAmount || 0)), 0));
@@ -1718,6 +1734,8 @@
           <input type="number" inputmode="decimal" min="0" step="any" class="form-input" id="paidIn" placeholder="0" name="paidAmount" />
           <button type="button" class="ps-field mt-8" id="modeBtn"><span><small style="color:#6B7287;display:block;font-size:.72rem">Payment Type</small><b id="modeTxt">Cash</b></span><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>
           <div class="tot-row mt-8"><span>${isPur ? 'Balance payable' : isRet ? 'Credit left with customer' : 'Balance due'}</span><b id="tDue"></b></div>
+          ${isSaleDoc ? `<div class="tot-row" id="overRow" hidden style="color:#E11D48"><span>Extra paid – kept as customer credit</span><b id="tOver"></b></div>
+          <div class="tot-row" id="creditRow" hidden><label class="tot-check" style="display:flex;justify-content:space-between;align-items:center;width:100%;margin:0"><span>Use customer credit <b id="creditAmt" style="color:#0E9F6E"></b></span><input type="checkbox" name="useCredit" id="useCredit" /></label></div>` : ''}
           ${isRet ? '' : `<div class="tot-row tot-input"><span>Due date</span><span class="tot-ctl"><input type="date" id="dueIn" name="dueDate" min="${today}" style="width:150px" /></span></div>
           <div class="chip-row"><button type="button" class="cat-chip" data-due="7">+7 days</button><button type="button" class="cat-chip" data-due="15">+15 days</button><button type="button" class="cat-chip" data-due="30">+30 days</button></div>`}
         </div>
@@ -1741,6 +1759,7 @@
     const isRet = docCtx.type === 'return';
     const isEst = docCtx.type === 'estimate';
     const isPur = docCtx.type === 'purchase';
+    const isSaleDoc = !isPur && !isRet && !isEst;
     const ref = docCtx.ref || null;
     const from = docCtx.from || null;          // quotation being converted to an invoice
     const preLines = docCtx.posLines || null;
@@ -1777,8 +1796,19 @@
       if (q('createInvoiceBtn')) q('createInvoiceBtn').disabled = !has;
       if (q('shareSaveBtn')) q('shareSaveBtn').disabled = !has;
       if (q('paidFull') && q('paidFull').checked && q('paidIn')) q('paidIn').value = c.total || '';
-      const paid = Math.min(parseFloat(val('paidIn')) || 0, c.total);
+      const rawPaid = Math.max(0, parseFloat(val('paidIn')) || 0);
+      let creditUse = 0, over = 0;
+      if (isSaleDoc) {
+        const cid = (document.querySelector('[name="customerId"]') || {}).value;
+        const avail = cid ? creditOfCustomer(customers.find(x => x.id === cid)) : 0;
+        const cr = q('creditRow'), uc = q('useCredit');
+        if (cr) { cr.hidden = !(avail > 0.001 && has); if (cr.hidden && uc) uc.checked = false; if (q('creditAmt')) q('creditAmt').textContent = `(${cur} ${money(avail)} available)`; }
+        if (uc && uc.checked) creditUse = Math.min(avail, Math.max(0, round2(c.total - rawPaid)));
+        over = Math.max(0, round2(rawPaid - c.total));
+      }
+      const paid = Math.min(rawPaid + creditUse, c.total);
       if (q('tDue')) { q('tDue').textContent = `${cur} ${money(Math.max(0, round2(c.total - paid)))}`; }
+      if (q('overRow')) { q('overRow').hidden = !(over > 0.001); if (q('tOver')) q('tOver').textContent = `${cur} ${money(over)}`; }
       return c;
     }
     function renderLines() {
@@ -1867,6 +1897,8 @@
       recalc();
     });
 
+    { const cs = document.querySelector('[name="customerId"]'); if (cs) cs.addEventListener('change', () => recalc());
+      const uc = document.getElementById('useCredit'); if (uc) uc.addEventListener('change', () => recalc()); }
     ['discIn', 'taxIn', 'chIn', 'roundIn', 'paidIn'].forEach(id => {
       const el = document.getElementById(id);
       if (!el) return;
@@ -1960,7 +1992,14 @@
       const o = opts();
       const c = calcDoc(lines, o);
       if (c.total <= 0 && lines.some(l => l.price > 0)) { toast('Discount cannot be more than the bill'); return; }
-      let paidAmount = isEst ? 0 : round2(Math.min(Math.max(parseFloat(fd.get('paidAmount')) || 0, 0), c.total));
+      const rawPaid = Math.max(parseFloat(fd.get('paidAmount')) || 0, 0);
+      const credCust = isSaleDoc ? customers.find(x => x.id === fd.get('customerId')) : null;
+      const creditUsed = (credCust && fd.has('useCredit')) ? Math.min(creditOfCustomer(credCust), Math.max(0, round2(c.total - rawPaid))) : 0;
+      let paidAmount = isEst ? 0 : (isSaleDoc ? round2(rawPaid + creditUsed) : round2(Math.min(rawPaid, c.total)));
+      if (isSaleDoc && paidAmount > c.total + 0.001) {
+        const ex = round2(paidAmount - c.total);
+        if (!(await askConfirm(settings.currency + ' ' + money(ex) + ' is more than the bill total. Keep the extra as customer credit (you owe it back or adjust it on their next bill)?', { title: 'Extra payment' }))) return;
+      }
       const paymentStatus = paidAmount >= c.total && c.total > 0 ? 'paid' : (paidAmount > 0 ? 'partial' : 'unpaid');
 
       if (isPur) {
@@ -2049,6 +2088,7 @@
       { const bn = (fd.get('billingName') || '').trim(); if (bn) meta.billingName = bn; const po = (fd.get('poNo') || '').trim(); if (po) meta.po = po; const pd = fd.get('poDate'); if (pd) meta.poDate = pd; }
       { const dd = fd.get('dueDate'); if (dd && !isRet && !isEst && paymentStatus !== 'paid') meta.dueDate = dd; }
       if (from) { meta.fromId = from.id; meta.fromNumber = from.number; }
+      if (creditUsed > 0.001) meta.payments = [{ date: new Date().toISOString(), amount: creditUsed, mode: 'Credit', note: 'From customer credit' }];
       const inv = {
         id: uid(), number: invNumber, docType: isRet ? 'return' : (isEst ? 'estimate' : 'sale'),
         customerId: customerId || null, customerName, customerPhone,
@@ -2056,12 +2096,13 @@
       };
       if (settings.enableUpdateSalePrice && !isRet && !isEst) items.forEach(it => { const pr = products.find(x => x.id === it.productId); if (pr && Number(it.price) > 0 && pr.price !== it.price) { pr.price = it.price; pr.updatedAt = new Date().toISOString(); } });
       invoices.unshift(inv);
+      if (creditUsed > 0.001 && credCust) consumeCredit(credCust, creditUsed, inv.number);
       window._docSaved = true;
       persist();
       if (isRet) { toast('Return saved. Stock added back.'); setView('invoices'); openInvoiceDetail(inv); return; }
       if (isEst) { toast('Quotation saved'); invFilter = 'estimate'; setView('invoices'); openInvoiceDetail(inv); return; }
       if (from) { const q = invoices.find(x => x.id === from.id); if (q) { q.meta = Object.assign({}, q.meta, { convertedTo: inv.number, convertedId: inv.id }); q.updatedAt = new Date().toISOString(); persist(); } }
-      toast(paymentStatus === 'paid' ? 'Invoice saved (Paid)' : paymentStatus === 'partial' ? 'Invoice saved (Advance recorded)' : 'Invoice saved (Unpaid)');
+      toast(paidAmount > c.total + 0.001 ? 'Invoice saved · extra kept as customer credit' : paymentStatus === 'paid' ? 'Invoice saved (Paid)' : paymentStatus === 'partial' ? 'Invoice saved (Advance recorded)' : 'Invoice saved (Unpaid)');
       setView('invoices');
       if (window._shareAfterSave) { window._shareAfterSave = false; openShareSheet(inv); }
       else if (settings.enableInvoicePreview !== false) openInvoiceDetail(inv);
@@ -4068,6 +4109,7 @@
 `}
             <div class="summary-row"><span>Status</span><span class="font-semibold">${statusLabel}</span></div>
           </div>
+          ${extraPaid > 0.001 ? `<button class="btn btn-outline btn-block mt-16" data-action="refund-credit" data-id="${inv.id}">Refund credit to customer</button><div class="text-sm text-secondary mt-8">Or pick this customer on a new sale and tick <b>Use customer credit</b>.</div>` : ''}
           ${isEst && !(inv.meta && inv.meta.convertedTo) ? `<button class="btn btn-primary btn-block mt-16" data-action="convert-estimate" data-id="${inv.id}">Convert to Invoice</button>` : ''}
           ${(!isEst && due > 0) ? `
           <div class="form-group mt-16">
@@ -6658,6 +6700,7 @@
             if (phoneInput) phoneInput.value = c.phone || '';
           }
         }
+        if (hidden) hidden.dispatchEvent(new Event('change', { bubbles: true }));
         // Show amount paid field for partial payments
         if (wrap.dataset.name === 'paymentStatus') {
           const grp = $('#paidAmountGroup');
@@ -6684,6 +6727,20 @@
         render();
         openInvoiceDetail(inv);
         break;
+      }
+      case 'refund-credit': {
+        const inv = invoices.find(x => x.id === id); if (!inv) break;
+        const extra = Math.max(0, round2((inv.paidAmount || 0) - (inv.total || 0)));
+        if (extra <= 0.001) { toast('No credit to refund'); break; }
+        const v = await askPrompt('Amount to refund (up to ' + settings.currency + ' ' + money(extra) + ')', String(extra), { title: 'Refund credit' });
+        if (v == null) break;
+        const amt = round2(parseFloat(v) || 0);
+        if (!(amt > 0)) { toast('Enter an amount'); break; }
+        if (amt > extra + 0.001) { toast('Only ' + settings.currency + ' ' + money(extra) + ' can be refunded'); break; }
+        inv.paidAmount = round2((inv.paidAmount || 0) - amt);
+        inv.meta = inv.meta || {}; (inv.meta.payments = inv.meta.payments || []).push({ date: new Date().toISOString(), amount: -amt, mode: 'Refund', note: 'Credit refunded' });
+        inv.updatedAt = new Date().toISOString();
+        persist(); toast('Credit refunded'); render(); openInvoiceDetail(inv); break;
       }
       case 'mark-paid': {
         const inv = invoices.find(x => x.id === id);
