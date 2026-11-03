@@ -1712,7 +1712,11 @@
           <div class="chip-row"><button type="button" class="cat-chip" data-due="7">+7 days</button><button type="button" class="cat-chip" data-due="15">+15 days</button><button type="button" class="cat-chip" data-due="30">+30 days</button></div>`}
         </div>
 
-        ${isPur ? '' : `<div class="doc-card"><label class="tot-row tot-check" style="margin:0"><span>Print “Received by / Delivered by”</span><input type="checkbox" name="rb" ${settings.printReceivedBy !== false ? 'checked' : ''} /></label></div>`}
+        ${isPur ? '' : `<div class="doc-card"><label class="tot-row tot-check" style="margin:0"><span>Print “Received by / Delivered by”</span><input type="checkbox" name="rb" ${settings.printReceivedBy !== false ? 'checked' : ''} onchange="var f=document.getElementById('rbFields');if(f)f.hidden=!this.checked" /></label>
+          <div id="rbFields" ${settings.printReceivedBy !== false ? '' : 'hidden'} style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px">
+            <div class="pm-f" style="margin:0;height:50px"><span class="pm-fl">Received by</span><input name="rbName" maxlength="40" placeholder="Name (optional)" autocomplete="off" /></div>
+            <div class="pm-f" style="margin:0;height:50px"><span class="pm-fl">Delivered by</span><input name="dbName" maxlength="40" placeholder="Name (optional)" value="${escapeHtml(isStaff() ? staffName() : (settings.lastDeliveredBy || ''))}" autocomplete="off" /></div>
+          </div></div>`}
         <div class="save-bar" id="saveBar">
           <div><div class="doc-label" style="margin:0">Total</div><div class="save-total" id="saveTotal">${escapeHtml(cur)} 0</div></div>
           ${isSaleDoc ? '<button type="submit" class="btn btn-outline vs-share" id="shareSaveBtn" data-share="1" disabled>Share</button>' : ''}
@@ -2024,7 +2028,14 @@
       if (isRet && ref) { meta.refId = ref.id; meta.refNumber = ref.number; }
       if (isEst) { const vu = fd.get('validUntil'); if (vu) meta.validUntil = vu; }
       if (isStaff()) meta.by = staffName();
-      if (!isPur) meta.rb = fd.has('rb') ? 1 : 0;
+      if (!isPur) {
+        meta.rb = fd.has('rb') ? 1 : 0;
+        if (meta.rb) {
+          const rn = String(fd.get('rbName') || '').trim(), dn = String(fd.get('dbName') || '').trim();
+          if (rn) meta.rbName = rn; if (dn) meta.dbName = dn;
+          if (dn && !isStaff() && settings.lastDeliveredBy !== dn) settings.lastDeliveredBy = dn;
+        }
+      }
       { const bn = (fd.get('billingName') || '').trim(); if (bn) meta.billingName = bn; const po = (fd.get('poNo') || '').trim(); if (po) meta.po = po; const pd = fd.get('poDate'); if (pd) meta.poDate = pd; }
       { const dd = fd.get('dueDate'); if (dd && !isRet && !isEst && paymentStatus !== 'paid') meta.dueDate = dd; }
       if (from) { meta.fromId = from.id; meta.fromNumber = from.number; }

@@ -142,7 +142,7 @@
     const terms = flag(s, 'printTerms', true) && flag(s, 'enableTerms', true) ? `<div class="terms"><div class="lbl">Terms &amp; Conditions</div>${esc(s.termsText || 'Thank you for doing business with us.').replace(/\n/g, '<br>')}</div>` : '';
     const qr = (ctx.qrAllowed && s.paymentQr && showPrices && !isEst) ? `<div class="qr"><img src="${esc(s.paymentQr)}" alt=""><div><b>Scan to pay</b><div class="sm">${esc(s.paymentNote || '')}</div></div></div>` : '';
     const sig = flag(s, 'printSignature', true) ? `<div class="sig"><div class="sg"><div class="sgi">${s.signature ? `<img src="${esc(s.signature)}" alt="">` : ''}${s.stamp ? `<img class="st" src="${esc(s.stamp)}" alt="">` : ''}</div><div class="sgl">For ${esc(s.businessName || 'Business')}</div><div class="sm">${esc(s.signatureText || 'Authorized Signatory')}</div></div></div>` : '';
-    const recv = (m.rb != null ? !!m.rb : flag(s, 'printReceivedBy', true)) ? `<div class="rb"><div>Received by: ______________</div><div>Delivered by: ______________</div></div>` : '';
+    const recv = (m.rb != null ? !!m.rb : flag(s, 'printReceivedBy', true)) ? `<div class="rb"><div>Received by: ${m.rbName ? '<b>' + esc(m.rbName) + '</b>' : '______________'}</div><div>Delivered by: ${m.dbName ? '<b>' + esc(m.dbName) + '</b>' : '______________'}</div></div>` : '';
     const orig = s.printOriginalDup ? `<div class="od">ORIGINAL FOR RECIPIENT</div>` : '';
     const desc = flag(s, 'printFooterDesc', true) && m.note ? `<div class="terms"><div class="lbl">Description</div>${esc(m.note)}</div>` : '';
 

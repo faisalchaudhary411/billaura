@@ -559,3 +559,4 @@ select, input, textarea, button { -webkit-tap-highlight-color: transparent; }
   .splash { transition: opacity .15s ease; }
 }
 .ios-app .splash-in{visibility:hidden}
+#rbFields .pm-f{min-width:0}#rbFields .pm-f input{width:100%;min-width:0}
