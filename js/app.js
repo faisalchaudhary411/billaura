@@ -154,7 +154,8 @@
   function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
   function lowLimit(p) { return (p.lowStock ?? settings.lowStockDefault); }
   function money(n) {
-    return (Number(n) || 0).toLocaleString('en-PK', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+    const v = Number(n) || 0, whole = Math.abs(v - Math.round(v)) < 0.005;   // 1,200 or 1,200.50 (never 1,200.5)
+    return v.toLocaleString('en-PK', { minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: 2 });
   }
   function formatDate(iso) {
     return new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -1808,7 +1809,7 @@
       }
       const paid = Math.min(rawPaid + creditUse, c.total);
       if (q('tDue')) { q('tDue').textContent = `${cur} ${money(Math.max(0, round2(c.total - paid)))}`; }
-      if (q('overRow')) { q('overRow').hidden = !(over > 0.001); if (q('tOver')) q('tOver').textContent = `${cur} ${money(over)}`; }
+      if (q('overRow')) { const wi = !((document.querySelector('[name="customerId"]') || {}).value) && !((val('customerNameInput') || '').trim()); const sp = q('overRow').querySelector('span'); if (sp) sp.textContent = wi ? 'Change to give back' : 'Extra paid – kept as customer credit'; q('overRow').hidden = !(over > 0.001); if (q('tOver')) q('tOver').textContent = `${cur} ${money(over)}`; }
       return c;
     }
     function renderLines() {
@@ -1996,6 +1997,11 @@
       const credCust = isSaleDoc ? customers.find(x => x.id === fd.get('customerId')) : null;
       const creditUsed = (credCust && fd.has('useCredit')) ? Math.min(creditOfCustomer(credCust), Math.max(0, round2(c.total - rawPaid))) : 0;
       let paidAmount = isEst ? 0 : (isSaleDoc ? round2(rawPaid + creditUsed) : round2(Math.min(rawPaid, c.total)));
+      const walkInSale = isSaleDoc && !fd.get('customerId') && !(fd.get('customerName') || '').trim();
+      if (walkInSale && paidAmount > c.total + 0.001) {
+        toast('Change to give back: ' + settings.currency + ' ' + money(round2(paidAmount - c.total)));
+        paidAmount = c.total;
+      }
       if (isSaleDoc && paidAmount > c.total + 0.001) {
         const ex = round2(paidAmount - c.total);
         if (!(await askConfirm(settings.currency + ' ' + money(ex) + ' is more than the bill total. Keep the extra as customer credit (you owe it back or adjust it on their next bill)?', { title: 'Extra payment' }))) return;
@@ -6717,7 +6723,8 @@
         const dueNow = Math.max(0, round2((inv.total || 0) - (inv.paidAmount || 0)));
         let over = false;
         if (amt > dueNow + 0.001) {
-          if (inv.docType !== 'sale' && inv.docType) { toast('Only ' + settings.currency + ' ' + money(dueNow) + ' is pending'); break; }
+          const walkIn = !inv.customerId && (!inv.customerName || inv.customerName === 'Walk-in Customer');
+          if ((inv.docType !== 'sale' && inv.docType) || walkIn) { toast('Only ' + settings.currency + ' ' + money(dueNow) + ' is pending'); break; }
           if (!(await askConfirm(settings.currency + ' ' + money(round2(amt - dueNow)) + ' is more than the amount due. Keep the extra as customer credit (you owe it back or adjust it on the next bill)?', { title: 'Extra payment' }))) break;
           over = true;
         }
@@ -7385,7 +7392,7 @@
     if (!boot || boot.dataset.hiding) return;
     boot.dataset.hiding = '1';
     // keep the splash visible for a moment so the Billaura name registers, then fade it out
-    const wait = 0;
+    const wait = Math.max(0, 1500 - (performance.now() || 0));   // let the animated splash play once
     setTimeout(() => { boot.classList.add('out'); setTimeout(() => { boot.hidden = true; }, 220); }, wait);
   }
   function showAuth() {

@@ -555,10 +555,8 @@ select, input, textarea, button { -webkit-tap-highlight-color: transparent; }
 .pl-step > div{min-width:0;flex:1}.pl-step .form-input{width:100%;box-sizing:border-box}.pl-pay{box-sizing:border-box}
 /* Installed app: Android already shows its own splash, so keep ours as a plain red hand-off (no second logo) */
 @media (display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui) {
-  .splash-in { visibility: hidden; }
   .splash { transition: opacity .15s ease; }
 }
-.ios-app .splash-in{visibility:hidden}
 #rbFields .pm-f{min-width:0}#rbFields .pm-f input{width:100%;min-width:0}
 /* invoice form: keep the last card clear of the Save bar + bottom nav, and keep the total on one line */
 .doc-form { padding-bottom: calc(var(--nav-height, 64px) + 110px + var(--safe-bottom, 0px)); }
@@ -566,3 +564,32 @@ select, input, textarea, button { -webkit-tap-highlight-color: transparent; }
 .save-total { white-space: nowrap; font-size: 1.1rem; }
 .save-bar .btn, .save-bar .btn-primary { min-width: 0; flex: 1 1 0; padding: 12px 8px; }
 .dash-stat-value{white-space:nowrap;font-size:1.02rem}
+
+/* long amounts: let the row wrap instead of pushing the action icons off the card */
+.vy-txn { overflow: hidden; }
+.vy-txn-bottom { flex-wrap: wrap; gap: 8px 16px; }
+.vy-txn-bottom > div:not(.vy-txn-actions) { min-width: 0; }
+.vy-txn-bottom .val { overflow-wrap: anywhere; }
+.vy-txn-actions { flex-shrink: 0; }
+
+/* ===== Stylish splash (flat brand red so the phone's own launch screen hands off cleanly) ===== */
+.splash { overflow: hidden; background: #E8173C; }
+.splash-in { position: relative; display: flex; flex-direction: column; align-items: center; z-index: 2; }
+.splash-logo { width: 140px; height: 140px; margin: 0; position: relative; z-index: 2; animation: spLogo .7s cubic-bezier(.2,.9,.3,1.1) both; }
+@keyframes spLogo { from { transform: scale(.92); opacity: .0 } 40% { opacity: 1 } }
+.sp-ring { position: absolute; left: 50%; top: 94px; width: 140px; height: 140px; margin: -70px 0 0 -70px; border-radius: 50%; border: 2px solid rgba(255,255,255,.55); animation: spRing 2.2s ease-out infinite backwards; z-index: 1; }
+.sp-ring.r2 { animation-delay: 1.1s; }
+@keyframes spRing { from { transform: scale(1.5); opacity: .55 } to { transform: scale(3); opacity: 0 } }
+.sp-orb { position: absolute; border-radius: 50%; background: rgba(255,255,255,.07); z-index: 1; animation: spFloat 7s ease-in-out infinite alternate; }
+.sp-o1 { width: 340px; height: 340px; left: -120px; top: -110px; }
+.sp-o2 { width: 420px; height: 420px; right: -170px; bottom: -150px; background: rgba(0,0,0,.08); animation-delay: -3s; }
+@keyframes spFloat { to { transform: translate(14px, 18px) scale(1.04); } }
+.splash-name { display: block; margin-top: 22px; font-size: 2.1rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; animation: splashUp .6s .25s cubic-bezier(.2,.8,.2,1) both; text-shadow: 0 2px 14px rgba(0,0,0,.18); }
+.splash-tag { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 10px; font-size: .72rem; letter-spacing: .2em; text-transform: uppercase; opacity: 0; animation: spTag .6s .45s ease-out forwards; }
+@keyframes spTag { from { transform: translateY(12px); opacity: 0 } to { transform: none; opacity: .9 } }
+.splash-tag b { width: 4px; height: 4px; border-radius: 50%; background: rgba(255,255,255,.75); }
+.splash-bar { display: block; width: 140px; height: 3px; margin: 38px auto 0; background: rgba(255,255,255,.25); animation: splashUp .5s .6s both; }
+.splash-bar i { width: 40%; background: linear-gradient(90deg, rgba(255,255,255,0), #fff, rgba(255,255,255,0)); }
+.splash-msg { display: none; }
+.splash-foot { display: block; z-index: 2; letter-spacing: .06em; opacity: .75; animation: splashUp .6s .8s both; }
+@media (prefers-reduced-motion: reduce) { .sp-ring, .sp-orb, .splash-bar i { animation: none; } }
