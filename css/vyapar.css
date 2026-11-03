@@ -553,3 +553,9 @@ select, input, textarea, button { -webkit-tap-highlight-color: transparent; }
 .pl-pay{display:flex;justify-content:space-between;align-items:center;gap:10px;background:#F5F6FA;border-radius:12px;padding:10px 12px;margin-top:8px}.pl-pay small{display:block;color:#6B7288;font-size:.72rem}.pl-pay b{font-size:.98rem;letter-spacing:.02em;overflow-wrap:anywhere}
 .pl-note{font-size:.76rem;color:#6B7288;margin-top:8px;line-height:1.45}
 .pl-step > div{min-width:0;flex:1}.pl-step .form-input{width:100%;box-sizing:border-box}.pl-pay{box-sizing:border-box}
+/* Installed app: Android already shows its own splash, so keep ours as a plain red hand-off (no second logo) */
+@media (display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui) {
+  .splash-in { visibility: hidden; }
+  .splash { transition: opacity .15s ease; }
+}
+.ios-app .splash-in{visibility:hidden}
