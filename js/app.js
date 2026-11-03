@@ -221,7 +221,7 @@
       const g = docSign(inv); if (!g) return;
       total += g * (inv.total || 0);
       paid += g * (inv.paidAmount || 0);
-      net += g * Math.max(0, (inv.total || 0) - (inv.paidAmount || 0));
+      { const rem = (inv.total || 0) - (inv.paidAmount || 0); net += g * (g > 0 ? rem : Math.max(0, rem)); }   // an overpaid sale becomes customer credit
       count++;
     });
     return { due: Math.max(0, round2(net)), credit: Math.max(0, round2(-net)), paid, total, count };
@@ -652,7 +652,7 @@
   // ---------- Dashboard ----------
   function viewHomeOld() {
     const { revenue, receivable } = netTotals();
-    const payable = totalPayable ? totalPayable() : 0;
+    const payable = totalGive();
     const recent = [...invoices].sort((a,b) => new Date(b.date) - new Date(a.date)).slice(0, 8);
     const biz = escapeHtml(settings.businessName || 'My Business');
     const cur = settings.currency || 'Rs';
@@ -765,7 +765,7 @@
         </div>
         <div class="list-row" style="cursor:default">
           <div class="list-row-label">You'll Give</div>
-          <div class="list-row-right text-danger font-semibold">${cur} ${money(totalPayable ? totalPayable() : 0)}</div>
+          <div class="list-row-right text-danger font-semibold">${cur} ${money(totalGive())}</div>
         </div>
         <div class="list-row" style="cursor:default">
           <div class="list-row-label">Net Profit</div>
@@ -876,9 +876,9 @@
 
   // ---------- Customer payments, ledger / statement, reminders ----------
   // Money received (or refunded) against one document. Keeps a dated history in meta.payments.
-  function addPayment(inv, amt, mode, note, dateIso) {
+  function addPayment(inv, amt, mode, note, dateIso, allowOver) {
     const left = Math.max(0, round2((inv.total || 0) - (inv.paidAmount || 0)));
-    amt = round2(Math.min(Number(amt) || 0, left));
+    amt = round2(allowOver ? (Number(amt) || 0) : Math.min(Number(amt) || 0, left));
     if (amt <= 0) return 0;
     inv.meta = inv.meta || {};
     (inv.meta.payments = inv.meta.payments || []).push({ date: dateIso || new Date().toISOString(), amount: amt, mode: mode || 'Cash', note: note || '' });
@@ -942,11 +942,12 @@
     document.querySelectorAll('#rcvMode .cat-chip').forEach(b => b.addEventListener('click', () => {
       mode = b.dataset.mode; document.querySelectorAll('#rcvMode .cat-chip').forEach(x => x.classList.toggle('active', x === b));
     }));
-    f.addEventListener('submit', e => {
+    f.addEventListener('submit', async e => {
       e.preventDefault();
       let amt = round2(parseFloat(document.getElementById('rcvAmt').value) || 0);
       if (amt <= 0) { toast('Enter an amount'); return; }
-      if (amt > saleDue + 0.001) { toast(`Only ${settings.currency} ${money(saleDue)} is due`, 3500); return; }
+      const extraAmt = amt > saleDue + 0.001 ? round2(amt - saleDue) : 0;
+      if (extraAmt && !(await askConfirm(settings.currency + ' ' + money(extraAmt) + ' is more than the amount due. Keep the extra as customer credit?', { title: 'Extra payment' }))) return;
       const d = document.getElementById('rcvDate').value;
       const dateIso = (d && d !== today) ? new Date(d + 'T12:00:00').toISOString() : new Date().toISOString();
       const note = document.getElementById('rcvNote').value.trim();
@@ -954,6 +955,10 @@
         .sort((a, b) => ts(a.date) - ts(b.date));
       let n = 0;
       for (const inv of open) { if (amt <= 0.001) break; const used = addPayment(inv, amt, mode, note, dateIso); if (used > 0) { amt = round2(amt - used); n++; } }
+      if (amt > 0.001) {   // whatever is left is customer credit, kept on their latest bill
+        const last = open[open.length - 1] || custDocs(cust).filter(i => docSign(i) > 0).sort((a, b) => ts(b.date) - ts(a.date))[0];
+        if (last) { addPayment(last, amt, mode, note, dateIso, true); amt = 0; }
+      }
       persist();
       toast(`Payment saved · ${n} invoice${n !== 1 ? 's' : ''} updated`);
       render();
@@ -1474,6 +1479,11 @@
     supplierPurchases(sup).forEach(p => { total += p.total || 0; paid += p.paidAmount || 0; });
     return { total, paid, due: Math.max(0, round2(total - paid)) };
   }
+  // money we hold for customers who paid more than their bill (advance / credit)
+  function customerCredit() {
+    return round2(invoices.reduce((a, i) => (docSign(i) > 0 && i.docType !== 'estimate') ? a + Math.max(0, (i.paidAmount || 0) - (i.total || 0)) : a, 0));
+  }
+  function totalGive() { return round2(totalPayable() + customerCredit()); }
   function totalPayable() {
     return round2(purchases.reduce((s, p) => s + Math.max(0, (p.total || 0) - (p.paidAmount || 0)), 0));
   }
@@ -2345,7 +2355,7 @@
   }
   function viewTrialBalance() {
     const { revenue, cogs, receivable } = netTotals();
-    const payable = totalPayable ? totalPayable() : 0;
+    const payable = totalGive();
     const totalExpenses = expenses.reduce((s, e) => s + (e.amount || 0), 0);
     const cash = typeof cashInHandBalance === 'function' ? cashInHandBalance() : 0;
     const cur = settings.currency || 'Rs';
@@ -3567,7 +3577,7 @@
 
   function viewBalanceSheet() {
     const { revenue, cogs, receivable } = netTotals();
-    const payable = totalPayable ? totalPayable() : 0;
+    const payable = totalGive();
     const totalExpenses = expenses.reduce((s, e) => s + (e.amount || 0), 0);
     const incomeExtra = otherIncome.reduce((s,x) => s + (Number(x.amount)||0), 0);
     const cash = typeof cashInHandBalance === 'function' ? cashInHandBalance() : 0;
@@ -4023,8 +4033,10 @@
       <div class="summary-row"><span>${escapeHtml(it.name)} × ${it.qty}</span><span>${settings.currency} ${money(it.price * it.qty)}</span></div>`).join('');
     const paid = inv.paidAmount || 0;
     const due = Math.max(0, (inv.total || 0) - paid);
+    const extraPaid = (inv.docType === 'sale' || !inv.docType) ? Math.max(0, round2(paid - (inv.total || 0))) : 0;
     let statusLabel = 'Unpaid';
-    if (paid >= inv.total) statusLabel = 'Fully Paid';
+    if (extraPaid > 0.001) statusLabel = 'Paid + customer credit';
+    else if (paid >= inv.total) statusLabel = 'Fully Paid';
     else if (paid > 0) statusLabel = 'Partial / Advance';
     const isEst = inv.docType === 'estimate';
     if (isEst) statusLabel = inv.meta && inv.meta.convertedTo ? 'Converted to ' + inv.meta.convertedTo : 'Open';
@@ -4052,6 +4064,7 @@
             ${inv.meta && inv.meta.validUntil ? `<div class="summary-row"><span>Valid until</span><span>${formatDate(inv.meta.validUntil)}</span></div>` : ''}
             ${isEst ? '' : `<div class="summary-row"><span>${inv.docType === 'return' ? 'Refunded' : 'Paid'}</span><span style="color:var(--success)">${settings.currency} ${money(paid)}</span></div>
             <div class="summary-row"><span>${inv.docType === 'return' ? 'Credit left' : 'Due'}</span><span style="color:${due > 0 ? 'var(--danger)' : 'var(--success)'}">${settings.currency} ${money(due)}</span></div>
+            ${extraPaid > 0.001 ? `<div class="summary-row"><span>Customer credit (you owe)</span><span style="color:var(--danger);font-weight:700">${settings.currency} ${money(extraPaid)}</span></div>` : ''}
 `}
             <div class="summary-row"><span>Status</span><span class="font-semibold">${statusLabel}</span></div>
           </div>
@@ -5541,7 +5554,7 @@
           <div class="vy-txn-top"><div><div class="vy-txn-name">${escapeHtml(t.name)}</div><span class="vy-tag ${t.kind}">${tag}</span></div>
             <div class="vy-txn-no">#${escapeHtml(String(t.no).replace(/^[A-Za-z]+-/, ''))}<br>${new Date(t.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}, ${String(new Date(t.date).getFullYear()).slice(2)}</div></div>
           <div class="vy-txn-bottom"><div><div class="lbl">Total</div><div class="val">${fmtAmt(t.total)}</div></div>
-            ${(() => { const isPur = t.kind === 'purchase', isRet = t.kind === 'return'; if (t.kind === 'estimate' || bal <= 0.001) return `<div><div class="lbl">Balance</div><div class="val">${fmtAmt(0)}</div></div>`; const pay = isPur || isRet; return `<div><div class="lbl" style="color:${pay ? '#E11D48' : '#0E9F6E'}">${pay ? 'To pay' : 'To get'}</div><div class="val" style="color:${pay ? '#E11D48' : '#0E9F6E'}">${fmtAmt(bal)}</div></div>`; })()}
+            ${(() => { const isPur = t.kind === 'purchase', isRet = t.kind === 'return'; const adv = (t.kind === 'sale') ? Math.max(0, t.paid - t.total) : 0; if (adv > 0.001) return `<div><div class="lbl" style="color:#E11D48">To pay (credit)</div><div class="val" style="color:#E11D48">${fmtAmt(adv)}</div></div>`; if (t.kind === 'estimate' || bal <= 0.001) return `<div><div class="lbl">Balance</div><div class="val">${fmtAmt(0)}</div></div>`; const pay = isPur || isRet; return `<div><div class="lbl" style="color:${pay ? '#E11D48' : '#0E9F6E'}">${pay ? 'To pay' : 'To get'}</div><div class="val" style="color:${pay ? '#E11D48' : '#0E9F6E'}">${fmtAmt(bal)}</div></div>`; })()}
             ${isInv ? `<div class="vy-txn-actions"><button data-action="print-invoice" data-id="${t.doc.id}" aria-label="Print">${ico('print')}</button><button data-action="share-txn" data-id="${t.doc.id}" aria-label="Share">${ico('share')}</button><button data-action="txn-more" data-id="${t.doc.id}" aria-label="More">${ico('dots')}</button></div>` : ''}</div></div>`;
       }).join('') : `<div class="art-empty">${ico('receipt')}<div>No transactions yet.<br>Tap <b>Add New Sale</b> to create your first invoice.</div></div>`;
     } else {
@@ -5631,7 +5644,7 @@
   }
   function viewDashboard() {
     const { revenue, cogs, receivable } = netTotals();
-    const payable = totalPayable ? totalPayable() : 0;
+    const payable = totalGive();
     const m = monthTotals(3);
     const thisM = m[2].v, last = m[1].v;
     const growth = last > 0 ? Math.round((thisM - last) / last * 100) : (thisM > 0 ? 100 : 0);
@@ -6658,9 +6671,17 @@
         const input = $('#recordPayInput');
         const amt = parseFloat(input && input.value) || 0;
         if (amt <= 0) { toast('Enter a valid amount'); break; }
-        addPayment(inv, amt, pickedMode('rpMode'), '');
+        const dueNow = Math.max(0, round2((inv.total || 0) - (inv.paidAmount || 0)));
+        let over = false;
+        if (amt > dueNow + 0.001) {
+          if (inv.docType !== 'sale' && inv.docType) { toast('Only ' + settings.currency + ' ' + money(dueNow) + ' is pending'); break; }
+          if (!(await askConfirm(settings.currency + ' ' + money(round2(amt - dueNow)) + ' is more than the amount due. Keep the extra as customer credit (you owe it back or adjust it on the next bill)?', { title: 'Extra payment' }))) break;
+          over = true;
+        }
+        addPayment(inv, amt, pickedMode('rpMode'), '', undefined, over);
         persist();
-        toast('Payment recorded');
+        toast(over ? 'Payment recorded · extra kept as customer credit' : 'Payment recorded');
+        render();
         openInvoiceDetail(inv);
         break;
       }

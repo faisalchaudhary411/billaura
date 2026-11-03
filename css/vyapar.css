@@ -565,3 +565,4 @@ select, input, textarea, button { -webkit-tap-highlight-color: transparent; }
 .save-bar > div:first-child { flex: 0 0 auto; }
 .save-total { white-space: nowrap; font-size: 1.1rem; }
 .save-bar .btn, .save-bar .btn-primary { min-width: 0; flex: 1 1 0; padding: 12px 8px; }
+.dash-stat-value{white-space:nowrap;font-size:1.02rem}
