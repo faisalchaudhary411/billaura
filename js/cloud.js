@@ -427,6 +427,7 @@
     signUp,
     signIn,
     signOut,
+    client: getClient,
     getSession: () => session,
     getProfile: () => profile,
     shopId,

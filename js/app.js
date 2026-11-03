@@ -820,7 +820,7 @@
                 p.stock <= lowLimit(p) ? `<span class="list-item-badge badge-low">Low · ${p.stock}</span>` :
                 `<span class="list-item-badge badge-ok">${p.stock} in stock</span>`;
     return `<div class="list-item" data-action="edit-product" data-id="${p.id}">
-      <div class="list-item-icon">${initials(p.name)}</div>
+      ${photoSrc(p.id) ? `<div class="list-item-icon" style="padding:0;overflow:hidden;background:#eee"><img src="${photoSrc(p.id)}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block" /></div>` : `<div class="list-item-icon">${initials(p.name)}</div>`}
       <div class="list-item-body">
         <div class="list-item-title">${escapeHtml(p.name)}</div>
         <div class="list-item-sub">${settings.currency} ${money(p.price)} · ${escapeHtml(p.unit || 'pcs')}${p.barcode ? ' · ' + escapeHtml(p.barcode) : ''}</div>
@@ -3727,6 +3727,75 @@
     </div>`;
   }
 
+  // ---------- Item photos ----------
+  // Cloud copy lives in the Supabase 'product-photos' bucket (settings.photos = { itemId: { f: fileName } }, synced with settings).
+  // Until a photo is uploaded it is kept as a small local copy so it still shows in the app.
+  const PH_LOCAL = 'billaura_photos_v1';
+  const phLocal = () => { try { return JSON.parse(localStorage.getItem(PH_LOCAL) || '{}') || {}; } catch (e) { return {}; } };
+  const phLocalSave = m => { try { localStorage.setItem(PH_LOCAL, JSON.stringify(m)); return true; } catch (e) { return false; } };
+  function photoSrc(pid) {
+    const l = phLocal()[pid]; if (l) return l;
+    const r = settings.photos && settings.photos[pid];
+    return r && r.f && settings.photoBase ? settings.photoBase + r.f : '';
+  }
+  function compressImage(file, max) {
+    max = max || 560;
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onerror = () => reject(new Error('Could not read the image'));
+      fr.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('That file is not a picture'));
+        img.onload = () => {
+          const k = Math.min(1, max / Math.max(img.width, img.height));
+          const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+          const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+          c.toBlob(b => b ? resolve({ blob: b, dataUrl: c.toDataURL('image/jpeg', 0.78) }) : reject(new Error('Could not process the image')), 'image/jpeg', 0.78);
+        };
+        img.src = fr.result;
+      };
+      fr.readAsDataURL(file);
+    });
+  }
+  async function uploadPhotoBlob(pid, blob) {
+    const C = window.HisablyCloud;
+    if (!C || !C.ready() || !C.shopId || !C.shopId()) return false;
+    const sb = C.client && C.client(); if (!sb) return false;
+    const sid = C.shopId();
+    const file = pid.replace(/-/g, '').slice(0, 10) + '-' + Date.now().toString(36) + '.jpg';
+    const { error } = await sb.storage.from('product-photos').upload(sid + '/' + file, blob, { contentType: 'image/jpeg', upsert: true, cacheControl: '31536000' });
+    if (error) throw error;
+    const base = sb.storage.from('product-photos').getPublicUrl(sid + '/x').data.publicUrl.replace(/x$/, '');
+    const old = settings.photos && settings.photos[pid] && settings.photos[pid].f;
+    settings.photos = settings.photos || {}; settings.photos[pid] = { f: file }; settings.photoBase = base; persist();
+    if (old) { try { await sb.storage.from('product-photos').remove([sid + '/' + old]); } catch (e) {} }
+    return true;
+  }
+  async function savePhotoFor(pid, pick, remove) {
+    try {
+      if (remove) {
+        const m = phLocal(); delete m[pid]; phLocalSave(m);
+        const old = settings.photos && settings.photos[pid];
+        if (old) { delete settings.photos[pid]; persist(); try { const C = window.HisablyCloud, sb = C && C.client && C.client(); if (sb && C.shopId()) await sb.storage.from('product-photos').remove([C.shopId() + '/' + old.f]); } catch (e) {} }
+        return;
+      }
+      if (!pick) return;
+      const m = phLocal(); m[pid] = pick.dataUrl;
+      if (!phLocalSave(m)) toast('Phone storage is full – photo not kept offline');
+      let up = false;
+      try { up = await uploadPhotoBlob(pid, pick.blob); } catch (e) { toast('Photo saved on this phone; cloud upload failed: ' + (e.message || '')); }
+      if (up) { const m2 = phLocal(); delete m2[pid]; phLocalSave(m2); toast('Photo uploaded'); }
+      if (currentView === 'products') render();
+    } catch (e) { toast('Could not save the photo'); }
+  }
+  async function uploadPendingPhotos() {
+    const m = phLocal(); const ids = Object.keys(m).filter(id => products.some(p => p.id === id));
+    let ok = 0;
+    for (const id of ids) {
+      try { const blob = await (await fetch(m[id])).blob(); if (await uploadPhotoBlob(id, blob)) { const m2 = phLocal(); delete m2[id]; phLocalSave(m2); ok++; } } catch (e) {}
+    }
+    return { ok, left: Object.keys(phLocal()).filter(id => products.some(p => p.id === id)).length };
+  }
   // Rebuilds the public store snapshot from the current business details + items.
   // Silent mode only touches storage when something actually changed (keeps the link in sync with the app).
   async function republishStore(silent) {
@@ -3737,7 +3806,7 @@
       color: settings.invoiceColor || '#EF1A3C',
       links: (settings.storeLinks || []).map(l => ({ label: l.label, url: l.url })),
       currency: settings.currency || 'PKR',
-      items: products.map(p => ({ name: p.name, price: p.price, unit: p.unit || '', category: p.category || '', stock: p.stock })).slice(0, 400)
+      items: products.map(p => ({ name: p.name, price: p.price, unit: p.unit || '', category: p.category || '', stock: p.stock, photo: (settings.photos && settings.photos[p.id] && settings.photoBase) ? settings.photoBase + settings.photos[p.id].f : '' })).slice(0, 400)
     };
     const h = await packCatalog(catalog);
     if (silent && h === settings._storeHash) return catalog.items.length;
@@ -3747,7 +3816,7 @@
     return catalog.items.length;
   }
   async function packCatalog(c) {
-    const compact = { n: c.shop, p: c.phone, e: c.email, a: c.address, c: c.currency, t: c.tagline, w: c.wa, k: c.color, l: (c.links || []).map(l => [l.label, l.url]), i: c.items.map(x => [x.name, x.price, x.unit, x.category, x.stock]) };
+    const compact = { n: c.shop, p: c.phone, e: c.email, a: c.address, c: c.currency, t: c.tagline, w: c.wa, k: c.color, b: settings.photoBase || '', l: (c.links || []).map(l => [l.label, l.url]), i: c.items.map(x => { const r = [x.name, x.price, x.unit, x.category, x.stock]; if (x.photo) r.push(settings.photoBase && x.photo.startsWith(settings.photoBase) ? x.photo.slice(settings.photoBase.length) : x.photo); return r; }) };
     const json = JSON.stringify(compact);
     const b64 = u8 => btoa(String.fromCharCode.apply(null, u8)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     try {
@@ -5016,7 +5085,7 @@
 
   const UNIT_LIST = [['BAGS', 'bag'], ['BOTTLES', 'btl'], ['BOX', 'box'], ['BUNDLES', 'bdl'], ['CANS', 'can'], ['CARTONS', 'ctn'], ['DOZENS', 'dz'], ['GRAMS', 'g'], ['KILOGRAMS', 'kg'], ['LITRE', 'ltr'], ['MILILITRE', 'ml'], ['METERS', 'm'], ['FEET', 'ft'], ['SQUARE FEET', 'sq ft'], ['NUMBERS', 'nos'], ['PACKS', 'pack'], ['PAIRS', 'pair'], ['PIECES', 'pcs'], ['ROLLS', 'roll'], ['SETS', 'set'], ['TABLETS', 'tab']];
   function unitName(code) { const u = UNIT_LIST.find(x => x[1] === code); return u ? u[0] : String(code || '').toUpperCase(); }
-  let _pmDraft = null, _pmItem = null;
+  let _pmDraft = null, _pmItem = null, _pmPick = null, _pmRemove = false;
   function pmCollect() {
     const f = $('#productForm'); if (!f) return _pmDraft || {};
     const fd = new FormData(f); const d = {};
@@ -5061,6 +5130,7 @@
     $('#modalRoot').innerHTML = `<div class="modal-overlay"><div class="pm-page">
       <div class="pm-head"><button class="pm-back" data-action="close-modal" aria-label="Back">←</button><h2>${p ? 'Edit Item' : 'Add Item'}</h2></div>
       <form id="productForm" autocomplete="off" class="pm-scroll">
+        <div class="pm-photo" id="pmPhotoRow"></div>
         ${fl('Item Name <i>*</i>', `<input name="name" required maxlength="80" value="${v('name', p && p.name)}" /><button type="button" class="pm-chip" data-action="pm-edit-unit">${p || D.unit || D.name ? 'Edit Unit' : 'Select Unit'}</button>`)}
         ${conv}
         ${showBarcode ? fl('Item Code / Barcode', `<input name="barcode" id="pmBarcode" maxlength="40" value="${v('barcode', p && p.barcode)}" /><button type="button" class="pm-chip" data-action="pm-assign-code">Assign Code</button><button type="button" class="pm-chip pm-scan" id="pmScan">Scan</button>`) : ''}
@@ -5088,6 +5158,20 @@
       </form>
       <button class="pm-save" id="pmSaveBtn">Save</button></div></div>`;
     const f = $('#productForm');
+    _pmPick = null; _pmRemove = false;
+    const drawPhoto = () => {
+      const src = _pmPick ? _pmPick.dataUrl : (_pmRemove ? '' : (p ? photoSrc(p.id) : ''));
+      $('#pmPhotoRow').innerHTML = `<button type="button" class="pm-ph-box" id="pmPhotoBtn" aria-label="Item photo">${src ? `<img src="${src}" alt="" />` : '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>'}</button>
+        <div class="pm-ph-txt"><b>${src ? 'Item photo' : 'Add item photo'}</b><span>Shown in your store and item list</span>${src ? '<button type="button" class="pm-chip" id="pmPhotoDel" style="margin-top:6px;background:#FDE7EB;color:#C8102E">Remove</button>' : ''}</div>
+        <input type="file" id="pmPhotoIn" accept="image/*" hidden />`;
+      $('#pmPhotoBtn').onclick = () => $('#pmPhotoIn').click();
+      const del = $('#pmPhotoDel'); if (del) del.onclick = () => { _pmPick = null; _pmRemove = true; drawPhoto(); };
+      $('#pmPhotoIn').onchange = async e => {
+        const file = e.target.files && e.target.files[0]; if (!file) return;
+        try { _pmPick = await compressImage(file); _pmRemove = false; drawPhoto(); } catch (err) { toast(err.message || 'Could not use that photo'); }
+      };
+    };
+    drawPhoto();
     const scan = $('#pmScan');
     if (scan) scan.onclick = () => startScanner(code => { const b = $('#pmBarcode'); if (b) b.value = code; });
     const cat = $('#pmCat');
@@ -5122,12 +5206,12 @@
       }
       const stockVal = fd.has('stock') ? (numOrBlank(fd.get('stock')) || 0) : (p ? p.stock : 0);
       const low = fd.has('lowStock') ? numOrBlank(fd.get('lowStock')) : (p ? p.lowStock : null);
-      const now = new Date().toISOString();
+      const now = new Date().toISOString(); let savedId = p ? p.id : null;
       if (!p) {
         if (!enforceLimit('products', products.length)) return;
         const np = Object.assign({ id: uid(), stock: stockVal }, rec);
         if (low != null) np.lowStock = low;
-        products.push(np);
+        products.push(np); savedId = np.id;
         if (stockVal > 0) stockMovements.unshift({ id: uid(), productId: np.id, productName: np.name, type: 'in', qty: stockVal, date: now, note: 'Opening stock' });
         toast('Item added');
       } else {
@@ -5138,6 +5222,7 @@
         toast('Item updated');
       }
       persist();
+      if (savedId && (_pmPick || _pmRemove)) savePhotoFor(savedId, _pmPick, _pmRemove);
       closeModal();
       render();
     });
@@ -6068,7 +6153,7 @@
         break;
       }
       case 'publish-store-page': {
-        republishStore(false).then(n => { toast('Store published (' + n + ' items). Share the link on WhatsApp.'); render(); }).catch(() => toast('Could not publish'));
+        uploadPendingPhotos().then(r => republishStore(false).then(n => { toast('Store published (' + n + ' items)' + (r.left ? ' · ' + r.left + ' photo(s) still on this phone – sign in to the cloud to upload them' : '') + '. Share the link on WhatsApp.', 4200); render(); })).catch(() => toast('Could not publish'));
         break;
       }
       case 'store-edit-info': openStoreInfoModal(); break;
@@ -6750,6 +6835,14 @@
 
       case 'stop-scanner': stopScanner(); break;
       case 'open-plans': openPlansModal(); break;
+      case 'plan-pick': {
+        const k = t.dataset.plan; if (!k) break; _planPick = k;
+        document.querySelectorAll('.pl-card').forEach(c => { const on = c === t; c.classList.toggle('sel', on); const sl = c.querySelector('.pl-sel'); if (sl) sl.textContent = on ? '● Selected' : 'Choose ' + c.querySelector('.pl-name').textContent; });
+        const pi = $('#paidPlanSelect'); if (pi) pi.value = k;
+        const nm = $('#plSelName'), am = $('#plSelAmt'); if (nm) nm.textContent = k.charAt(0).toUpperCase() + k.slice(1); if (am) am.textContent = t.dataset.amt;
+        break;
+      }
+      case 'copy-pay': { const v = t.dataset.v || ''; try { navigator.clipboard.writeText(v); toast('Copied ' + v); } catch (e) { toast(v); } break; }
       case 'open-shopify': openShopifyModal(); break;
       case 'shopify-sync': shopifyManualSync(false); break;
       case 'shopify-full': shopifyManualSync(true); break;
@@ -7593,62 +7686,70 @@
     return true;
   }
 
-  function openPlansModal() {
-    const pay = HisablyFreemium.getPlanCache().payment || HisablyFreemium.DEFAULT_PAY;
-    const { key, cache } = HisablyFreemium.effectivePlan();
-    $('#modalRoot').innerHTML = `
-      <div class="modal-overlay">
-        <div class="modal-sheet">
-          <div class="modal-handle"></div>
-          <div class="modal-header">
-            <h3 class="modal-title">Plans & payment</h3>
-            <button class="modal-close" data-action="close-modal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-          </div>
-          <p class="text-sm text-secondary mb-12">Current: <strong>${escapeHtml(cache.planId === 'lifetime' && cache.status === 'active' ? 'lifetime' : key)}</strong>${cache.status ? ' · ' + escapeHtml(cache.status) : ''}${cache.paidUntil && key !== 'free' && cache.planId !== 'lifetime' ? ' · paid until ' + formatDate(cache.paidUntil) : ''}</p>
-          ${(() => { const L = HisablyFreemium.effectivePlan().limits; const f = (ok, t) => `<div class="feat ${ok ? 'on' : 'off'}"><span>${ok ? '✓' : '🔒'}</span> ${t}</div>`; const unl = L.products >= 9999;
-            return `<div class="plan-now"><div class="pn-h">${escapeHtml(planLabel())} plan ${key === 'pro' || key === 'trial' ? '— Pro features unlocked' : ''}</div>
-              ${f(unl, unl ? 'Unlimited items, invoices &amp; parties' : `Up to ${L.products} items · ${L.invoices} invoices · ${L.customers} parties`)}${f(L.cloudSync, 'Cloud sync')}${f(L.paymentQrOnInvoice, 'Payment QR on invoices')}${f(L.bulkTools, 'Bulk import / price change')}${f(L.shopify, 'Shopify store sync')}${f(L.themes, 'All invoice themes &amp; colours')}${f(L.passcode, 'App lock &amp; staff PIN')}</div>`; })()}
-          <div class="card mb-12" style="padding:14px${key === 'free' ? ';border-color:var(--primary)' : ''}">
-            <div class="font-semibold">Free</div>
-            <div class="text-sm text-secondary">25 products · 40 invoices · 20 customers</div>
-            <div class="text-sm" style="color:var(--primary);margin-top:4px">${pay.currency} 0 / month</div>
-          </div>
-          <div class="card mb-12" style="padding:14px${key === 'basic' ? ';border:2px solid var(--primary)' : ''}">
-            <div class="font-semibold">Basic</div>
-            <div class="text-sm text-secondary">300 products · 1,500 invoices · 200 customers · cloud sync · payment QR on invoices</div>
-            <div class="text-sm" style="color:var(--primary);margin-top:4px;font-weight:700">${escapeHtml(pay.currency)} ${escapeHtml(pay.basicPrice)} / month</div>
-          </div>
-          <div class="card mb-16" style="padding:14px${(key === 'pro' && cache.planId !== 'lifetime') ? ';border:2px solid var(--primary)' : ''}">
-            <div class="font-semibold">Pro</div>
-            <div class="text-sm text-secondary">Unlimited everything · bulk import &amp; bulk price change · Shopify store connection · priority support</div>
-            <div class="text-sm" style="color:var(--primary);margin-top:4px;font-weight:700">${pay.currency} ${pay.proPrice} / month</div>
-          </div>
-          <div class="card mb-16" style="padding:14px;border-color:#F59E0B;background:#FFFBEB">
-            <div class="font-semibold">Lifetime <span style="font-size:11px;background:#F59E0B;color:#fff;border-radius:6px;padding:2px 6px;margin-left:4px">${cache.planId === 'lifetime' ? 'ACTIVE ✓' : 'BEST VALUE'}</span></div>
-            <div class="text-sm text-secondary">All Pro features forever · pay once, no monthly renewal</div>
-            <div class="text-sm" style="color:var(--primary);margin-top:4px;font-weight:700">${escapeHtml(pay.currency)} ${escapeHtml(pay.lifetimePrice || 14999)} one-time</div>
-          </div>
-          <div class="section-header"><h2 class="section-title">Pay to upgrade</h2></div>
-          <div class="text-sm mb-8">JazzCash: <strong>${escapeHtml(pay.jazzcash || '—')}</strong></div>
-          <div class="text-sm mb-8">EasyPaisa: <strong>${escapeHtml(pay.easypaisa || '—')}</strong></div>
-          ${pay.bankAccount ? `<div class="text-sm mb-8">Bank: ${escapeHtml(pay.bankName || '')} · ${escapeHtml(pay.bankAccount)} · ${escapeHtml(pay.bankTitle || '')}</div>` : ''}
-          <p class="text-sm text-secondary mb-12">${escapeHtml(pay.note || '')}</p>
-          <div class="form-group">
-            <label class="form-label">Plan you paid for</label>
-            <select class="form-input" id="paidPlanSelect">
-              <option value="basic">Basic (${pay.currency} ${pay.basicPrice})</option>
-              <option value="pro">Pro (${pay.currency} ${pay.proPrice})</option>
-              <option value="lifetime">Lifetime (${pay.currency} ${pay.lifetimePrice || 14999})</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Your phone / txn note</label>
-            <input class="form-input" id="paidNote" placeholder="Txn ID or phone used to pay" />
-          </div>
-          <div id="payReqStatus" class="text-sm text-secondary mb-8"></div>
-          <button class="btn btn-primary btn-block" data-action="submit-payment">I paid – notify admin</button>
-        </div>
-      </div>`;
+  let _planPick = 'pro';
+  function openPlansModal(pre) {
+    const F = HisablyFreemium;
+    const pay = F.getPlanCache().payment || F.DEFAULT_PAY;
+    const { key, cache, limits } = F.effectivePlan();
+    const cur = escapeHtml(pay.currency || 'PKR');
+    const isLife = cache.planId === 'lifetime' && cache.status === 'active';
+    const L = F.LIMITS;
+    const pf = v => Number(v).toLocaleString('en-US');
+    const n = v => v >= 9999 ? 'Unlimited' : Number(v).toLocaleString('en-US');
+    const price = { basic: Number(pay.basicPrice) || 499, pro: Number(pay.proPrice) || 999, lifetime: Number(pay.lifetimePrice) || 14999 };
+    if (pre && price[pre]) _planPick = pre; else if (!price[_planPick] || key === _planPick) _planPick = key === 'pro' ? 'lifetime' : (key === 'basic' ? 'pro' : 'pro');
+    if (isLife) _planPick = 'lifetime';
+    // status / days
+    let statusTxt = '', pill = key.toUpperCase();
+    const nowMs = F.nowMs(cache);
+    if (key === 'trial' && cache.trialEndsAt) { const d = Math.max(0, Math.ceil((new Date(cache.trialEndsAt).getTime() - nowMs) / 864e5)); statusTxt = d + ' day' + (d === 1 ? '' : 's') + ' of free trial left – everything is unlocked'; pill = 'TRIAL'; }
+    else if (isLife) { statusTxt = 'Lifetime – never expires'; pill = 'LIFETIME'; }
+    else if (key === 'pro' || key === 'basic') { statusTxt = cache.paidUntil ? 'Renews / ends ' + new Date(cache.paidUntil).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Active'; }
+    else if (key === 'blocked') { statusTxt = 'Account inactive – choose a plan to continue'; pill = 'INACTIVE'; }
+    else { statusTxt = cache.status === 'expired_paid' ? 'Your paid plan ended – renew to get everything back' : (cache.status === 'expired_trial' ? 'Your free trial ended' : 'Upgrade any time to remove limits'); pill = 'FREE'; }
+    const meter = (label, used, max) => max >= 9999 ? '' : `<div class="pl-m"><div class="pl-ml"><span>${label}</span><b>${used} / ${n(max)}</b></div><div class="pl-bar"><i style="width:${Math.min(100, Math.round(used / max * 100))}%;${used / max >= 0.9 ? 'background:#FFD166' : ''}"></i></div></div>`;
+    const meters = meter('Items', products.length, limits.products) + meter('Invoices', invoices.length, limits.invoices) + meter('Customers', customers.length, limits.customers);
+    const ft = (ok, t) => `<li class="${ok ? 'on' : 'off'}"><span>${ok ? '✓' : '—'}</span>${t}</li>`;
+    const feats = k => { const x = L[k === 'lifetime' ? 'pro' : k]; return [
+      ft(true, `<b>${n(x.products)}</b> items`), ft(true, `<b>${n(x.invoices)}</b> invoices`), ft(true, `<b>${n(x.customers)}</b> customers`),
+      ft(x.cloudSync, 'Cloud sync &amp; backup'), ft(x.paymentQrOnInvoice, 'Payment QR on invoices'), ft(x.passcode, 'PIN lock &amp; staff roles'),
+      ft(x.themes, 'All invoice themes'), ft(x.bulkTools, 'Bulk import &amp; price tools'), ft(x.shopify, 'Online store &amp; Shopify sync')].join(''); };
+    const card = (k, name, badge, priceHtml, sub) => {
+      const mine = (k === 'free' && key === 'free') || (k === 'basic' && key === 'basic') || (k === 'pro' && key === 'pro' && !isLife) || (k === 'lifetime' && isLife);
+      const sel = _planPick === k;
+      return `<div class="pl-card ${sel ? 'sel' : ''} ${mine ? 'mine' : ''} ${k}" ${k !== 'free' && !mine ? `data-action="plan-pick" data-plan="${k}" data-amt="${pf(price[k])}"` : ''}>
+        ${badge ? `<span class="pl-badge">${badge}</span>` : ''}
+        <div class="pl-top"><div><div class="pl-name">${name}</div><div class="pl-sub">${sub}</div></div><div class="pl-price">${priceHtml}</div></div>
+        <ul class="pl-f">${feats(k)}</ul>
+        ${mine ? '<div class="pl-cur">✓ Your current plan</div>' : (k === 'free' ? '' : `<div class="pl-sel">${sel ? '● Selected' : 'Choose ' + name}</div>`)}</div>`;
+    };
+    const months = Math.max(1, Math.round(price.lifetime / price.pro));
+    const copyRow = (label, val) => val ? `<div class="pl-pay"><div><small>${label}</small><b>${escapeHtml(val)}</b></div><button type="button" class="pm-chip" data-action="copy-pay" data-v="${escapeHtml(val)}">Copy</button></div>` : '';
+    $('#modalRoot').innerHTML = `<div class="modal-overlay"><div class="pm-page">
+      <div class="pm-head"><button class="pm-back" data-action="close-modal" aria-label="Back">←</button><h2>Plans &amp; Packages</h2></div>
+      <div class="pm-scroll" style="padding:0 0 90px">
+        <div class="pl-hero"><div class="pl-hero-top"><div><small>Your plan</small><div class="pl-hero-name">${escapeHtml(planLabel())}</div></div><span class="pl-pill">${pill}</span></div>
+          <div class="pl-hero-sub">${escapeHtml(statusTxt)}</div>${meters ? `<div class="pl-meters">${meters}</div>` : ''}</div>
+        <div class="pl-wrap">
+          <div class="pl-h">Choose your package</div>
+          ${isLife ? card('lifetime', 'Lifetime', '', `<b>${cur} ${pf(price.lifetime)}</b><small>one-time</small>`, 'Paid in full') : ''}
+          ${isLife ? '' : card('basic', 'Basic', '', `<b>${cur} ${pf(price.basic)}</b><small>/ month</small>`, 'For small shops')}
+          ${isLife ? '' : card('pro', 'Pro', 'MOST POPULAR', `<b>${cur} ${pf(price.pro)}</b><small>/ month</small>`, 'Everything unlocked')}
+          ${isLife ? '' : card('lifetime', 'Lifetime', 'BEST VALUE', `<b>${cur} ${pf(price.lifetime)}</b><small>one-time</small>`, `Pays for itself in about ${months} months of Pro`)}
+          ${isLife ? '' : card('free', 'Free', '', `<b>${cur} 0</b>`, 'Try Billaura')}
+          ${isLife ? '<div class="pl-note" style="text-align:center;margin-top:18px">You have Lifetime access – thank you for supporting Billaura.</div>' : `
+          <div class="pl-h" style="margin-top:22px">How to upgrade</div>
+          <div class="pl-step"><span class="pl-n">1</span><div><b>Selected: <span id="plSelName">${_planPick.charAt(0).toUpperCase() + _planPick.slice(1)}</span> – ${cur} <span id="plSelAmt">${pf(price[_planPick])}</span></b></div></div>
+          <div class="pl-step"><span class="pl-n">2</span><div><b>Send the amount to</b>
+            ${copyRow('JazzCash', pay.jazzcash)}${copyRow('EasyPaisa', pay.easypaisa)}${pay.bankAccount ? copyRow('Bank – ' + (pay.bankName || '') + (pay.bankTitle ? ' · ' + pay.bankTitle : ''), pay.bankAccount) : ''}
+            ${pay.note ? `<div class="pl-note">${escapeHtml(pay.note)}</div>` : ''}</div></div>
+          <div class="pl-step"><span class="pl-n">3</span><div style="flex:1"><b>Tell us you paid</b>
+            <input type="hidden" id="paidPlanSelect" value="${_planPick}" />
+            <input class="form-input" id="paidNote" placeholder="Transaction ID or the phone you paid from" style="margin-top:8px" />
+            <div id="payReqStatus" class="text-sm text-secondary" style="margin-top:8px"></div>
+            <button class="btn btn-primary btn-block" data-action="submit-payment" style="margin-top:10px">I paid – notify admin</button>
+            <div class="pl-note">Your plan switches on as soon as the payment is confirmed, usually within a few hours.</div></div></div>`}
+        </div></div></div></div>`;
     if (window.HisablyCloud && HisablyCloud.ready() && HisablyCloud.getSession()) {
       HisablyCloud.latestPaymentRequest().then(r => {
         const el = document.getElementById('payReqStatus');

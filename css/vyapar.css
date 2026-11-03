@@ -520,3 +520,36 @@ select, input, textarea, button { -webkit-tap-highlight-color: transparent; }
 .splash-logo { width: 96px; height: 96px; border-radius: 22px; box-shadow: none; animation: none; }
 .splash-name { margin-top: 18px; font-size: 1.6rem; letter-spacing: .02em; animation: none; }
 .splash-tag, .splash-bar, .splash-msg, .splash-foot { display: none; }
+
+/* single-splash: matches the native Android splash (maskable icon on brand red) */
+.splash { background: #E8173C; }
+.splash-logo { width: 160px; height: 160px; border-radius: 0; box-shadow: none; animation: none; margin: -20px 0 -22px; }
+.splash-name { margin-top: 0; font-size: 1.5rem; }
+
+.pm-photo{display:flex;gap:14px;align-items:center;margin-bottom:18px}
+.pm-ph-box{flex:none;width:84px;height:84px;border-radius:16px;border:1.5px dashed #9aa3b5;background:#F5F6FA;color:#6B7288;display:flex;align-items:center;justify-content:center;overflow:hidden;padding:0;cursor:pointer}
+.pm-ph-box img{width:100%;height:100%;object-fit:cover;display:block}
+.pm-ph-txt{display:flex;flex-direction:column;gap:2px;font-size:.8rem;color:#6B7288}.pm-ph-txt b{color:#1B2133;font-size:.95rem}
+
+/* ---- plans & packages page ---- */
+.pl-hero{background:linear-gradient(150deg,#EF1A3C,#B80F2C);color:#fff;padding:18px 16px 20px;border-radius:0 0 24px 24px}
+.pl-hero small{opacity:.8;font-size:.78rem}.pl-hero-top{display:flex;justify-content:space-between;align-items:center}
+.pl-hero-name{font-size:1.6rem;font-weight:800;line-height:1.2}.pl-hero-sub{margin-top:4px;opacity:.92;font-size:.88rem}
+.pl-pill{background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.35);border-radius:999px;padding:4px 12px;font-size:.72rem;font-weight:800;letter-spacing:.06em}
+.pl-meters{margin-top:14px;display:flex;flex-direction:column;gap:9px}.pl-ml{display:flex;justify-content:space-between;font-size:.78rem;margin-bottom:4px;opacity:.95}
+.pl-bar{height:6px;border-radius:6px;background:rgba(255,255,255,.25);overflow:hidden}.pl-bar i{display:block;height:100%;background:#fff;border-radius:6px}
+.pl-wrap{padding:16px}.pl-h{font-weight:800;font-size:1.02rem;margin:4px 0 12px}
+.pl-card{position:relative;background:#fff;border:2px solid #E5E8F0;border-radius:18px;padding:16px;margin-bottom:12px;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.pl-card.sel{border-color:#EF1A3C;box-shadow:0 6px 20px rgba(239,26,60,.14)}.pl-card.free,.pl-card.mine{cursor:default}.pl-card.free{opacity:.92}
+.pl-card.lifetime{background:linear-gradient(180deg,#FFFBEB,#fff)}
+.pl-badge{position:absolute;top:-10px;right:14px;background:#EF1A3C;color:#fff;font-size:.66rem;font-weight:800;letter-spacing:.05em;padding:3px 10px;border-radius:999px}.pl-card.lifetime .pl-badge{background:#F59E0B}
+.pl-top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.pl-name{font-size:1.15rem;font-weight:800}.pl-sub{font-size:.78rem;color:#6B7288;margin-top:2px;max-width:170px}
+.pl-price{text-align:right}.pl-price b{font-size:1.2rem;display:block;white-space:nowrap}.pl-price small{color:#6B7288;font-size:.74rem}
+.pl-f{list-style:none;margin:12px 0 4px;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;font-size:.78rem}
+.pl-f li{display:flex;gap:6px;align-items:flex-start;line-height:1.3}.pl-f li span{flex:none;width:16px;font-weight:800;color:#12924F}.pl-f li.off{color:#A3A9BA}.pl-f li.off span{color:#C5CAD8}
+.pl-sel,.pl-cur{margin-top:10px;text-align:center;font-weight:700;font-size:.88rem;border-radius:12px;padding:10px}
+.pl-sel{background:#F2F4F9;color:#1B2133}.pl-card.sel .pl-sel{background:#EF1A3C;color:#fff}.pl-cur{background:#E5F7EC;color:#12924F}
+.pl-step{display:flex;gap:12px;margin-bottom:16px;align-items:flex-start}.pl-n{flex:none;width:26px;height:26px;border-radius:50%;background:#EF1A3C;color:#fff;font-weight:800;font-size:.82rem;display:flex;align-items:center;justify-content:center;margin-top:1px}
+.pl-pay{display:flex;justify-content:space-between;align-items:center;gap:10px;background:#F5F6FA;border-radius:12px;padding:10px 12px;margin-top:8px}.pl-pay small{display:block;color:#6B7288;font-size:.72rem}.pl-pay b{font-size:.98rem;letter-spacing:.02em;overflow-wrap:anywhere}
+.pl-note{font-size:.76rem;color:#6B7288;margin-top:8px;line-height:1.45}
+.pl-step > div{min-width:0;flex:1}.pl-step .form-input{width:100%;box-sizing:border-box}.pl-pay{box-sizing:border-box}

@@ -57,3 +57,12 @@ Barcode label printing (offline Code 128), low-stock and daily-summary alerts on
 
 ## Staff roles
 Owner PIN opens everything. Each staff user gets a role — Manager, Accountant, Cashier, Salesperson, Storekeeper or Custom — that controls which screens, menu items and actions they can use (App Lock → Role). Settings, PINs and account stay owner-only.
+
+## Item photos (one-time setup)
+Photos are uploaded to a Supabase Storage bucket so they show on your public store page.
+1. Supabase → SQL Editor → paste and run `supabase/storage.sql` (once).
+2. In the app: Items → open an item → tap the photo box → pick a picture. Then Online Store → **Update Store Page**.
+Without that setup (or while signed out) photos are kept on the phone and shown in the item list only; they upload automatically the next time you tap Update Store Page while signed in.
+
+## Install note (splash screen)
+After updating, remove the old Billaura icon from the home screen and add it again so Android refreshes the splash colours and icon.
