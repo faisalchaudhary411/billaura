@@ -560,3 +560,8 @@ select, input, textarea, button { -webkit-tap-highlight-color: transparent; }
 }
 .ios-app .splash-in{visibility:hidden}
 #rbFields .pm-f{min-width:0}#rbFields .pm-f input{width:100%;min-width:0}
+/* invoice form: keep the last card clear of the Save bar + bottom nav, and keep the total on one line */
+.doc-form { padding-bottom: calc(var(--nav-height, 64px) + 110px + var(--safe-bottom, 0px)); }
+.save-bar > div:first-child { flex: 0 0 auto; }
+.save-total { white-space: nowrap; font-size: 1.1rem; }
+.save-bar .btn, .save-bar .btn-primary { min-width: 0; flex: 1 1 0; padding: 12px 8px; }
