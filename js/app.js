@@ -3809,14 +3809,18 @@
       items: products.map(p => ({ name: p.name, price: p.price, unit: p.unit || '', category: p.category || '', stock: p.stock, photo: (settings.photos && settings.photos[p.id] && settings.photoBase) ? settings.photoBase + settings.photos[p.id].f : '' })).slice(0, 400)
     };
     const h = await packCatalog(catalog);
-    if (silent && h === settings._storeHash) return catalog.items.length;
+    if (silent && h === settings._storeHash && (settings._slugLive || !settings.storeSlug)) return catalog.items.length;
     catalog.updatedAt = new Date().toISOString();
     try { localStorage.setItem('billaura_public_store', JSON.stringify(catalog)); } catch (e) {}
     if (h !== settings._storeHash) { settings._storeHash = h; persist(); }
+    await pushStoreCloud(catalog);
     return catalog.items.length;
   }
+  function compactOf(c) {
+    return { n: c.shop, p: c.phone, e: c.email, a: c.address, c: c.currency, t: c.tagline, w: c.wa, k: c.color, b: settings.photoBase || '', l: (c.links || []).map(l => [l.label, l.url]), i: c.items.map(x => { const r = [x.name, x.price, x.unit, x.category, x.stock]; if (x.photo) r.push(settings.photoBase && x.photo.startsWith(settings.photoBase) ? x.photo.slice(settings.photoBase.length) : x.photo); return r; }) };
+  }
   async function packCatalog(c) {
-    const compact = { n: c.shop, p: c.phone, e: c.email, a: c.address, c: c.currency, t: c.tagline, w: c.wa, k: c.color, b: settings.photoBase || '', l: (c.links || []).map(l => [l.label, l.url]), i: c.items.map(x => { const r = [x.name, x.price, x.unit, x.category, x.stock]; if (x.photo) r.push(settings.photoBase && x.photo.startsWith(settings.photoBase) ? x.photo.slice(settings.photoBase.length) : x.photo); return r; }) };
+    const compact = compactOf(c);
     const json = JSON.stringify(compact);
     const b64 = u8 => btoa(String.fromCharCode.apply(null, u8)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     try {
@@ -3829,7 +3833,35 @@
     } catch (e) {}
     return 'j=' + b64(new TextEncoder().encode(json));
   }
+  const slugify = v => String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 38).replace(/-+$/, '');
+  const slugOk = v => /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/.test(v);
+  let _slugMsg = '';
+  // Publishes the store to the cloud under a short address; returns true when the short link is live.
+  async function pushStoreCloud(catalog) {
+    _slugMsg = '';
+    const C = window.HisablyCloud;
+    if (!C || !C.ready() || !C.getSession() || !C.shopId || !C.shopId() || !navigator.onLine) return false;
+    try {
+      let slug = settings.storeSlug;
+      if (!slug || !slugOk(slug)) {
+        const base = slugify(settings.businessName) || ('store-' + C.shopId().slice(0, 6));
+        slug = '';
+        for (let i = 0; i < 6 && !slug; i++) { const cand = i ? base.slice(0, 34) + '-' + (i + 1) : base; if (slugOk(cand) && !(await C.slugTaken(cand))) slug = cand; }
+        if (!slug) { _slugMsg = 'Could not find a free store name'; return false; }
+        settings.storeSlug = slug;
+      }
+      await C.publishStore(slug, compactOf(catalog));
+      if (!settings._slugLive) { settings._slugLive = true; }
+      persist();
+      return true;
+    } catch (e) {
+      settings._slugLive = false;
+      _slugMsg = e.message === 'SETUP_NEEDED' ? 'Short link needs a one-time setup (run supabase/stores.sql)' : (e.message === 'SLUG_TAKEN' ? 'That store name is already taken' : 'Could not publish the short link');
+      return false;
+    }
+  }
   function storeUrl() {
+    if (settings.storeSlug && settings._slugLive) return new URL('./', location.href).href + 'store/' + settings.storeSlug;
     let u = new URL('store.html', location.href).href;
     if (settings._storeHash) u += '#' + (/^[zj]=/.test(settings._storeHash) ? settings._storeHash : 'c=' + settings._storeHash);
     return u;
@@ -3851,7 +3883,8 @@
         <button class="sh-edit" data-action="store-edit-info">Edit store info</button></div>
       ${isPro ? `
       <div class="doc-card" style="margin:14px 16px 0"><div class="doc-label">Your store link</div>
-        <div class="store-url">${escapeHtml(new URL(url).host + '/store.html' + (settings._storeHash ? ' · ' + (url.length / 1000).toFixed(1) + 'k link' : ''))}</div>
+        <div class="store-url">${escapeHtml(settings.storeSlug && settings._slugLive ? new URL(url).host + new URL(url).pathname : new URL(url).host + '/store.html' + (settings._storeHash ? ' · ' + (url.length / 1000).toFixed(1) + 'k link' : ''))}</div>
+        <div class="text-sm text-secondary" style="margin-top:6px">${settings.storeSlug && settings._slugLive ? 'Short link is live.' : 'This is the long link. Sign in to the cloud and tap Update Store Page to get a short name link.'} <button type="button" class="chip-btn" data-action="store-edit-slug">${settings.storeSlug ? 'Change name' : 'Choose name'}</button></div>
         <div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-outline" style="flex:1" data-action="copy-store-link">Copy link</button><button class="btn btn-primary" style="flex:1" data-action="share-store-link">Share on WhatsApp</button></div></div>
       <div style="padding:12px 16px;display:flex;flex-direction:column;gap:10px">
         <button class="btn btn-primary btn-lg btn-block" data-action="publish-store-page">${published ? 'Update' : 'Publish'} Store Page</button>
@@ -6153,10 +6186,23 @@
         break;
       }
       case 'publish-store-page': {
-        uploadPendingPhotos().then(r => republishStore(false).then(n => { toast('Store published (' + n + ' items)' + (r.left ? ' · ' + r.left + ' photo(s) still on this phone – sign in to the cloud to upload them' : '') + '. Share the link on WhatsApp.', 4200); render(); })).catch(() => toast('Could not publish'));
+        uploadPendingPhotos().then(r => republishStore(false).then(n => { toast('Store published (' + n + ' items)' + (_slugMsg ? ' · ' + _slugMsg : '') + (r.left ? ' · ' + r.left + ' photo(s) still on this phone – sign in to the cloud to upload them' : '') + '. Share the link on WhatsApp.', 4200); render(); })).catch(() => toast('Could not publish'));
         break;
       }
       case 'store-edit-info': openStoreInfoModal(); break;
+      case 'store-edit-slug': {
+        const C = window.HisablyCloud;
+        if (!C || !C.ready() || !C.getSession()) { toast('Sign in to the cloud to get a short store link'); break; }
+        const base = new URL('./', location.href).href.replace(/^https?:\/\//, '') + 'store/';
+        const v = await askPrompt('Your store link will be ' + base + 'name', settings.storeSlug || slugify(settings.businessName), { title: 'Store link name' });
+        if (v == null) break;
+        const sl = slugify(v);
+        if (!slugOk(sl)) { toast('Use 3–40 letters, numbers or dashes'); break; }
+        try { if (await C.slugTaken(sl)) { toast('“' + sl + '” is taken – try another'); break; } }
+        catch (e) { toast(e.message === 'SETUP_NEEDED' ? 'Run supabase/stores.sql once in Supabase first' : 'Could not check the name'); break; }
+        settings.storeSlug = sl; settings._slugLive = false; persist();
+        await republishStore(false).catch(() => {}); toast(settings._slugLive ? 'Store link: ' + sl : (_slugMsg || 'Saved')); render(); break;
+      }
       case 'store-save-info': settings.storeTagline = ($('#siTag') || {}).value.trim(); settings.storeWhatsapp = ($('#siWa') || {}).value.trim(); persist(); closeModal(); render(); toast('Saved. Update the store page to publish it.'); break;
       case 'store-edit-link': openStoreLinkModal(id || t.dataset.id); break;
       case 'store-save-link': {
@@ -6172,15 +6218,13 @@
       case 'copy-store-link': { await republishStore(true).catch(() => {}); const u = storeUrl(); (navigator.clipboard ? navigator.clipboard.writeText(u) : Promise.reject()).then(() => toast('Link copied'), () => { askPrompt('Copy this link', u); }); break; }
       case 'open-store-page': {
         await republishStore(true).catch(() => {});
-        let u = new URL('store.html', location.href).href;
-        if (settings._storeHash) u += '#' + (/^[zj]=/.test(settings._storeHash) ? settings._storeHash : 'c=' + settings._storeHash);
-        window.open(u, '_blank');
+        window.open(storeUrl(), '_blank');
         break;
       }
       case 'share-store-link': {
         await republishStore(true).catch(() => {});
-        let u = new URL('store.html', location.href).href;
-        if (settings._storeHash) u += '#' + (/^[zj]=/.test(settings._storeHash) ? settings._storeHash : 'c=' + settings._storeHash);
+        let u = storeUrl();
+        if (settings._storeHash || /\/store\/[^/]+$/.test(u)) { /* link ready */ }
         else {
           try {
             const raw = localStorage.getItem('billaura_public_store');

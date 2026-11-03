@@ -420,7 +420,27 @@
     return j;
   }
 
+  // ---------- Public store (short link) ----------
+  async function publishStore(slug, data) {
+    const sb = need(); const sid = shopId();
+    if (!sid) throw new Error('Sign in to the cloud first');
+    const { error } = await sb.from('public_stores').upsert({ slug, shop_id: sid, data, updated_at: new Date().toISOString() }, { onConflict: 'shop_id' });
+    if (error) {
+      if (error.code === '23505') throw new Error('SLUG_TAKEN');
+      if (missingTable(error)) throw new Error('SETUP_NEEDED');
+      throw error;
+    }
+  }
+  async function slugTaken(slug) {
+    const sb = need();
+    const { data, error } = await sb.from('public_stores').select('shop_id').eq('slug', slug).maybeSingle();
+    if (error) { if (missingTable(error)) throw new Error('SETUP_NEEDED'); throw error; }
+    return !!data && data.shop_id !== shopId();
+  }
+
   window.HisablyCloud = {
+    publishStore,
+    slugTaken,
     shopifyCall,
     ready,
     init,

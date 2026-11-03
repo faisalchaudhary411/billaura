@@ -66,3 +66,10 @@ Without that setup (or while signed out) photos are kept on the phone and shown 
 
 ## Install note (splash screen)
 After updating, remove the old Billaura icon from the home screen and add it again so Android refreshes the splash colours and icon.
+
+## Short store link (one-time setup)
+Your store can have an address like `yoursite/billaura/store/my-shop-name` instead of a long random link.
+1. Supabase → SQL Editor → run `supabase/stores.sql` once.
+2. In the app: sign in to the cloud → Online Store → **Update Store Page**. A name is picked from your business name; tap **Change name** to choose your own.
+3. Keep `404.html` in the site root – GitHub Pages uses it to turn `/store/<name>` into the store page.
+Without the setup (or while signed out) the long link keeps working.
