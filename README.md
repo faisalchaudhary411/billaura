@@ -1,92 +1,50 @@
-# Billaura – Smart Billing & Business
+# Billaura Admin – Your SaaS side
 
-Modern mobile billing app for inventory, invoices, parties, reports and more.
+This is **your** console as the platform owner. The seller app (Billaura) is what shops use daily.
 
-## Branding
-- **Name**: Billaura
-- **Primary**: `#2563EB` · **CTA**: `#E11D48`
-- Logo: `assets/logo.svg`
+## Login
+- Open `index.html` (or host on a private URL)
+- Default password: **billaura2026**
+- Change it immediately under **Settings**
 
-## Screens
-| Area | Features |
-|------|----------|
-| **Home** | You'll Get / Give, quick actions, recent TXNs |
-| **Dashboard** | Sale overview, profit, stock stats |
-| **Items** | Products, stock, barcode, categories |
-| **Menu** | Sale, Purchase, Expenses, Reports, Cash & Bank, Parties, Grow, Settings |
-| **Business Profile** | Name, phones, email, address, tax ID, currency |
-| **Settings** | Transaction, Invoice Print, Taxes, Item, Party, General |
-| **Cash In-Hand** | Balance, adjust cash, day book |
-| **Reports** | Sale, P&L, Party, Stock, Expense, Tax menus |
-| **Multi-Currency** | Base currency + extra rates |
-| **Reminders** | Overdue payment reminders (WhatsApp) |
-| **Online Store** | Catalog share (Premium gate) |
+## What you can do
+- **Dashboard** – total shops, active, trials, MRR, plus a **Needs attention** list (pending payments, plans ending in 7 days, trials ending in 3 days, lapsed shops) with one-tap WhatsApp reminders
+- **Shops** – add / edit / pause / expire each seller business; search, filter by status, WhatsApp the owner, export CSV
+- **Plans** – prices plus a table of what each plan unlocks inside the Billaura app (items/invoice limits, PIN lock & staff roles, bulk tools…)
+- **Subscriptions** – see who is paid, trial, expired
+- **Settings** – support contacts, currency, password, export/import
 
-## Print
-Invoice Print toggles control PDF & thermal receipts:
-- Company name, logo, address, email, phone, TIN
-- Received / balance amounts
-- Amount in words (Indian / International)
+## Two apps
 
-## Run
-Open `index.html` or host on GitHub Pages / Vercel / Netlify.  
-Add to Home Screen for PWA use.
+| App | Who uses it | Purpose |
+|-----|-------------|---------|
+| **Billaura** (seller) | Shop owners | Inventory, invoices, customers, QR pay |
+| **Billaura Admin** (you) | You only | Manage shops, plans, revenue |
 
-## Data
-Browser localStorage. Use **Backup / Restore** regularly. Optional Supabase sync.
+## Current mode: Local
+Admin data is stored in **this browser** only. Good for:
+- Learning the workflow
+- Tracking shops you onboard manually
+- Setting plan prices
 
-## Billaura update (Billaura-style)
-- New red "B" logo + icons, theme (css/theme.css)
-- Fixed dead buttons / missing functions (modals, scanner, favourites, invoice open, custom items, POS)
-- New Invoice Theme screen: 7 templates, 10 colours, text size, page size, orientation (js/templates.js)
-- PDF / print / share-image now use the chosen template; Delivery Note
-- Business Profile: completeness bar, 8 business-card designs + Share Card, draw signature
+## Next step: Real multi-shop cloud
+When you are ready to sell online accounts:
+1. Free **Supabase** project (auth + Postgres)
+2. Sellers register / login in Billaura app
+3. Admin reads the same database
+4. Optional: JazzCash / Stripe for collecting subscription fees
 
+Ask for the Supabase wiring guide when you want to go live.
 
-© 2026 Billaura. All rights reserved. See COPYRIGHT.txt.
+## Hosting tip
+Host Admin on a **private** link or password-protect the folder.
+Do not put the default password on a public page without changing it.
 
+## Installing on your phone
+Open the admin URL in Chrome → menu → *Add to Home screen*. It uses the same red Billaura look and icon as the seller app.
 
-## v6 changes
-Category & payment-type sheets, Sale screen (Credit/Cash switch, Share+Save), 7 new print themes, payment & service reminders, download PDF/Image buttons, flat-amount tax, no more periodic blink, fixed layout of sheets, brand logo on lock/sign-in.
+## Keep in sync with the seller app
+The limits shown on the Plans page mirror `js/freemium.js` in Billaura and the `enforce_plan_limit` trigger in `supabase/schema.sql`. If you change one, change all three.
 
-## v7
-All browser popups (alert/confirm/prompt), dropdowns, date pickers, suggestion lists and checkboxes now use the app's own styled controls (js/ui.js).
-
-## v9
-Barcode label printing (offline Code 128), low-stock and daily-summary alerts on Home, send-all payment reminders with statements, multiple staff users with their own PINs, floating-label Sale fields, download PDF/Image in the transaction menu.
-
-## Staff roles
-Owner PIN opens everything. Each staff user gets a role — Manager, Accountant, Cashier, Salesperson, Storekeeper or Custom — that controls which screens, menu items and actions they can use (App Lock → Role). Settings, PINs and account stay owner-only.
-
-## Item photos (one-time setup)
-Photos are uploaded to a Supabase Storage bucket so they show on your public store page.
-1. Supabase → SQL Editor → paste and run `supabase/storage.sql` (once).
-2. In the app: Items → open an item → tap the photo box → pick a picture. Then Online Store → **Update Store Page**.
-Without that setup (or while signed out) photos are kept on the phone and shown in the item list only; they upload automatically the next time you tap Update Store Page while signed in.
-
-## Install note (splash screen)
-After updating, remove the old Billaura icon from the home screen and add it again so Android refreshes the splash colours and icon.
-
-## Short store link (one-time setup)
-Your store can have an address like `yoursite/billaura/store/my-shop-name` instead of a long random link.
-1. Supabase → SQL Editor → run `supabase/stores.sql` once.
-2. In the app: sign in to the cloud → Online Store → **Update Store Page**. A name is picked from your business name; tap **Change name** to choose your own.
-3. Keep `404.html` in the site root – GitHub Pages uses it to turn `/store/<name>` into the store page.
-Without the setup (or while signed out) the long link keeps working.
-
-## Desktop version
-On screens 900px wide or more, Billaura switches to a desktop layout: a left sidebar (Home, Dashboard, Sale, Purchases, Items, Parties, Expenses, Reports, Cash & Bank, Online Store, All Menu, Settings), two-column lists, centred dialogs, and an invoice form with totals/payment in a side panel. Phones keep the bottom-nav layout. On Windows/Mac open the site in Chrome or Edge and choose **Install app** to get it in its own window.
-
-## Windows app (.exe)
-Run **Actions → Build Windows app → Run workflow** on GitHub, then download the installer from the run's *Artifacts*. See `desktop/README.md`.
-
-## Apps from this repo
-- **Windows (.exe, auto-updating):** see `desktop/README.md` (workflow *Build Windows app*).
-- **Android (.apk):** see `android-app/README.md` (workflow *Build Android app (APK)*).
-Both are built from the same web files, so each new tag (`git tag v1.0.2 && git push --tags`) builds and publishes them together.
-
-## Website, landing page and updates
-- `landing.html` is the public page (features, downloads, FAQ, contact); `terms.html` has terms, licence and privacy (template, have a lawyer review). Edit contact details in `js/site-config.js` (set your real WhatsApp number).
-- First-time visitors to the site are sent to the landing page once; "Continue in browser" opens the app (`./?app=1`).
-- Download buttons use permanent links: `https://github.com/faisalchaudhary411/billaura/releases/latest/download/Billaura.apk` and `.../Billaura-Setup.exe`.
-- Licence and announcements setup: `supabase/LICENSE-SETUP.md`.
+## v5: Announcements and Licence pages
+Needs `supabase/license.sql`, `announcements.sql` and the `license` Edge Function. See `supabase/LICENSE-SETUP.md`.
