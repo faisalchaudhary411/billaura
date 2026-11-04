@@ -676,15 +676,12 @@ select, input, textarea, button { -webkit-tap-highlight-color: transparent; }
 .dk-lnk:hover { color: #D6173A; }
 @media (min-width: 900px) { .nav-desktop { display: none; } }
 
-/* Installed app (Android/iOS/desktop PWA, APK): the phone already shows its own launch screen with the logo,
-   so ours becomes a plain brand-colour hand-off - no second logo. In a normal browser tab the full splash plays. */
+/* Installed app: Android shows its own launch screen (brand red + logo) first. Ours is the same red with the logo in the
+   same centre spot - it appears instantly (no pop-in) so the two read as one screen, then the rings, name and tagline play. */
 @media (display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui) {
-  .splash-in, .sp-orb, .splash-foot { visibility: hidden; }
-  .splash { transition: opacity .15s ease; }
+  .splash-logo { animation: none; }
 }
-.native-shell .splash-in, .native-shell .sp-orb, .native-shell .splash-foot { visibility: hidden; }
-.native-shell .splash { transition: opacity .15s ease; }
-.ios-app .splash-in, .ios-app .sp-orb, .ios-app .splash-foot { visibility: hidden; }
+.ios-app .splash-logo { animation: none; }
 
 /* ===== Billaura home look: segmented switch, round shortcuts, accent-bar entries ===== */
 .vy-tabs { gap: 0; margin: 12px 14px 4px; padding: 4px; background: #E4E8F1; border-radius: 14px; }
@@ -702,3 +699,28 @@ select, input, textarea, button { -webkit-tap-highlight-color: transparent; }
 .vy-txn:has(.vy-tag.purchase) { border-left-color: #6D4DE0; }
 .vy-txn:has(.vy-tag.estimate) { border-left-color: #F59E0B; }
 .vy-tag { border-radius: 6px; padding: 3px 9px; font-size: .72rem; letter-spacing: .06em; font-weight: 700; }
+
+/* Logo sits at the exact centre of the screen (same spot as Android's own launch icon); text hangs below it */
+.splash-in { display: contents; }
+.splash-logo { position: absolute; left: 50%; top: 50%; margin: -70px 0 0 -70px; }
+.sp-ring { top: 50%; margin: -70px 0 0 -70px; }
+.splash-name, .splash-tag { position: absolute; left: 0; right: 0; margin-top: 0; text-align: center; justify-content: center; }
+.splash-name { top: calc(50% + 94px); }
+.splash-tag { top: calc(50% + 142px); }
+.splash-bar { position: absolute; top: calc(50% + 188px); left: 50%; margin: 0 0 0 -70px; }
+@keyframes spLogo { from { opacity: 1; } }
+
+/* ===== Notifications ===== */
+.note { background: #fff; border-radius: 14px; padding: 14px 14px 12px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(34,39,58,.08); border-left: 4px solid #6B7288; }
+.note.unread { box-shadow: 0 2px 10px rgba(239,26,60,.14); }
+.note.update { border-left-color: #2563EB; } .note.offer { border-left-color: #13B97A; } .note.warning { border-left-color: #F59E0B; } .note.info { border-left-color: #6D4DE0; }
+.note-h { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.note-k { font-size: .7rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: #6B7288; }
+.note.update .note-k { color: #2563EB; } .note.offer .note-k { color: #0E9F6E; } .note.warning .note-k { color: #B45309; } .note.info .note-k { color: #6D4DE0; }
+.note-d { font-size: .75rem; color: #9A9FB3; }
+.note-t { font-size: 1.02rem; font-weight: 700; color: #1F2437; }
+.note-b { margin-top: 4px; font-size: .92rem; color: #4A5068; line-height: 1.5; }
+.note-a { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+.note-a:empty { display: none; }
+.note-cp { background: #ECFDF5; border: 1px dashed #13B97A; border-radius: 8px; padding: 6px 10px; font-size: .9rem; color: #065F46; display: inline-flex; gap: 10px; align-items: center; }
+.chev { color: #9A9FB3; font-size: 1.5rem; line-height: 1; }

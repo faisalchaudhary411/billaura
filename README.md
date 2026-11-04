@@ -84,3 +84,9 @@ Run **Actions → Build Windows app → Run workflow** on GitHub, then download 
 - **Windows (.exe, auto-updating):** see `desktop/README.md` (workflow *Build Windows app*).
 - **Android (.apk):** see `android-app/README.md` (workflow *Build Android app (APK)*).
 Both are built from the same web files, so each new tag (`git tag v1.0.2 && git push --tags`) builds and publishes them together.
+
+## Website, landing page and updates
+- `landing.html` is the public page (features, downloads, FAQ, contact); `terms.html` has terms, licence and privacy (template, have a lawyer review). Edit contact details in `js/site-config.js` (set your real WhatsApp number).
+- First-time visitors to the site are sent to the landing page once; "Continue in browser" opens the app (`./?app=1`).
+- Download buttons use permanent links: `https://github.com/faisalchaudhary411/billaura/releases/latest/download/Billaura.apk` and `.../Billaura-Setup.exe`.
+- Licence and announcements setup: `supabase/LICENSE-SETUP.md`.

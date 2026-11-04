@@ -151,6 +151,14 @@
     return data;
   }
 
+  async function fetchAnnouncements() {
+    const sb = getClient();
+    if (!sb || !session) return [];
+    const { data, error } = await sb.from('announcements').select('*').order('created_at', { ascending: false }).limit(30);
+    if (error) throw error;
+    return data || [];
+  }
+
   async function fetchPlatformSettings() {
     const sb = getClient();
     if (!sb) return null;
@@ -453,6 +461,7 @@
     shopId,
     fetchShop,
     fetchPlatformSettings,
+    fetchAnnouncements,
     serverOffsetMs,
     fetchRemote,
     push,

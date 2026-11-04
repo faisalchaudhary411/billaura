@@ -47,7 +47,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "shortcutName": "Billaura",
-      "artifactName": "Billaura-Setup-${version}.${ext}"
+      "artifactName": "Billaura-Setup.${ext}"
     },
     "publish": [
       {
@@ -58,7 +58,7 @@
       }
     ],
     "portable": {
-      "artifactName": "Billaura-Portable-${version}.${ext}"
+      "artifactName": "Billaura-Portable.${ext}"
     }
   },
   "dependencies": {

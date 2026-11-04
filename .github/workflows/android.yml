@@ -30,6 +30,13 @@ jobs:
         run: |
           mkdir -p android-app/www
           cp -r index.html store.html manifest.json sw.js css js assets android-app/www/
+          V="${GITHUB_REF_NAME#v}"; case "$GITHUB_REF" in refs/tags/v*) ;; *) V="0.0.0";; esac
+          printf "window.BILLAURA_VERSION='%s';\nwindow.BILLAURA_CHANNEL='apk';\n" "$V" > android-app/www/js/version.js
+      - name: Release builds must be signed with the real key
+        if: startsWith(github.ref, 'refs/tags/') && env.KS_B64 == ''
+        run: |
+          echo "::error::A tagged (public) APK must be signed with your own key, otherwise it can never be updated. Add the ANDROID_KEYSTORE_* secrets first (android-app/README.md)."
+          exit 1
       - name: Create the Android project
         working-directory: android-app
         run: |
@@ -75,7 +82,7 @@ jobs:
       - name: Collect
         run: |
           mkdir -p out
-          cp android-app/android/app/build/outputs/apk/release/*.apk out/Billaura.apk 2>/dev/null || cp android-app/android/app/build/outputs/apk/debug/*.apk out/Billaura-debug.apk
+          cp android-app/android/app/build/outputs/apk/release/*.apk out/Billaura.apk 2>/dev/null || cp android-app/android/app/build/outputs/apk/debug/*.apk out/Billaura-test.apk
           ls -la out
       - uses: actions/upload-artifact@v4
         with:

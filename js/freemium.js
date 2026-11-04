@@ -133,16 +133,25 @@
   }
   function clearPlanCache() {
     localStorage.removeItem(PLAN_CACHE_KEY);
+    try { if (window.BillauraLicense) window.BillauraLicense.clear(); } catch (e) {}
   }
 
   // "Now" according to the server (offset measured at last sync), so setting the
   // phone clock back does not extend a trial or a paid month.
   function nowMs(cache) {
+    const L = window.BillauraLicense;
+    if (L && L.enabled()) return L.now();
     return Date.now() + (Number((cache || getPlanCache()).serverOffsetMs) || 0);
+  }
+  // With a licence key configured, the plan comes ONLY from the server-signed licence (local storage is not trusted).
+  function entitlementCache() {
+    const base = getPlanCache();
+    const L = window.BillauraLicense;
+    return (L && L.enabled()) ? Object.assign({}, base, L.entitlement()) : base;
   }
 
   function effectivePlan() {
-    const cache = getPlanCache();
+    const cache = entitlementCache();
     const status = cache.status || 'trial';
     // A shop the admin paused/expired stays blocked even if freemium is switched off
     if (status === 'paused' || status === 'expired') {

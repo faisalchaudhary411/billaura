@@ -554,7 +554,7 @@
     const map = {
       home: () => {
         title.textContent = settings.businessName || 'Billaura';
-        right.innerHTML = `<button class="icon-btn header-dot" data-view="reminders" aria-label="Reminders">${ico('bell')}</button><button class="icon-btn" data-view="settings" aria-label="Settings">${ico('gear')}</button>`;
+        right.innerHTML = `<button class="icon-btn ${unreadNotices().length ? 'header-dot' : ''}" data-view="notifications" aria-label="Notifications">${ico('bell')}</button><button class="icon-btn" data-view="settings" aria-label="Settings">${ico('gear')}</button>`;
         content.innerHTML = viewHome();
       },
       
@@ -590,6 +590,7 @@
       'payment-reminders': () => { title.textContent = 'Payment Reminders'; content.innerHTML = viewPaymentReminders(); },
       'service-reminders': () => { title.textContent = 'Service Reminders'; content.innerHTML = viewServiceReminders(); },
       reminders: () => { title.textContent = 'Reminders'; content.innerHTML = viewReminders(); },
+      notifications: () => { title.textContent = 'Notifications'; content.innerHTML = viewNotifications(); setTimeout(() => { markNoticesRead(noticeList().map(n => n.id)); updateBell(); }, 900); },
       'online-store': () => {
         if (settings._storeHash && !window._storeChecked) { window._storeChecked = true; republishStore(true).then(() => { if (currentView === 'online-store') render(); }).catch(() => {}); } title.textContent = 'Online Store'; content.innerHTML = viewOnlineStore(); },
       pos: () => { title.textContent = 'Quick Sale (POS)'; content.innerHTML = viewPOS(); bindPOS(); },
@@ -1000,7 +1001,7 @@
     return d;
   }
   // ---- Billaura Desktop promo ----
-  const DESKTOP_REL = 'https://github.com/faisalchaudhary411/billaura/releases/latest';
+  const DESKTOP_REL = 'https://github.com/faisalchaudhary411/billaura/releases/latest/download/Billaura-Setup.exe';
   function desktopSite() { return location.origin + location.pathname.replace(/[^/]*$/, ''); }
   function desktopMsg() {
     return `Billaura Desktop\n\n1) On your PC open this link in Chrome or Edge, then choose "Install app":\n${desktopSite()}\n\n2) Or download the Windows app:\n${DESKTOP_REL}\n\nSign in with the same account to see your shop data on both.`;
@@ -7097,6 +7098,14 @@
         closeModal();
         break;
       }
+      case 'note-cta': {
+        const n = noticeList().find(x => x.id === id);
+        if (!n) break;
+        markNoticesRead([n.id]); closeModal();
+        if (n.cta_action === 'open-plans') openPlansModal();
+        else if (n.cta_url) window.open(n.cta_url, '_blank');
+        break;
+      }
       case 'cloud-sync': doCloudSync(); break;
       case 'cloud-signin': {
         const email = (($('#cloudEmail') || {}).value || '').trim();
@@ -7495,7 +7504,7 @@
     boot.dataset.hiding = '1';
     // keep the splash visible for a moment so the Billaura name registers, then fade it out
     const inApp = (window.matchMedia && window.matchMedia('(display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui)').matches) || navigator.standalone === true || !!window.Capacitor;
-    const wait = inApp ? 0 : Math.max(0, 1500 - (performance.now() || 0));   // browser tab: let the animated splash play once; installed app: phone already showed its own
+    const wait = Math.max(0, (inApp ? 1300 : 1500) - (performance.now() || 0));   // browser tab: let the animated splash play once; installed app: phone already showed its own
     setTimeout(() => { boot.classList.add('out'); setTimeout(() => { boot.hidden = true; }, 220); }, wait);
   }
   function showAuth() {
@@ -7541,7 +7550,7 @@
         <button type="submit" class="btn btn-primary btn-block">${isLogin ? 'Sign in' : 'Create free account'}</button>
       </form>
       <p class="auth-hint">Sign in to sync your shop across devices. Your data on this phone is kept.</p>
-      <p class="auth-hint" style="font-size:.72rem;margin-top:14px">© ${new Date().getFullYear()} Billaura. All rights reserved. Unauthorised copying or resale of this software is prohibited.</p>
+      <p class="auth-hint" style="font-size:.72rem;margin-top:14px">© ${new Date().getFullYear()} Billaura. All rights reserved. Unauthorised copying or resale of this software is prohibited. <a href="terms.html" target="_blank" rel="noopener">Terms &amp; Licence</a></p>
     </div>`;
   }
 
@@ -7736,6 +7745,11 @@
           HisablyCloud.serverOffsetMs().catch(() => undefined)
         ]);
         applyShopToPlan(shop, plat, offset);
+        if (window.BillauraLicense && BillauraLicense.enabled()) {
+          const lr = await BillauraLicense.refresh();
+          if (!lr.ok && (lr.code === 'device_limit' || lr.code === 'device_revoked') && lr.message) toast(lr.message, 8000);
+          window._lastPlanKey = undefined;
+        }
         if (currentView === 'dashboard' && canRenderNow() && JSON.stringify(HisablyFreemium.effectivePlan().key) !== window._lastPlanKey) { window._lastPlanKey = JSON.stringify(HisablyFreemium.effectivePlan().key); render(); }
       }
     } catch (e) {
@@ -7745,7 +7759,99 @@
     }
   }
 
+  // ---------- Notifications (announcements from the admin + app-update notice) ----------
+  const ANN_KEY = 'billaura_ann_v1', ANN_READ = 'billaura_ann_read_v1', ANN_POP = 'billaura_ann_popped_v1';
+  const APK_URL = 'https://github.com/faisalchaudhary411/billaura/releases/latest/download/Billaura.apk';
+  const jget = (k, fb) => { try { const v = JSON.parse(localStorage.getItem(k) || 'null'); return v == null ? fb : v; } catch (e) { return fb; } };
+  const jset = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+  let announcements = jget(ANN_KEY, []);
+  let annRead = new Set(jget(ANN_READ, []));
+  let annPopped = new Set(jget(ANN_POP, []));
+  let updateNotice = null;
+  function noticeList() { const l = announcements.slice(); if (updateNotice) l.unshift(updateNotice); return l; }
+  function unreadNotices() { return noticeList().filter(n => !annRead.has(n.id)); }
+  function markNoticesRead(ids) {
+    let ch = false; ids.forEach(i => { if (!annRead.has(i)) { annRead.add(i); ch = true; } });
+    if (ch) jset(ANN_READ, Array.from(annRead).slice(-300));
+  }
+  function updateBell() {
+    const b = document.querySelector('[data-view="notifications"]');
+    if (b) b.classList.toggle('header-dot', unreadNotices().length > 0);
+  }
+  function semverGt(a, b) {
+    const p = v => String(v).replace(/^v/, '').split('.').map(x => parseInt(x, 10) || 0);
+    const x = p(a), y = p(b);
+    for (let i = 0; i < 3; i++) { if ((x[i] || 0) > (y[i] || 0)) return true; if ((x[i] || 0) < (y[i] || 0)) return false; }
+    return false;
+  }
+  async function checkAppUpdate() {
+    // Android app (APK) cannot update itself silently: tell the user when a newer release exists
+    if (window.BILLAURA_CHANNEL !== 'apk' || !navigator.onLine) return;
+    try {
+      const r = await fetch('https://api.github.com/repos/faisalchaudhary411/billaura/releases/latest', { headers: { Accept: 'application/vnd.github+json' } });
+      if (!r.ok) return;
+      const rel = await r.json();
+      const tag = String(rel.tag_name || '');
+      if (tag && semverGt(tag, window.BILLAURA_VERSION || '0')) {
+        updateNotice = { id: 'upd-' + tag, kind: 'update', title: 'Billaura ' + tag.replace(/^v/, '') + ' is available', body: 'A new version of the Android app is ready. Download it and install over the current one - your data stays safe.', cta_label: 'Download update', cta_url: APK_URL, created_at: rel.published_at || new Date().toISOString(), priority: 1 };
+        updateBell(); maybeShowNoticePopup();
+      }
+    } catch (e) {}
+  }
+  async function refreshAnnouncements() {
+    try {
+      if (window.HisablyCloud && HisablyCloud.ready() && HisablyCloud.getSession()) {
+        announcements = await HisablyCloud.fetchAnnouncements();
+        jset(ANN_KEY, announcements);
+      }
+    } catch (e) { /* table not created yet or offline: keep what we have */ }
+    updateBell(); maybeShowNoticePopup();
+  }
+  function noticeBodyHTML(n) { return escapeHtml(n.body || '').replace(/\n/g, '<br>'); }
+  function noticeActionsHTML(n) {
+    const cta = (n.cta_label && (n.cta_action || n.cta_url)) ? `<button class="btn btn-primary btn-sm" data-action="note-cta" data-id="${escapeHtml(n.id)}">${escapeHtml(n.cta_label)}</button>` : '';
+    const cp = n.coupon ? `<div class="note-cp">Code <b>${escapeHtml(n.coupon)}</b><button type="button" class="linkish" data-action="copy-pay" data-v="${escapeHtml(n.coupon)}">Copy</button></div>` : '';
+    return cp + cta;
+  }
+  function maybeShowNoticePopup() {
+    try {
+      if (!document.getElementById('app') || document.getElementById('app').hidden) return;
+      if (document.querySelector('.modal-overlay, .pm-page, .desk-splash')) return;
+      const n = unreadNotices().find(x => Number(x.priority) >= 1 && !annPopped.has(x.id));
+      if (!n) return;
+      annPopped.add(n.id); jset(ANN_POP, Array.from(annPopped).slice(-300));
+      $('#modalRoot').innerHTML = modalShell(escapeHtml(n.title), `<div style="padding:4px 20px 22px"><div class="note-b" style="margin-bottom:12px">${noticeBodyHTML(n)}</div>${noticeActionsHTML(n)}<button class="btn btn-outline btn-sm" data-action="close-modal" style="margin-left:8px">Close</button></div>`);
+      markNoticesRead([n.id]); updateBell();
+    } catch (e) {}
+  }
+  function viewNotifications() {
+    const list = noticeList();
+    const KIND = { info: 'News', update: 'Update', offer: 'Offer', warning: 'Important' };
+    return `<div class="fade-in" style="padding:14px">
+      <div class="menu-card" style="margin:0 0 12px"><div class="m-row" data-view="reminders"><div class="grow">Payment reminders<small>Customers who owe you money</small></div><span class="chev">›</span></div></div>
+      ${list.length ? list.map(n => `<div class="note ${escapeHtml(n.kind || 'info')} ${annRead.has(n.id) ? '' : 'unread'}">
+        <div class="note-h"><span class="note-k">${KIND[n.kind] || 'News'}</span><span class="note-d">${escapeHtml(formatDate(n.created_at))}</span></div>
+        <div class="note-t">${escapeHtml(n.title)}</div>
+        ${n.body ? `<div class="note-b">${noticeBodyHTML(n)}</div>` : ''}
+        <div class="note-a">${noticeActionsHTML(n)}</div></div>`).join('')
+        : `<div class="art-empty">${ico('bell')}<div>No notifications yet.<br>Updates and offers from Billaura will show here.</div></div>`}
+    </div>`;
+  }
+
+  function licenseBannerHTML() {
+    try {
+      const L = window.BillauraLicense;
+      if (!L || !L.enabled()) return '';
+      const st = L.state();
+      if (st.ok) return '';
+      const msg = st.reason === 'device_limit' || st.reason === 'device_revoked' ? (st.message || 'This device is not allowed on your licence. Contact support.')
+        : st.reason === 'expired' ? 'Your licence needs to be re-checked. Connect to the internet and open Billaura.'
+        : 'Checking your licence… connect to the internet once so your plan can be verified.';
+      return `<div class="plan-banner" style="background:#FFF3CD;border-color:#F5B301;color:#7A5200"><strong>Licence:</strong> ${escapeHtml(msg)}</div>`;
+    } catch (e) { return ''; }
+  }
   function planBannerHTML() {
+    const lic = licenseBannerHTML(); if (lic) return lic;
     const { key, limits, cache } = HisablyFreemium.effectivePlan();
     if (key === 'pro' || key === 'basic' || key === 'trial') {
       if (key === 'trial' && cache.trialEndsAt) {
@@ -8025,6 +8131,7 @@
     initCloudAutoSync();
     maybeAutoBackup();
     startPlanHeartbeat();
+    setTimeout(() => { refreshAnnouncements(); checkAppUpdate(); }, 2500);
   }
 
   let _planHeartbeat = null;
@@ -8032,7 +8139,7 @@
     if (_planHeartbeat) clearInterval(_planHeartbeat);
     // When online, refresh plan every 10 minutes
     _planHeartbeat = setInterval(() => {
-      if (navigator.onLine) refreshPlanFromCloud();
+      if (navigator.onLine) { refreshPlanFromCloud(); refreshAnnouncements(); checkAppUpdate(); }
     }, 10 * 60 * 1000);
     if (!startPlanHeartbeat._bound) {
       startPlanHeartbeat._bound = true;
@@ -8041,6 +8148,7 @@
   }
 
   // Init
+  try { if (window.BillauraLicense) BillauraLicense.init().then(() => { try { if (typeof canRenderNow === 'function' && canRenderNow()) render(); } catch (e) {} }); } catch (e) {}
   try {
     migrateData();
     // The old offline demo account is gone: end any demo session (data on the phone is kept)
