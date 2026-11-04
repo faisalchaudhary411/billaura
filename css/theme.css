@@ -653,7 +653,7 @@ select, input, textarea, button { -webkit-tap-highlight-color: transparent; }
 
 /* ===== Get Desktop: footer tab, promo splash, share sheet ===== */
 .nav-desktop span { white-space: nowrap; }
-.nav-desktop .nav-icon { stroke-width: 0; }
+.nav-desktop .nav-icon { width: 22px; height: 22px; }
 .desk-splash { position: fixed; inset: 0; z-index: 1600; background: linear-gradient(160deg, #1B1F3B 0%, #2A1B3D 55%, #4A1632 100%); color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; animation: dsIn .22s ease-out; transition: opacity .25s ease; overflow: hidden; }
 .desk-splash.out { opacity: 0; pointer-events: none; }
 @keyframes dsIn { from { opacity: 0 } }
@@ -675,3 +675,30 @@ select, input, textarea, button { -webkit-tap-highlight-color: transparent; }
 .dk-lnk { background: none; border: 0; color: #6B7288; font-size: .84rem; text-decoration: none; padding: 6px 2px; cursor: pointer; }
 .dk-lnk:hover { color: #D6173A; }
 @media (min-width: 900px) { .nav-desktop { display: none; } }
+
+/* Installed app (Android/iOS/desktop PWA, APK): the phone already shows its own launch screen with the logo,
+   so ours becomes a plain brand-colour hand-off - no second logo. In a normal browser tab the full splash plays. */
+@media (display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui) {
+  .splash-in, .sp-orb, .splash-foot { visibility: hidden; }
+  .splash { transition: opacity .15s ease; }
+}
+.native-shell .splash-in, .native-shell .sp-orb, .native-shell .splash-foot { visibility: hidden; }
+.native-shell .splash { transition: opacity .15s ease; }
+.ios-app .splash-in, .ios-app .sp-orb, .ios-app .splash-foot { visibility: hidden; }
+
+/* ===== Billaura home look: segmented switch, round shortcuts, accent-bar entries ===== */
+.vy-tabs { gap: 0; margin: 12px 14px 4px; padding: 4px; background: #E4E8F1; border-radius: 14px; }
+.vy-tab { border: 0; background: transparent; border-radius: 11px; padding: 10px 8px; color: #5F6680; font-weight: 600; }
+.vy-tab.active { background: #fff; color: #D6173A; box-shadow: 0 2px 8px rgba(30,40,80,.12); }
+.sc-wrap { margin: 14px 14px 6px; }
+.sc-wrap .quick-links { display: flex; gap: 10px; overflow-x: auto; scrollbar-width: none; padding: 2px 0 4px; }
+.sc-wrap .quick-links::-webkit-scrollbar { display: none; }
+.sc-wrap .ql { flex-direction: row; gap: 8px; background: #fff; border-radius: 999px; padding: 8px 14px 8px 8px; box-shadow: 0 1px 4px rgba(34,39,58,.1); white-space: nowrap; flex: 0 0 auto; }
+.sc-wrap .ql-ic, .sc-wrap .ql-ic.red { width: 32px; height: 32px; border-radius: 50%; background: #FDE3E8; color: #D6173A; }
+.sc-wrap .ql-ic svg { width: 18px; height: 18px; }
+.sc-wrap .ql span { font-size: .86rem; font-weight: 600; color: #34384C; }
+.vy-txn { border-radius: 16px; border-left: 5px solid #13B97A; padding-left: 12px; }
+.vy-txn:has(.vy-tag.return) { border-left-color: #E11D48; }
+.vy-txn:has(.vy-tag.purchase) { border-left-color: #6D4DE0; }
+.vy-txn:has(.vy-tag.estimate) { border-left-color: #F59E0B; }
+.vy-tag { border-radius: 6px; padding: 3px 9px; font-size: .72rem; letter-spacing: .06em; font-weight: 700; }

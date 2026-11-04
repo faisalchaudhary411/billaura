@@ -79,3 +79,8 @@ On screens 900px wide or more, Billaura switches to a desktop layout: a left sid
 
 ## Windows app (.exe)
 Run **Actions → Build Windows app → Run workflow** on GitHub, then download the installer from the run's *Artifacts*. See `desktop/README.md`.
+
+## Apps from this repo
+- **Windows (.exe, auto-updating):** see `desktop/README.md` (workflow *Build Windows app*).
+- **Android (.apk):** see `android-app/README.md` (workflow *Build Android app (APK)*).
+Both are built from the same web files, so each new tag (`git tag v1.0.2 && git push --tags`) builds and publishes them together.

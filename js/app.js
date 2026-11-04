@@ -577,7 +577,7 @@
       more: () => { title.textContent = 'Menu'; content.innerHTML = viewMore(); },
       settings: () => { title.textContent = 'Settings'; content.innerHTML = viewSettings(); },
       'business-profile': () => { title.textContent = 'Business Profile'; content.innerHTML = viewBusinessProfile(); },
-      'txn-settings': () => { title.textContent = 'Transaction'; content.innerHTML = viewTxnSettings(); },
+      'txn-settings': () => { title.textContent = 'Bill Settings'; content.innerHTML = viewTxnSettings(); },
       'print-settings': () => { title.textContent = 'Invoice Print'; content.innerHTML = viewPrintSettings(); },
       'app-lock': () => { title.textContent = 'App Lock & Staff PIN'; content.innerHTML = viewAppLock(); },
       account: () => { title.textContent = 'Account & Data'; content.innerHTML = viewAccount(); },
@@ -598,7 +598,7 @@
       'payments-out': () => { title.textContent = 'Payment-Out'; content.innerHTML = paymentList('out'); },
       cheques: () => { title.textContent = 'Cheque'; content.innerHTML = viewCheques(); },
       sync: () => { title.textContent = 'Sync & Share'; content.innerHTML = viewSync(); },
-      companies: () => { title.textContent = 'Manage Companies'; content.innerHTML = viewCompanies(); },
+      companies: () => { title.textContent = 'My Businesses'; content.innerHTML = viewCompanies(); },
       verify: () => { title.textContent = 'Verify my data'; content.innerHTML = viewVerify(); },
       recycle: () => { title.textContent = 'Recycle Bin'; content.innerHTML = viewRecycle(); },
       'bill-pnl': () => { title.textContent = 'Bill Wise Profit'; content.innerHTML = viewBillPnl(); },
@@ -619,7 +619,7 @@
         content.innerHTML = viewSuppliers();
       },
       reports: () => { title.textContent = 'Reports'; content.innerHTML = viewReports(); },
-      'sale-report': () => { title.textContent = 'Sale Report'; invFilter = 'sale'; content.innerHTML = viewInvoices(); },
+      'sale-report': () => { title.textContent = 'Sales Report'; invFilter = 'sale'; content.innerHTML = viewInvoices(); },
       'profit-loss': () => { title.textContent = 'Profit & Loss'; content.innerHTML = viewProfitLoss(); },
       'trial-balance': () => { title.textContent = 'Trial Balance'; content.innerHTML = viewTrialBalance(); },
       'stock-summary': () => { title.textContent = 'Stock Summary'; content.innerHTML = viewStockSummary(false); },
@@ -664,11 +664,11 @@
         <div class="dash-business">${biz}</div>
         <div class="dash-stats">
           <div class="dash-stat positive">
-            <div class="dash-stat-label">You'll Get</div>
+            <div class="dash-stat-label">To Collect</div>
             <div class="dash-stat-value">${cur} ${money(receivable)}</div>
           </div>
           <div class="dash-stat negative">
-            <div class="dash-stat-label">You'll Give</div>
+            <div class="dash-stat-label">To Pay</div>
             <div class="dash-stat-value">${cur} ${money(payable)}</div>
           </div>
         </div>
@@ -761,11 +761,11 @@
 
       <div class="list-group">
         <div class="list-row" style="cursor:default">
-          <div class="list-row-label">You'll Get</div>
+          <div class="list-row-label">To Collect</div>
           <div class="list-row-right text-success font-semibold">${cur} ${money(receivable)}</div>
         </div>
         <div class="list-row" style="cursor:default">
-          <div class="list-row-label">You'll Give</div>
+          <div class="list-row-label">To Pay</div>
           <div class="list-row-right text-danger font-semibold">${cur} ${money(totalGive())}</div>
         </div>
         <div class="list-row" style="cursor:default">
@@ -1468,7 +1468,7 @@
         <div style="font-size:0.8125rem;color:#065F46;font-weight:500">Current Cash Balance</div>
         <div style="font-size:1.75rem;font-weight:700;color:#047857;margin-top:4px">${cur} ${money(bal)}</div>
       </div>
-      <div class="section-title">Transaction Details</div>
+      <div class="section-title">Bill Details</div>
       ${rows.length === 0
         ? `<div class="empty-state" style="padding:32px 16px"><p>No cash transactions yet</p></div>`
         : rows.map(r => {
@@ -2393,7 +2393,7 @@
           <div class="list-row-right font-semibold ${profit>=0?'text-success':'text-danger'}">${cur} ${money(profit)}</div>
         </div>
         <div class="list-row" style="cursor:default">
-          <div class="list-row-left"><div class="list-row-label">You'll Get</div></div>
+          <div class="list-row-left"><div class="list-row-label">To Collect</div></div>
           <div class="list-row-right text-success">${cur} ${money(receivable)}</div>
         </div>
       </div>
@@ -2891,7 +2891,7 @@
         <button class="btn btn-outline btn-block" style="margin-top:10px" data-view="business-profile">Edit Business Profile &amp; Card</button></div>
       <div class="section-title">Account</div><div class="list-group">
         ${cloud ? rowA('Sign out', 'data-action="sign-out-user"') : `${rowA('Sign in', 'data-action="show-auth" data-tab="login"')}${rowA('Sign up (create free account)', 'data-action="show-auth" data-tab="register"')}`}
-        ${rowA('Plans &amp; Pricing', 'data-action="open-plans"')}
+        ${rowA('Billaura Plans', 'data-action="open-plans"')}
         ${rowA('Shopify Sync', 'data-action="open-shopify"')}
         ${rowA('My Online Store', 'data-view="online-store"')}
       </div>
@@ -3119,7 +3119,7 @@
         ${toggleRow('Cash Sale by default', 'enableCashSaleDefault', { info: true })}
         ${toggleRow('Billing name of Parties', 'enableBillingName', { info: true })}
         ${toggleRow('PO Details (of customer)', 'enablePODetails', { info: true })}
-        ${toggleRow('Add Time On Transactions', 'enableTxnTime', { info: true })}
+        ${toggleRow('Show time on bills', 'enableTxnTime', { info: true })}
       </div>
       <div class="section-title">Items Table</div>
       <div class="list-group">
@@ -3130,8 +3130,8 @@
       </div>
       <div class="section-title">Taxes, Discount & Total</div>
       <div class="list-group">
-        ${toggleRow('Transaction wise Tax', 'enableTxnTax', { info: true })}
-        ${toggleRow('Transaction wise Discount', 'enableTxnDiscount', { info: true })}
+        ${toggleRow('Tax on the whole bill', 'enableTxnTax', { info: true })}
+        ${toggleRow('Discount on the whole bill', 'enableTxnDiscount', { info: true })}
         ${toggleRow('Round Off Transaction amount', 'enableRoundOff', { info: true })}
       </div>
       <div class="section-title">More Transaction Features</div>
@@ -3308,7 +3308,7 @@
             <div class="list-row-left"><div class="list-row-label">Default Tax Rate</div></div>
             <div class="list-row-right font-semibold">${settings.taxRate || 0}%</div>
           </div>
-          ${toggleRow('Transaction wise Tax', 'enableTxnTax', { info: true })}
+          ${toggleRow('Tax on the whole bill', 'enableTxnTax', { info: true })}
           ${toggleRow('Item wise tax', 'enableItemTax', { info: true })}
         </div>
       `}
@@ -3481,7 +3481,7 @@
     return `<div class="fade-in" style="padding:14px 0 24px">
       <div class="doc-card" style="margin:0 16px 12px"><div class="text-sm text-secondary">Total to collect from ${rows.length} part${rows.length === 1 ? 'y' : 'ies'}</div><div style="font-size:1.5rem;font-weight:800;color:#0E9F6E">${cur} ${money(total)}</div></div>
       ${rows.some(x => x.c.phone) ? `<div style="padding:0 16px 12px"><button class="btn btn-primary btn-block" data-action="remind-all">Send reminders to all (${rows.filter(x => x.c.phone).length})</button></div>` : ''}
-      ${rows.length ? `<div class="list-group">${rows.map(({ c, due }) => { const od = overdueDoc(c); const rem = (settings.remindedOn || {})[c.id]; return `<div class="list-row" style="cursor:default"><div class="list-row-left" style="min-width:0"><div><div class="list-row-label">${escapeHtml(c.name)}</div><div class="text-sm" style="color:#0E9F6E">To get ${cur} ${money(due)}${od ? ` <span style="color:#E11D48">· ${od} overdue</span>` : ''}${rem ? ` <span style="color:#6B7287">· reminded ${formatDate(rem)}</span>` : ''}</div>${c.phone ? '' : '<div class="text-sm text-secondary">No phone number</div>'}</div></div>
+      ${rows.length ? `<div class="list-group">${rows.map(({ c, due }) => { const od = overdueDoc(c); const rem = (settings.remindedOn || {})[c.id]; return `<div class="list-row" style="cursor:default"><div class="list-row-left" style="min-width:0"><div><div class="list-row-label">${escapeHtml(c.name)}</div><div class="text-sm" style="color:#0E9F6E">To collect ${cur} ${money(due)}${od ? ` <span style="color:#E11D48">· ${od} overdue</span>` : ''}${rem ? ` <span style="color:#6B7287">· reminded ${formatDate(rem)}</span>` : ''}</div>${c.phone ? '' : '<div class="text-sm text-secondary">No phone number</div>'}</div></div>
           <div class="list-row-right" style="display:flex;gap:6px"><button class="chip-btn" data-action="open-statement" data-id="${c.id}">Statement</button><button class="chip-btn" data-action="remind-sms" data-id="${c.id}">SMS</button><button class="btn btn-primary btn-sm" data-action="remind-customer" data-id="${c.id}">WhatsApp</button></div></div>`; }).join('')}</div>`
         : '<div class="empty-state"><p>No pending balances — great job!</p></div>'}
     </div>`;
@@ -5657,10 +5657,10 @@
   }
   function viewHome() {
     const q = homeQuery.trim().toLowerCase();
-    const tabs = `<div class="vy-tabs"><button class="vy-tab ${homeTab === 'txn' ? 'active' : ''}" data-action="home-tab" data-tab="txn">Transaction Details</button><button class="vy-tab ${homeTab === 'party' ? 'active' : ''}" data-action="home-tab" data-tab="party">Party Details</button></div>`;
+    const tabs = `<div class="vy-tabs"><button class="vy-tab ${homeTab === 'txn' ? 'active' : ''}" data-action="home-tab" data-tab="txn">Activity</button><button class="vy-tab ${homeTab === 'party' ? 'active' : ''}" data-action="home-tab" data-tab="party">Parties</button></div>`;
     const ql = (ic, label, attr, red) => `<button class="ql" ${attr}><div class="ql-ic ${red ? 'red' : ''}">${ico(ic)}</div><span>${label}</span></button>`;
-    const quick = `<div class="vy-card"><h3>Quick Links</h3><div class="quick-links">
-      ${ql('receipt', 'Add Txn', 'data-action="sheet-add-txn"', true)}${can('reports') ? ql('report', 'Sale Report', 'data-view="sale-report"') : ''}${can('settings') ? ql('gear', 'Txn Settings', 'data-view="txn-settings"') : ''}${ql('chevR', 'Show All', 'data-action="sheet-more"')}</div></div>`;
+    const quick = `<div class="sc-wrap"><div class="quick-links">
+      ${ql('receipt', 'New Entry', 'data-action="sheet-add-txn"', true)}${can('reports') ? ql('report', 'Sales Report', 'data-view="sale-report"') : ''}${can('settings') ? ql('gear', 'Bill Settings', 'data-view="txn-settings"') : ''}${ql('chevR', 'More', 'data-action="sheet-more"')}</div></div>`;
     let body = '';
     if (homeTab === 'txn') {
       const list = allTxns().filter(t => !q || t.name.toLowerCase().includes(q) || String(t.no).toLowerCase().includes(q)).slice(0, 60);
@@ -5673,7 +5673,7 @@
           <div class="vy-txn-top"><div><div class="vy-txn-name">${escapeHtml(t.name)}</div><span class="vy-tag ${t.kind}">${tag}</span></div>
             <div class="vy-txn-no">#${escapeHtml(String(t.no).replace(/^[A-Za-z]+-/, ''))}<br>${new Date(t.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}, ${String(new Date(t.date).getFullYear()).slice(2)}</div></div>
           <div class="vy-txn-bottom"><div><div class="lbl">Total</div><div class="val">${fmtAmt(t.total)}</div></div>
-            ${(() => { const isPur = t.kind === 'purchase', isRet = t.kind === 'return'; const adv = (t.kind === 'sale') ? Math.max(0, t.paid - t.total) : 0; if (adv > 0.001) return `<div><div class="lbl" style="color:#E11D48">To pay (credit)</div><div class="val" style="color:#E11D48">${fmtAmt(adv)}</div></div>`; if (t.kind === 'estimate' || bal <= 0.001) return `<div><div class="lbl">Balance</div><div class="val">${fmtAmt(0)}</div></div>`; const pay = isPur || isRet; return `<div><div class="lbl" style="color:${pay ? '#E11D48' : '#0E9F6E'}">${pay ? 'To pay' : 'To get'}</div><div class="val" style="color:${pay ? '#E11D48' : '#0E9F6E'}">${fmtAmt(bal)}</div></div>`; })()}
+            ${(() => { const isPur = t.kind === 'purchase', isRet = t.kind === 'return'; const adv = (t.kind === 'sale') ? Math.max(0, t.paid - t.total) : 0; if (adv > 0.001) return `<div><div class="lbl" style="color:#E11D48">To pay (credit)</div><div class="val" style="color:#E11D48">${fmtAmt(adv)}</div></div>`; if (t.kind === 'estimate' || bal <= 0.001) return `<div><div class="lbl">Balance</div><div class="val">${fmtAmt(0)}</div></div>`; const pay = isPur || isRet; return `<div><div class="lbl" style="color:${pay ? '#E11D48' : '#0E9F6E'}">${pay ? 'To pay' : 'To collect'}</div><div class="val" style="color:${pay ? '#E11D48' : '#0E9F6E'}">${fmtAmt(bal)}</div></div>`; })()}
             ${isInv ? `<div class="vy-txn-actions"><button data-action="print-invoice" data-id="${t.doc.id}" aria-label="Print">${ico('print')}</button><button data-action="share-txn" data-id="${t.doc.id}" aria-label="Share">${ico('share')}</button><button data-action="txn-more" data-id="${t.doc.id}" aria-label="More">${ico('dots')}</button></div>` : ''}</div></div>`;
       }).join('') : `<div class="art-empty">${ico('receipt')}<div>No transactions yet.<br>Tap <b>Add New Sale</b> to create your first invoice.</div></div>`;
     } else {
@@ -5712,7 +5712,7 @@
       ${sheetItem('wallet', 'Expense', 'data-action="add-expense"')}${sheetItem('chart', 'Other Income', 'data-view="other-income"')}${sheetItem('box', 'Stock Adjust', 'data-view="stock-adjust"')}</div>`, 'Add Transaction');
   }
   function openMoreSheet() {
-    sheet(`<div class="sheet-grid">${sheetItem('bank', 'Bank Accounts', 'data-view="banks"')}${sheetItem('book', 'Day Book', 'data-view="daybook-detail"')}${sheetItem('docs', 'All Txns Report', 'data-view="invoices"')}
+    sheet(`<div class="sheet-grid">${sheetItem('bank', 'Bank Accounts', 'data-view="banks"')}${sheetItem('book', 'Day Book', 'data-view="daybook-detail"')}${sheetItem('docs', 'All Entries Report', 'data-view="invoices"')}
       ${sheetItem('pl', 'Profit & Loss', 'data-view="profit-loss"')}${sheetItem('report', 'Balance Sheet', 'data-view="balance-sheet"')}${sheetItem('pl', 'Billwise PnL', 'data-view="bill-pnl"')}
       ${sheetItem('print', 'Print Settings', 'data-view="print-settings"')}
       ${sheetItem('whatsapp', 'Daily Summary', 'data-action="send-daily-summary"')}${sheetItem('docs', 'Barcode Labels', 'data-view="barcode-gen"')}${sheetItem('bell', 'Reminders', 'data-view="payment-reminders"')}</div>`, 'More Options');
@@ -5776,9 +5776,9 @@
     return `<div class="fade-in" style="padding-bottom:16px">
       <div class="vy-banner"><div><h3>Billaura Reports</h3><p>View more than <b>40 reports</b> and gain full control of your business!</p><button class="pill-soft" data-view="reports">See Reports</button></div>
         <div class="art"><svg viewBox="0 0 70 86" fill="none"><rect x="6" y="4" width="58" height="78" rx="6" fill="#fff"/><rect x="14" y="14" width="30" height="5" rx="2" fill="#0A6FE0"/><rect x="14" y="26" width="42" height="3" rx="1.5" fill="#BFDBFE"/><rect x="14" y="34" width="42" height="3" rx="1.5" fill="#BFDBFE"/><rect x="14" y="42" width="42" height="3" rx="1.5" fill="#BFDBFE"/><circle cx="46" cy="64" r="8" fill="#F5B301"/></svg></div></div>
-      <div class="gg-row"><div class="gg"><div class="t"><span class="ar g"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M17 7L7 17M7 17h8M7 17V9"/></svg></span>You'll Get</div><div class="v">${fmtAmt(receivable)}</div></div>
-        <div class="gg"><div class="t"><span class="ar r"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M7 17L17 7M17 7H9M17 7v8"/></svg></span>You'll Give</div><div class="v">${fmtAmt(payable)}</div></div></div>
-      <div class="vy-card sale-ov"><h3>Your Sale Overview (${m[2].label})</h3><div class="sub" style="margin-top:12px">Total Sale</div><div class="big">${fmtAmt(thisM)}</div>
+      <div class="gg-row"><div class="gg"><div class="t"><span class="ar g"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M17 7L7 17M7 17h8M7 17V9"/></svg></span>To Collect</div><div class="v">${fmtAmt(receivable)}</div></div>
+        <div class="gg"><div class="t"><span class="ar r"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M7 17L17 7M17 7H9M17 7v8"/></svg></span>To Pay</div><div class="v">${fmtAmt(payable)}</div></div></div>
+      <div class="vy-card sale-ov"><h3>Sales This Month (${m[2].label})</h3><div class="sub" style="margin-top:12px">Total Sale</div><div class="big">${fmtAmt(thisM)}</div>
         <div style="text-align:center;margin:6px 0"><span class="growth"><i style="${growth < 0 ? 'background:#FDE3E8;color:#EF1A3C' : ''}">${growth < 0 ? '↓' : '↑'}</i>${Math.abs(growth)}% ${growth < 0 ? 'Less' : 'More'} Growth This Month</span></div>${lineChartSVG(m)}</div>
       <div class="exp-card"><div class="t">Expenses (${m[2].label})</div><div class="v">${fmtAmt(monthExp)}</div></div>
       <div class="gg-row"><div class="gg"><div class="t" style="font-size:.95rem">Net profit</div><div class="v" style="margin:6px 0 0;color:${profit >= 0 ? '#13B97A' : '#EF1A3C'}">${fmtAmt(profit)}</div></div>
@@ -5807,12 +5807,12 @@
         ${mrow('wallet', 'Expenses', 'data-view="expenses"')}${mrow('users', 'Parties (Customers)', 'data-view="customers"')}${mrow('store', 'My Online Store', 'data-view="online-store"')}${mrow('report', 'Reports', 'data-view="reports"')}
         ${mrow('box', 'Stock Adjustment', 'data-view="stock-adjust"')}${mrow('chart', 'Other Income', 'data-view="other-income"')}</div>
       <div class="menu-card"><div class="menu-h">Cash &amp; Bank</div>${mrow('bank', 'Bank Accounts', 'data-view="banks"')}${mrow('cash', 'Cash In-Hand', 'data-view="cash-in-hand"')}${mrow('cheque', 'Cheques', 'data-view="cheques"')}${mrow('loan', 'Loan Accounts', 'data-view="loans"')}</div>
-      <div class="menu-card"><div class="menu-h">Important Utilities</div>
-        ${mrow('sync', 'Sync &amp; Share', 'data-view="sync"')}${mrow('company', 'Manage Companies', 'data-view="companies"')}${location.protocol === 'billaura:' ? '' : mrow('desktop', 'Get Desktop Version', 'data-action="desktop-info"')}
+      <div class="menu-card"><div class="menu-h">Tools</div>
+        ${mrow('sync', 'Cloud &amp; Share', 'data-view="sync"')}${mrow('company', 'My Businesses', 'data-view="companies"')}${location.protocol === 'billaura:' ? '' : mrow('desktop', 'Get Desktop Version', 'data-action="desktop-info"')}
         ${tg('backup', 'backup', 'Backup/Restore')}${msub('backup', [['Auto Backup', 'data-action="auto-backup"'], ['Backup to phone', 'data-action="export-backup"'], ['Backup to e-mail', 'data-action="backup-email"'], ['Restore backup', 'data-action="import-data"']])}
         ${tg('util', 'inbox', 'Utilities')}${msub('util', [['Verify my data', 'data-view="verify"'], ['Open Calculator', 'data-action="open-calc"'], ['Import Items', 'data-action="bulk-tools"'], ['Bulk Update Tax Slab', 'data-action="bulk-tax"'], ['Export Items', 'data-action="bulk-export"'], ['Import Parties', 'data-action="import-parties"'], ['Recycle Bin', 'data-view="recycle"'], ['Close Financial Year', 'data-action="close-fy"'], ['Barcode Generator', 'data-view="barcode-gen"']])}</div>
-      <div class="menu-card"><div class="menu-h">Others</div>
-        ${mrow('crown', 'Plans &amp; Pricing', 'data-action="open-plans"')}
+      <div class="menu-card"><div class="menu-h">More</div>
+        ${mrow('crown', 'Billaura Plans', 'data-action="open-plans"')}
         ${tg('grow', 'whatsapp', 'Grow Your Business')}${msub('grow', [['Payment Reminders', 'data-view="reminders"'], ['Business Card &amp; Profile', 'data-view="business-profile"'], ['Share Catalog', 'data-view="online-store"'], ['Shopify Sync' + (_pro ? '' : ' (Pro)'), 'data-action="open-shopify"']])}
         ${mrow('gear', 'Settings', 'data-view="settings"')}${mrow('users', 'Account &amp; Data', 'data-view="account"')}${mrow('lock', 'App Lock &amp; Staff PIN', 'data-view="app-lock"')}</div>
       <div style="text-align:center;padding:14px;color:#8F95A8;font-size:.8rem">© ${new Date().getFullYear()} Billaura. All rights reserved.<br>Billaura v${APP_VERSION}${profileCompleteness() < 100 ? ` · <a href="#" data-view="business-profile" style="color:#0A6FE0">Complete profile (${profileCompleteness()}%)</a>` : ''}</div></div>`;
@@ -5848,7 +5848,7 @@
       rows.sort((a, b) => b._s - a._s);
     } catch (e) {}
     return `<div class="u-page fade-in" style="padding-bottom:120px"><div class="cash-hero"><div class="l">Current Cash Balance</div><div class="v">${fmtAmt(bal)}</div>${ico('cash')}</div>
-      <div class="td-head"><span>Transaction Details</span><span>Amount</span></div>
+      <div class="td-head"><span>Entry</span><span>Amount</span></div>
       ${rows.length ? rows.slice(0, 80).map(r => `<div class="td-row"><div><div class="n">${escapeHtml((r.text || '').replace(/^Payment in /, 'Sale - ').replace(/^Paid for /, 'Purchase - '))}${r.party ? ' - ' + escapeHtml(r.party) : ''}</div><div class="d">${formatDate(r.date)}</div></div><div class="a ${r.dir}">${fmtAmt(r.amount)}</div></div>`).join('') : '<div class="art-empty">No cash transactions yet</div>'}</div>
       <div class="bottom-btns"><button class="btn btn-outline" data-action="bank-transfer">Bank Transfer</button><button class="btn btn-primary" data-action="adjust-cash">Adjust Cash</button></div>`;
   }
@@ -7494,7 +7494,8 @@
     if (!boot || boot.dataset.hiding) return;
     boot.dataset.hiding = '1';
     // keep the splash visible for a moment so the Billaura name registers, then fade it out
-    const wait = Math.max(0, 1500 - (performance.now() || 0));   // let the animated splash play once
+    const inApp = (window.matchMedia && window.matchMedia('(display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui)').matches) || navigator.standalone === true || !!window.Capacitor;
+    const wait = inApp ? 0 : Math.max(0, 1500 - (performance.now() || 0));   // browser tab: let the animated splash play once; installed app: phone already showed its own
     setTimeout(() => { boot.classList.add('out'); setTimeout(() => { boot.hidden = true; }, 220); }, wait);
   }
   function showAuth() {

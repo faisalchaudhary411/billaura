@@ -1,0 +1,88 @@
+name: Build Android app (APK)
+
+# Test build:  Actions tab -> Build Android app (APK) -> Run workflow   (download from Artifacts)
+# Release:     git tag v1.0.1 && git push --tags     (APK is attached to the GitHub Release)
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      KS_KEYPASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Bundle the web app
+        run: |
+          mkdir -p android-app/www
+          cp -r index.html store.html manifest.json sw.js css js assets android-app/www/
+      - name: Create the Android project
+        working-directory: android-app
+        run: |
+          npm install
+          npx cap add android
+          npx cap sync android
+      - name: Icon and launch screen
+        continue-on-error: true
+        working-directory: android-app
+        run: bash scripts/brand.sh
+      - name: Version
+        working-directory: android-app/android/app
+        run: |
+          NAME="${GITHUB_REF_NAME#v}"; case "$GITHUB_REF" in refs/tags/v*) ;; *) NAME="1.0.${GITHUB_RUN_NUMBER}";; esac
+          sed -i "s/versionCode 1/versionCode ${GITHUB_RUN_NUMBER}/; s/versionName \"1.0\"/versionName \"${NAME}\"/" build.gradle
+      - name: Signing (only if a keystore secret exists)
+        if: env.KS_B64 != ''
+        working-directory: android-app/android/app
+        run: |
+          echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/billaura.jks"
+          cat >> build.gradle <<'G'
+          android {
+              signingConfigs {
+                  release {
+                      storeFile file(System.getenv("KS_FILE"))
+                      storePassword System.getenv("KS_PASS")
+                      keyAlias System.getenv("KS_ALIAS")
+                      keyPassword System.getenv("KS_KEYPASS")
+                  }
+              }
+              buildTypes { release { signingConfig signingConfigs.release } }
+          }
+          G
+          echo "KS_FILE=$RUNNER_TEMP/billaura.jks" >> "$GITHUB_ENV"
+      - name: Build signed release APK
+        if: env.KS_B64 != ''
+        working-directory: android-app/android
+        run: ./gradlew assembleRelease --no-daemon
+      - name: Build debug APK (no keystore yet)
+        if: env.KS_B64 == ''
+        working-directory: android-app/android
+        run: ./gradlew assembleDebug --no-daemon
+      - name: Collect
+        run: |
+          mkdir -p out
+          cp android-app/android/app/build/outputs/apk/release/*.apk out/Billaura.apk 2>/dev/null || cp android-app/android/app/build/outputs/apk/debug/*.apk out/Billaura-debug.apk
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Billaura-Android
+          path: out/*.apk
+      - name: Attach to release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*.apk

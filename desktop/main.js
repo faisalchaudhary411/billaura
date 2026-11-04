@@ -1,6 +1,6 @@
 // Billaura desktop shell: serves the bundled web app from a secure custom scheme,
 // so localStorage, fetch and Supabase behave exactly as they do on the website.
-const { app, BrowserWindow, protocol, net, shell, Menu } = require('electron');
+const { app, BrowserWindow, protocol, net, shell, Menu, dialog } = require('electron');
 const path = require('path');
 const { pathToFileURL } = require('url');
 
@@ -40,6 +40,7 @@ app.whenReady().then(() => {
     return net.fetch(pathToFileURL(file).toString());
   });
   createWindow();
+  setupAutoUpdate();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 
@@ -47,3 +48,22 @@ app.whenReady().then(() => {
 if (!app.requestSingleInstanceLock()) app.quit();
 app.on('second-instance', () => { const w = BrowserWindow.getAllWindows()[0]; if (w) { if (w.isMinimized()) w.restore(); w.focus(); } });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+
+// Installed (setup .exe) builds check GitHub Releases for a newer version and offer to restart into it.
+function setupAutoUpdate() {
+  if (!app.isPackaged || process.env.PORTABLE_EXECUTABLE_DIR) return;   // not in dev, not for the portable build
+  let autoUpdater;
+  try { autoUpdater = require('electron-updater').autoUpdater; } catch (e) { return; }
+  autoUpdater.autoDownload = true;
+  autoUpdater.on('update-downloaded', info => {
+    dialog.showMessageBox({
+      type: 'info', buttons: ['Restart now', 'Later'], defaultId: 0, cancelId: 1,
+      title: 'Billaura update', message: 'Billaura ' + info.version + ' is ready.',
+      detail: 'Restart to finish updating. Your data stays as it is.'
+    }).then(r => { if (r.response === 0) autoUpdater.quitAndInstall(); });
+  });
+  autoUpdater.on('error', () => {});
+  const check = () => autoUpdater.checkForUpdates().catch(() => {});
+  setTimeout(check, 4000);
+  setInterval(check, 6 * 60 * 60 * 1000);
+}

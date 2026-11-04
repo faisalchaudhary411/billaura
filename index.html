@@ -10,7 +10,7 @@
   <meta name="copyright" content="© Billaura. All rights reserved." />
   <title>Billaura</title>
   <style>html,body{background:#E8173C;margin:0}#bootScreen{position:fixed;inset:0;z-index:1500;background:#E8173C;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;font-family:Roboto,Arial,sans-serif}</style>
-  <script>if(navigator.standalone){document.documentElement.className+=" ios-app"}</script>
+  <script>if(navigator.standalone||window.Capacitor){document.documentElement.className+=" ios-app native-shell"}</script>
   <link rel="manifest" href="manifest.json" />
   <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png" />
@@ -116,6 +116,7 @@
   <script src="js/templates.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/labels.js"></script>
+  <script src="js/native.js"></script>
   <script src="js/app.js"></script>
   <script>
     if ('serviceWorker' in navigator) {
