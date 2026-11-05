@@ -316,6 +316,7 @@
       <div class="form-row" style="margin-top:12px"><button class="btn btn-outline" data-action="print-invoice" data-id="${inv.id}">Print</button><button class="btn btn-outline" data-action="pz-share" data-id="${inv.id}">Share</button></div>
       <button class="btn btn-primary btn-block" style="margin-top:8px" data-action="pz-new">New sale</button></div>`);
   }
+  setInterval(() => { const z = document.getElementById('pzSnack'); if (z && z.classList.contains('show') && C().view !== 'pos') z.classList.remove('show'); }, 300);
   function showSnack(inv, change, refund, canUndo) {
     let el = document.getElementById('pzSnack'); if (!el) { el = document.createElement('div'); el.id = 'pzSnack'; document.body.appendChild(el); }
     clearTimeout(E._sn);

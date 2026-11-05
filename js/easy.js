@@ -124,6 +124,7 @@
   E.afterRender = function (view, el) {
     prevAfter && prevAfter(view, el);
     adjustNav(view);
+    if (view !== 'pos') { const z = document.getElementById('pzSnack'); if (z) z.classList.remove('show'); }
     if (view === 'home' && !S().uiMode && !window._ezAsked) { window._ezAsked = true; setTimeout(askMode, 400); }
   };
   const mc = E.menuCard;

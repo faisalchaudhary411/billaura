@@ -96,3 +96,8 @@ Both are built from the same web files, so each new tag (`git tag v1.0.2 && git 
 
 ## Branches / franchise (v29)
 `js/branches.js`: Pro feature `branches`. Menu → Counter Pack → Branches & Head Office. Add branches, move stock with Transfers (send, then receive with a shortage check), per-branch bill numbers (code prefix), per-branch prices in Quick Sale, staff tied to a branch, head-office comparison dashboard, and an Audit log. All branches share one shop's data; product stock stays the company total and each branch's share is kept in settings. Admin plan table shows the new row.
+
+## Landing page and legal pages (v30)
+`landing.html`, `terms.html` and `css/landing.css` were redesigned: a warm Pakistan-flavoured theme (Fraunces, Plus Jakarta Sans, Noto Nastaliq Urdu from Google Fonts), original SVG illustrations in `assets/art/`, and real app screenshots of Simple Mode in `assets/shots/`.
+`terms.html` is written around how Billaura works (offline-first data, licence and device limit, manual payments, 7-day refund rule, Supabase/GitHub/Google Fonts disclosure, FBR/PRA not integrated). Edit the operator name, refund window, liability cap (PKR 5,000) and grace-period wording there if your business rules differ.
+Set your real WhatsApp number in `js/site-config.js`.

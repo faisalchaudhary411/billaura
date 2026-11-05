@@ -1,35 +1,79 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Billaura – Free billing, invoicing &amp; stock app for small shops</title>
-<meta name="description" content="Billaura is a free billing, invoice, stock and ledger app that works offline. Use it in your browser, on Android or on Windows.">
-<meta property="og:title" content="Billaura – billing app for small shops"><meta property="og:description" content="Invoices, stock, parties, reports. Offline. Browser, Android and Windows."><meta property="og:image" content="assets/shots/home.jpg">
-<meta name="theme-color" content="#E8173C"><link rel="icon" href="assets/icon-192.png"><link rel="stylesheet" href="css/landing.css"></head><body>
-<header class="top"><div class="w"><a class="brand" href="landing.html"><i>B</i>Billaura</a><nav class="l"><a class="opt" href="#features">Features</a><a class="opt" href="#download">Download</a><a class="opt" href="#faq">FAQ</a><a class="btn sm" href="./?app=1">Open app</a></nav></div></header>
-<section class="hero"><div class="w"><div><h1>Billing for your shop, <em>simple and fast.</em></h1>
-<p class="lead">Make invoices, track stock, manage customer dues and see your profit. Works offline, on your phone, your PC or any browser.</p>
-<div class="cta"><a class="btn" href="./?app=1">Continue in browser</a><a class="btn alt" href="#download">Download app</a></div>
-<p class="small">Free plan, no card needed. <span id="ver"></span></p></div>
-<div class="hero-ph"><div class="phone"><img src="assets/shots/home.jpg" alt="Billaura home screen" width="585" height="1200"></div><div class="phone"><img src="assets/shots/invoice.jpg" alt="Billaura invoice screen" width="585" height="1200" loading="lazy"></div></div></div></section>
-<section id="features"><div class="w"><h2>Everything a small business needs</h2><p class="sub">One app for the counter, the godown and the books.</p><div class="grid"><div class="card"><div class="ic">🧾</div><h3>Invoices & estimates</h3><p>Sales, purchases, quotations, challans, credit/debit notes. Print, PDF or share on WhatsApp.</p></div><div class="card"><div class="ic">📦</div><h3>Stock & items</h3><p>Barcode scan, categories, low-stock alerts, units, bulk import.</p></div><div class="card"><div class="ic">👥</div><h3>Parties & credit</h3><p>Customer and supplier ledgers, dues, partial payments and reminders.</p></div><div class="card"><div class="ic">📊</div><h3>40+ reports</h3><p>Sales, profit & loss, day book, cashflow, balance sheet, party statements.</p></div><div class="card"><div class="ic">🌐</div><h3>Works offline</h3><p>Install it on your phone or PC. Bill with no internet; data syncs when you are back online.</p></div><div class="card"><div class="ic">☁️</div><h3>Cloud backup</h3><p>Sign in on any device and your shop follows you, with staff roles and permissions.</p></div><div class="card"><div class="ic">🏪</div><h3>Online store</h3><p>Publish your catalogue as a shareable store page on Pro plans.</p></div><div class="card"><div class="ic">🔔</div><h3>Updates & offers</h3><p>In-app notices for new versions, offers and messages.</p></div></div></div></section>
-<section class="alt"><div class="w"><h2>See it in action</h2><p class="sub">Real screens from the app, shown with sample data.</p>
-<div class="shots"><figure class="phone"><img loading="lazy" src="assets/shots/dashboard.jpg" alt="Dashboard"></figure><figure class="phone"><img loading="lazy" src="assets/shots/items.jpg" alt="Items"></figure><figure class="phone"><img loading="lazy" src="assets/shots/invoice.jpg" alt="New sale"></figure><figure class="phone"><img loading="lazy" src="assets/shots/reports.jpg" alt="Reports"></figure></div>
-<div class="desk" style="margin-top:20px"><img loading="lazy" src="assets/shots/desk_home.jpg" alt="Billaura on desktop" width="1280" height="800"></div><p class="cap">The same app, with a full side-menu layout on a PC.</p></div></section>
-<section id="download"><div class="w"><h2>Get Billaura</h2><p class="sub">Pick what suits you. All three use the same account and data.</p>
+<title>Billaura – Billing, stock and udhaar app for Pakistani shops</title>
+<meta name="description" content="Billaura is a billing, stock and customer-credit (udhaar) app for small shops. Start the day, tap items, tap Cash, close the day. Works offline on Android, Windows and any browser.">
+<meta property="og:title" content="Billaura – your shop's hisaab, made simple"><meta property="og:description" content="Fast counter billing, udhaar ledger, stock alerts and daily closing. Works offline."><meta property="og:image" content="assets/shots/home.jpg">
+<meta name="theme-color" content="#E8173C"><link rel="icon" href="assets/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,700;0,9..144,800;1,9..144,700&family=Noto+Nastaliq+Urdu:wght@500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/landing.css"></head><body>
+<header class="top"><div class="w"><a class="brand" href="landing.html"><i>B</i>Billaura</a><nav class="l"><a class="opt" href="#day">Your day</a><a class="opt" href="#features">Features</a><a class="opt" href="#download">Download</a><a class="opt" href="#faq">FAQ</a><a class="btn sm" href="./?app=1">Open app</a></nav></div></header>
+
+<section class="hero"><div class="w">
+<div><span class="tag">Made for the shop counter</span>
+<p class="ur">آپ کی دکان کا حساب، آسان اور تیز</p>
+<h1>Your shop's hisaab, <em>without the headache.</em></h1>
+<p class="lead">Start the day, tap the items, tap Cash, close the day. Billaura handles bills, udhaar, stock and the end-of-day cash count, even when the internet is down.</p>
+<div class="cta"><a class="btn" href="./?app=1">Continue in browser</a><a class="btn alt" href="#download">Get the app</a></div>
+<div class="proof"><span>Free plan, no card</span><span>Works offline</span><span>Android · Windows · Browser</span></div>
+<p class="small" id="ver" style="margin-top:10px"></p></div>
+<div class="hero-art"><img class="shop" src="assets/art/hero-shop.svg" alt="Illustration of a small shop counter with a phone showing a cash bill" width="560" height="440"><div class="phone"><img src="assets/shots/home.jpg" alt="Billaura Home with New Sale button" width="585" height="1200"></div></div>
+</div></section>
+
+<div class="trades" aria-hidden="true"><div><span>Kiryana &amp; general stores</span><span>Medical stores</span><span>Garments &amp; boutiques</span><span>Hardware &amp; electrical</span><span>Mobile &amp; accessories</span><span>Wholesalers &amp; distributors</span><span>Bakeries &amp; sweets</span><span>Stationery &amp; books</span><span>Kiryana &amp; general stores</span><span>Medical stores</span><span>Garments &amp; boutiques</span><span>Hardware &amp; electrical</span><span>Mobile &amp; accessories</span><span>Wholesalers &amp; distributors</span><span>Bakeries &amp; sweets</span><span>Stationery &amp; books</span></div></div>
+
+<section id="day"><div class="w"><p class="eyebrow">Simple view</p><h2>Your whole day in three taps</h2><p class="sub">No menus to hunt through. The Simple view puts what a counter needs on one screen, and everything else is one tap away under "Show all features".</p>
+<div class="day">
+<div class="step"><b class="n">1</b><h3>Start day</h3><p>Count the drawer once. Billaura remembers last night's cash so you only confirm it.</p><img src="assets/shots/home.jpg" alt="Home with Start day card and New Sale" loading="lazy" width="585" height="1200"></div>
+<div class="step"><b class="n">2</b><h3>Tap items, tap Cash</h3><p>The bill is saved, the change is shown, and Print, WhatsApp and Undo sit right there.</p><img src="assets/shots/done.jpg" alt="Sale saved with change, Print, WhatsApp and Undo buttons" loading="lazy" width="585" height="1200"></div>
+<div class="step"><b class="n">3</b><h3>End day</h3><p>Type the cash you counted. You get a closing report, the difference, and an automatic backup.</p><img src="assets/shots/endday.jpg" alt="Shift report with expected cash, counted cash and difference" loading="lazy" width="585" height="1200"></div>
+</div></div></section>
+
+<section class="alt" id="features"><div class="w"><p class="eyebrow">What's inside</p><h2>Everything the counter and the godown need</h2><p class="sub">Built around how a Pakistani shop really runs: cash, udhaar, WhatsApp, load-shedding and a rush at 6 pm.</p>
+<div class="bento">
+<div class="tile wide"><div><img class="ill" src="assets/art/ill-ledger.svg" alt=""><h3>Udhaar, tracked properly</h3><p>Every customer has a ledger. See who owes what and for how long, take part payments, and send a reminder or statement on WhatsApp in one tap.</p></div><div class="phone"><img src="assets/shots/dues.jpg" alt="Payment reminders by age with WhatsApp buttons" loading="lazy" width="585" height="1200"></div></div>
+<div class="tile"><img class="ill" src="assets/art/ill-offline.svg" alt=""><h3>Bills keep working offline</h3><p>Internet gone? Keep selling. Everything syncs when you are back online.</p></div>
+<div class="tile"><img class="ill" src="assets/art/ill-stock.svg" alt=""><h3>Stock that warns you</h3><p>Barcode scan, units, low-stock alerts, a "buy today" list and purchase orders.</p></div>
+<div class="tile wide"><div><img class="ill" src="assets/art/ill-tag.svg" alt=""><h3>Items and prices in one list</h3><p>Search by name or barcode, group by category, import in bulk. Batch and expiry tracking for medicines and food.</p></div><div class="phone"><img src="assets/shots/items.jpg" alt="Items list with stock levels" loading="lazy" width="585" height="1200"></div></div>
+<div class="tile"><img class="ill" src="assets/art/ill-undo.svg" alt=""><h3>Mistake? Undo it</h3><p>Cancelled sales go back to stock and into the Recycle Bin, with an audit trail of who did what.</p></div>
+<div class="tile"><img class="ill" src="assets/art/ill-branch.svg" alt=""><h3>More than one shop<span class="pro">PRO</span></h3><p>Branches with their own stock, price lists and day-end, plus stock transfers between them.</p></div>
+<div class="tile"><img class="ill" src="assets/art/ill-lock.svg" alt=""><h3>Staff with limits</h3><p>Give each person a role. Discounts and refunds can need the owner's PIN.</p></div>
+<div class="tile"><img class="ill" src="assets/art/ill-receipt.svg" alt=""><h3>Receipts that print right</h3><p>58 mm and 80 mm thermal, A4, PDF, or straight to WhatsApp, with your logo and shop details.</p></div>
+<div class="tile"><img class="ill" src="assets/art/ill-chart.svg" alt=""><h3>Reports you can read</h3><p>Daily closing, profit and loss, sales, stock and party reports, with dates you choose.</p></div>
+<div class="tile"><img class="ill" src="assets/art/ill-backup.svg" alt=""><h3>Backups you can restore</h3><p>Automatic restore points on your device, a one-tap backup file, and cloud sync when signed in.</p></div>
+</div></div></section>
+
+<section><div class="w"><p class="eyebrow">On a bigger screen</p><h2>Same app on your PC</h2><p class="sub">The browser and Windows apps use a side-menu layout with the full set of tools: purchases, expenses, many reports, cash &amp; bank, and your online store.</p>
+<div class="browser"><div class="bar"><i></i><i></i><i></i></div><img src="assets/shots/desk.jpg" alt="Billaura on a desktop with the side menu and recent sales" loading="lazy" width="1400" height="875"></div><p class="cap">Sample data shown.</p></div></section>
+
+<section class="alt" id="download"><div class="w"><p class="eyebrow">Get Billaura</p><h2>Pick what suits you</h2><p class="sub">All three use the same account and the same data.</p>
 <div class="dl">
 <div class="card"><div class="big">🌐</div><h3>In your browser</h3><p>Nothing to install. You can also add it to your home screen.</p><a class="btn" href="./?app=1">Continue in browser</a></div>
 <div class="card"><div class="big">🤖</div><h3>Android app</h3><p>APK file, about 5 MB. Installs over the old version when updating.</p><a class="btn" id="dlApk" href="#">Download APK</a></div>
-<div class="card"><div class="big">🖥️</div><h3>Windows app</h3><p>Installer with automatic updates. Portable version also available.</p><a class="btn" id="dlExe" href="#">Download for Windows</a><p class="small" style="margin-top:8px"><a id="dlPortable" href="#">Portable .exe</a></p></div></div>
-<p class="small" style="margin-top:16px">These links always give the newest version. Already installed? You will be told when an update is ready.</p></div></section>
-<section class="alt"><div class="w"><h2>How to install</h2><ol class="steps" style="padding:0;margin:0"><li><b>Android:</b> download the APK, open it, allow "Install unknown apps" if asked, tap Install.</li><li><b>Windows:</b> run Billaura-Setup.exe. If SmartScreen appears choose More info, then Run anyway.</li><li><b>Any device:</b> open in Chrome or Edge and choose Install app from the menu.</li></ol></div></section>
-<section><div class="w"><h2>Free and Pro</h2><p class="sub">Start free. Upgrade when your shop grows. Current prices and limits are shown inside the app under Plans.</p>
-<table class="tbl"><tr><th></th><th>Free</th><th>Pro</th></tr><tr><td>Invoices, stock, parties, reports</td><td>✔</td><td>✔</td></tr><tr><td>Offline use</td><td>✔</td><td>✔</td></tr><tr><td>Cloud backup &amp; sync</td><td>✔</td><td>✔</td></tr><tr><td>Higher usage limits</td><td>–</td><td>✔</td></tr><tr><td>Online store page</td><td>–</td><td>✔</td></tr><tr><td>Priority support</td><td>–</td><td>✔</td></tr></table>
-<p class="small">Licences are linked to your account and a limited number of devices. See the <a href="terms.html#license">licence terms</a>.</p></div></section>
-<section class="alt" id="faq"><div class="w"><h2>Questions</h2><details><summary>Is Billaura really free to start?</summary><p>Yes. The Free plan has no time limit and is built for small shops. Pro plans lift the limits and unlock extras like the online store. Plans and prices are shown inside the app.</p></details><details><summary>Do I need internet?</summary><p>No. Billing works offline. Internet is only needed for sign-in, cloud backup, licence checks and updates.</p></details><details><summary>How do updates work?</summary><p>Browser and installed web app: automatic. Windows app: downloads the new version in the background and installs when you close it. Android: you get an in-app notice with a download button; tap it and install over the old version, your data is kept.</p></details><details><summary>Is my data safe?</summary><p>Data is stored on your device and, when you sign in, in your private cloud account protected by row-level security so only your shop can read it.</p></details><details><summary>Will Android warn me when installing the APK?</summary><p>Yes, because it is installed outside the Play Store. Allow 'Install unknown apps' for your browser once, then it installs normally.</p></details><details><summary>Windows says 'unknown publisher'.</summary><p>The app is not yet code-signed. Choose 'More info' then 'Run anyway'. This is normal for new independent software.</p></details></div></section>
-<section id="contact"><div class="w"><h2>Contact us</h2><p class="sub">Questions, payment help or feedback. We reply as soon as we can.</p><div class="cta"><a class="btn" id="cWa" href="#">WhatsApp us</a><a class="btn alt" id="cMail" href="#">Email</a></div></div></section>
-<footer><div class="w"><div>© <span id="yr"></span> Billaura. All rights reserved.</div><div><a href="terms.html">Terms &amp; Conditions</a><a href="terms.html#license">Licence</a><a href="terms.html#privacy">Privacy</a><a href="./?app=1">Open app</a></div></div></footer>
+<div class="card"><div class="big">🖥️</div><h3>Windows app</h3><p>Installer that updates itself.</p><a class="btn" id="dlExe" href="#">Download for Windows</a></div></div>
+<p class="small" style="margin-top:16px">These links always give the newest version.</p>
+<h2 style="margin-top:44px;font-size:26px">How to install</h2><ol class="steps"><li><b>Android:</b> download the APK, open it, allow "Install unknown apps" for your browser if asked, then tap Install.</li><li><b>Windows:</b> run Billaura-Setup.exe. If SmartScreen appears, choose More info, then Run anyway.</li><li><b>Any device:</b> open in Chrome or Edge and choose Install app from the menu.</li></ol></div></section>
+
+<section><div class="w"><p class="eyebrow">Plans</p><h2>Free to start, Pro when you grow</h2><p class="sub">Current prices and limits are shown inside the app under Plans. Payment is by bank or mobile wallet transfer and is activated after we verify it.</p>
+<table class="tbl"><tr><th></th><th>Free</th><th>Pro</th></tr><tr><td>Invoices, stock, parties, reports</td><td>✔</td><td>✔</td></tr><tr><td>Offline use and backups</td><td>✔</td><td>✔</td></tr><tr><td>Cloud sync across devices</td><td>✔</td><td>✔</td></tr><tr><td>Higher usage limits</td><td>–</td><td>✔</td></tr><tr><td>Branches and stock transfers</td><td>–</td><td>✔</td></tr><tr><td>Online store page</td><td>–</td><td>✔</td></tr><tr><td>Priority support</td><td>–</td><td>✔</td></tr></table>
+<p class="small" style="margin-top:12px">A licence belongs to your account and a limited number of devices. See the <a href="terms.html#licence">licence terms</a>.</p></div></section>
+
+<section class="alt" id="faq"><div class="w"><p class="eyebrow">Questions</p><h2>Things shopkeepers ask</h2>
+<details><summary>Is it really free to start?</summary><p>Yes. The Free plan has no time limit and is built for small shops. Pro lifts the limits and adds extras like branches and the online store.</p></details>
+<details><summary>What if the internet or electricity goes?</summary><p>Billing works offline. You only need internet to sign in, sync to the cloud, check your licence and update. A phone or laptop on battery keeps selling.</p></details>
+<details><summary>Where is my data kept?</summary><p>On your device first. If you sign in, a copy is also kept in your private cloud account, where only your shop can read it. See the <a href="terms.html#privacy">privacy policy</a> for the details.</p></details>
+<details><summary>How do updates work?</summary><p>Browser and installed web app update automatically. The Windows app downloads in the background and installs when you close it. On Android you get an in-app notice; tap it and install over the old version, your data is kept.</p></details>
+<details><summary>Can I print a receipt on a thermal printer?</summary><p>Yes. Bills can be printed on 58 mm and 80 mm receipt printers or A4, and shared as PDF or on WhatsApp.</p></details>
+<details><summary>Does it do FBR or PRA tax invoices?</summary><p>Not yet. You can add sales tax to your bills today. Integration with FBR and PRA invoicing is planned; follow the in-app notices.</p></details>
+<details><summary>Android warns me when installing the APK.</summary><p>That is normal for apps installed outside the Play Store. Allow "Install unknown apps" for your browser once, then it installs normally.</p></details>
+<details><summary>Windows says "unknown publisher".</summary><p>The app is not yet code-signed. Choose More info, then Run anyway.</p></details></div></section>
+
+<section id="contact"><div class="w"><div class="contact"><h2>Need a hand getting set up?</h2><p>Questions, payment help or feedback. Message us and we will reply as soon as we can.</p><div class="cta"><a class="btn alt" id="cWa" href="#">WhatsApp us</a><a class="btn alt" id="cMail" href="#">Email</a></div></div></div></section>
+
+<footer><div class="w"><div>© <span id="yr"></span> Billaura. Made in Pakistan.</div><div><a href="terms.html">Terms</a><a href="terms.html#licence">Licence</a><a href="terms.html#privacy">Privacy</a><a href="terms.html#refunds">Refunds</a><a href="./?app=1">Open app</a></div></div></footer>
 <script src="js/site-config.js"></script><script>
 (function(){var C=window.BILLAURA_SITE,b='https://github.com/'+C.repo+'/releases/latest/download/';
 function s(i,h){var e=document.getElementById(i);if(e)e.href=h}
-s('dlApk',b+'Billaura.apk');s('dlExe',b+'Billaura-Setup.exe');s('dlPortable',b+'Billaura-Portable.exe');
+s('dlApk',b+'Billaura.apk');s('dlExe',b+'Billaura-Setup.exe');
 s('cWa','https://wa.me/'+C.whatsapp+'?text='+encodeURIComponent('Hi, I have a question about Billaura'));s('cMail','mailto:'+C.email);
 document.getElementById('yr').textContent=new Date().getFullYear();
 try{fetch('https://api.github.com/repos/'+C.repo+'/releases/latest').then(function(r){return r.ok?r.json():null}).then(function(j){if(j&&j.tag_name)document.getElementById('ver').textContent='Latest app version: '+j.tag_name}).catch(function(){})}catch(e){}
