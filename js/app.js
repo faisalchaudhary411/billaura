@@ -1022,7 +1022,13 @@
   }
   // ---- Billaura Desktop promo ----
   const DESKTOP_REL = 'https://github.com/faisalchaudhary411/billaura/releases/latest/download/Billaura-Setup.exe';
-  function desktopSite() { return location.origin + location.pathname.replace(/[^/]*$/, ''); }
+  // Public web address of the app. Inside the Android/desktop shells location is localhost, which is useless in a link you share.
+  const PUBLIC_SITE = 'https://faisalchaudhary411.github.io/billaura/';
+  function siteBase() {
+    try { if (/^https?:$/.test(location.protocol) && !/^(localhost|127\.|\[::1\])/.test(location.hostname)) return location.origin + location.pathname.replace(/[^/]*$/, ''); } catch (e) {}
+    return PUBLIC_SITE;
+  }
+  function desktopSite() { return siteBase(); }
   function desktopMsg() {
     return `Billaura Desktop\n\n1) On your PC open this link in Chrome or Edge, then choose "Install app":\n${desktopSite()}\n\n2) Or download the Windows app:\n${DESKTOP_REL}\n\nSign in with the same account to see your shop data on both.`;
   }
@@ -4029,8 +4035,8 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
     }
   }
   function storeUrl() {
-    if (settings.storeSlug && settings._slugLive) return new URL('./', location.href).href + 'store/' + settings.storeSlug;
-    let u = new URL('store.html', location.href).href;
+    if (settings.storeSlug && settings._slugLive) return siteBase() + 'store/' + settings.storeSlug;
+    let u = siteBase() + 'store.html';
     if (settings._storeHash) u += '#' + (/^[zj]=/.test(settings._storeHash) ? settings._storeHash : 'c=' + settings._storeHash);
     return u;
   }
@@ -4051,7 +4057,7 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
         <button class="sh-edit" data-action="store-edit-info">Edit store info</button></div>
       ${isPro ? `
       <div class="doc-card" style="margin:14px 16px 0"><div class="doc-label">Your store link</div>
-        <div class="store-url">${escapeHtml(settings.storeSlug && settings._slugLive ? new URL(url).host + new URL(url).pathname : new URL(url).host + '/store.html' + (settings._storeHash ? ' · ' + (url.length / 1000).toFixed(1) + 'k link' : ''))}</div>
+        <div class="store-url">${escapeHtml(settings.storeSlug && settings._slugLive ? new URL(url).host + new URL(url).pathname : new URL(url).host + new URL(url).pathname + (settings._storeHash ? ' · ' + (url.length / 1000).toFixed(1) + 'k link' : ''))}</div>
         <div class="text-sm text-secondary" style="margin-top:6px">${settings.storeSlug && settings._slugLive ? 'Short link is live.' : 'This is the long link. Sign in to the cloud and tap Update Store Page to get a short name link.'} <button type="button" class="chip-btn" data-action="store-edit-slug">${settings.storeSlug ? 'Change name' : 'Choose name'}</button></div>
         <div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-outline" style="flex:1" data-action="copy-store-link">Copy link</button><button class="btn btn-primary" style="flex:1" data-action="share-store-link">Share on WhatsApp</button></div></div>
       <div style="padding:12px 16px;display:flex;flex-direction:column;gap:10px">
@@ -5629,6 +5635,7 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
   //  screens: Home, Dashboard, Menu, Expenses, Cash, utilities
   // ============================================================
   const IC = {
+    return: '<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
     home: '<path d="M3 11l9-8 9 8v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>',
     store: '<path d="M3 9l1.5-5h15L21 9"/><path d="M3 9a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0"/><path d="M5 12v8h14v-8"/><path d="M10 20v-5h4v5"/>',
     bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>',
@@ -6368,7 +6375,7 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
       case 'store-edit-slug': {
         const C = window.HisablyCloud;
         if (!C || !C.ready() || !C.getSession()) { toast('Sign in to the cloud to get a short store link'); break; }
-        const base = new URL('./', location.href).href.replace(/^https?:\/\//, '') + 'store/';
+        const base = siteBase().replace(/^https?:\/\//, '') + 'store/';
         const v = await askPrompt('Your store link will be ' + base + 'name', settings.storeSlug || slugify(settings.businessName), { title: 'Store link name' });
         if (v == null) break;
         const sl = slugify(v);
@@ -7525,7 +7532,7 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
     boot.dataset.hiding = '1';
     // keep the splash visible for a moment so the Billaura name registers, then fade it out
     const inApp = (window.matchMedia && window.matchMedia('(display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui)').matches) || navigator.standalone === true || !!window.Capacitor;
-    const wait = Math.max(0, (inApp ? 1300 : 1500) - (performance.now() || 0));   // browser tab: let the animated splash play once; installed app: phone already showed its own
+    const wait = document.documentElement.classList.contains('cap-app') ? 0 : Math.max(0, (inApp ? 1300 : 1500) - (performance.now() || 0));   // browser tab: let the animated splash play once; installed app: phone already showed its own
     setTimeout(() => { boot.classList.add('out'); setTimeout(() => { boot.hidden = true; }, 220); }, wait);
   }
   function showAuth() {

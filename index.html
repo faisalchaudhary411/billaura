@@ -19,6 +19,8 @@ if(localStorage.getItem('billaura_seen_v1')||localStorage.getItem('sb_invoices_v
 for(var i=0;i<localStorage.length;i++){if(/auth-token|session/i.test(localStorage.key(i)))return}
 l.replace('landing.html')}catch(e){}})();</script>
   <script>if(navigator.standalone||window.Capacitor){document.documentElement.className+=" ios-app native-shell"}</script>
+  <script>if(window.Capacitor)document.documentElement.className+=" cap-app"</script>
+  <style>html.cap-app,html.cap-app body{background:#E8173C}html.cap-app #bootScreen{background:#E8173C}html.cap-app #bootScreen *{display:none!important}</style>
   <link rel="manifest" href="manifest.json" />
   <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png" />
