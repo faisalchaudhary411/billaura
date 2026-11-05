@@ -93,3 +93,6 @@ Both are built from the same web files, so each new tag (`git tag v1.0.2 && git 
 
 ## Counter Pack (v28)
 `js/counter.js` adds: Quick Sale POS (hold/resume, discount, split pay, change calculator), Shift & cash drawer with Z-report, manager PIN approval, Return/Exchange, Daily closing report, Buy Today list, Purchase orders with goods-received (batch + expiry), Stock count with losses report, Expiry & batches (oldest sold first), and Backup & Restore (daily restore points, share file). Menu → "Counter Pack". No SQL needed; data lives in the shop settings that already sync.
+
+## Branches / franchise (v29)
+`js/branches.js`: Pro feature `branches`. Menu → Counter Pack → Branches & Head Office. Add branches, move stock with Transfers (send, then receive with a shortage check), per-branch bill numbers (code prefix), per-branch prices in Quick Sale, staff tied to a branch, head-office comparison dashboard, and an Audit log. All branches share one shop's data; product stock stays the company total and each branch's share is kept in settings. Admin plan table shows the new row.

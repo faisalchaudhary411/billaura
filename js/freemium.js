@@ -20,6 +20,7 @@
       bulkTools: false,
       shopify: false,
       passcode: false,
+      branches: false,
       themes: false,
       label: 'Free'
     },
@@ -34,6 +35,7 @@
       bulkTools: true,
       shopify: true,
       passcode: true,
+      branches: true,
       themes: true,
       label: 'Trial'
     },
@@ -48,6 +50,7 @@
       bulkTools: false,
       shopify: false,
       passcode: false,
+      branches: false,
       themes: false,
       label: 'Basic'
     },
@@ -62,6 +65,7 @@
       bulkTools: true,
       shopify: true,
       passcode: true,
+      branches: true,
       themes: true,
       label: 'Pro'
     },
@@ -76,6 +80,7 @@
       bulkTools: false,
       shopify: false,
       passcode: false,
+      branches: false,
       themes: false,
       label: 'Inactive'
     }

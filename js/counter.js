@@ -29,6 +29,7 @@
   function shareText(text) { const num = S().ownerWhatsapp || S().storeWhatsapp || S().phone || ''; if (num) C().sendWhatsApp(num, text); else window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank'); }
   function shareAny(text) { if (navigator.share) navigator.share({ text }).catch(() => {}); else shareText(text); }
 
+  E.audit = function (type, detail) { try { const c = C(); if (!c) return; const l = arr('audit'); l.unshift({ t: new Date().toISOString(), by: c.isStaff() ? c.staffName() : 'Owner', type, detail: String(detail || '').slice(0, 160), br: E.brId() }); if (l.length > 300) l.length = 300; } catch (e) {} };
   // ---------------- Manager approval ----------------
   let apRes = null, apFails = 0, apLock = 0, apNeed = '', apAct = '';
   const NOAPPROVE = ['owner', 'settings', 'export'];
@@ -78,7 +79,7 @@
 
   // ---------------- Menu / alerts / init ----------------
   E.menuCard = function () {
-    const items = [['sale', 'Quick Sale (POS)', 'data-view="pos"'], ['cash', 'Shift & Cash Drawer', 'data-view="shift"'], ['return', 'Return / Exchange', 'data-view="returns"'], ['report', 'Daily Closing Report', 'data-view="daily-report"'], ['cart', 'Buy Today List', 'data-view="buy-today"'], ['cart', 'Purchase Orders & GRN', 'data-view="po-list"'], ['box', 'Stock Count', 'data-view="stock-count"'], ['box', 'Expiry & Batches', 'data-view="expiry"'], ['sync', 'Backup & Restore', 'data-view="backup"']];
+    const items = [['sale', 'Quick Sale (POS)', 'data-view="pos"'], ['cash', 'Shift & Cash Drawer', 'data-view="shift"'], ['return', 'Return / Exchange', 'data-view="returns"'], ['report', 'Daily Closing Report', 'data-view="daily-report"'], ['cart', 'Buy Today List', 'data-view="buy-today"'], ['cart', 'Purchase Orders & GRN', 'data-view="po-list"'], ['box', 'Stock Count', 'data-view="stock-count"'], ['box', 'Expiry & Batches', 'data-view="expiry"'], ['sync', 'Backup & Restore', 'data-view="backup"'], ['store', 'Branches & Head Office', 'data-view="branches"'], ['box', 'Stock Transfers', 'data-view="transfers"'], ['report', 'Audit Log', 'data-view="audit"']];
     return `<div class="menu-card"><div class="menu-h">Counter Pack</div>${items.map(i => row(i[0], i[1], i[2])).join('')}</div>`;
   };
   E.staffRows = function () {
@@ -87,7 +88,7 @@
     if (c.can('returns')) r.push(['Return / Exchange', 'data-view="returns"']);
     if (c.can('reports')) r.push(['Daily closing report', 'data-view="daily-report"']);
     if (c.can('purchases')) { r.push(['Buy today list', 'data-view="buy-today"']); r.push(['Purchase orders', 'data-view="po-list"']); }
-    if (c.can('items_edit')) { r.push(['Stock count', 'data-view="stock-count"']); r.push(['Expiry & batches', 'data-view="expiry"']); }
+    if (c.can('items_edit')) { r.push(['Stock transfers', 'data-view="transfers"']); r.push(['Stock count', 'data-view="stock-count"']); r.push(['Expiry & batches', 'data-view="expiry"']); }
     return r;
   };
   E.homeAlerts = function () {
@@ -138,8 +139,8 @@
   };
   function resetPos() { P.lines = []; P.name = ''; P.phone = ''; P.discType = 'amt'; P.discValue = 0; P.exchange = null; saveDraft(); }
   function tile(p, favs) {
-    const oos = (Number(p.stock) || 0) <= 0, fav = favs.includes(p.id);
-    return `<button type="button" class="pos-tile${oos ? ' oos' : ''}" data-action="pz-add" data-id="${p.id}"><span class="pos-fav" data-action="pz-fav" data-id="${p.id}">${fav ? '★' : '☆'}</span><span class="pos-name">${h(p.name)}</span><span class="pos-price">${cur()} ${m(p.price)}</span><span class="pos-stock">${oos ? 'Out of stock' : 'Stock ' + p.stock}</span></button>`;
+    const oos = E.stockAt(p) <= 0, fav = favs.includes(p.id);
+    return `<button type="button" class="pos-tile${oos ? ' oos' : ''}" data-action="pz-add" data-id="${p.id}"><span class="pos-fav" data-action="pz-fav" data-id="${p.id}">${fav ? '★' : '☆'}</span><span class="pos-name">${h(p.name)}</span><span class="pos-price">${cur()} ${m(E.priceOf(p))}</span><span class="pos-stock">${oos ? 'Out of stock' : 'Stock ' + E.stockAt(p)}</span></button>`;
   }
   function posList() {
     const c = C(), q = P.q.trim().toLowerCase(), favs = S().favourites || [];
@@ -157,9 +158,14 @@
       (P.lines.length ? `<div class="pz-lines">${P.lines.map((l, i) => `<div class="pz-line"><div class="pz-ln"><b>${h(l.name)}</b><small>${cur()} ${can || l.unlocked ? `<input class="pz-pr" type="number" inputmode="decimal" min="0" step="any" value="${l.price}" data-in="pz-price" data-i="${i}" aria-label="Price">` : m(l.price) + ' <a data-action="pz-unlock" data-i="' + i + '">🔒 change</a>'}</small></div>
         <div class="pz-q"><button data-action="pz-dec" data-i="${i}">−</button><input type="number" inputmode="decimal" min="0" step="any" value="${l.qty}" data-in="pz-qty" data-i="${i}"><button data-action="pz-inc" data-i="${i}">+</button></div>
         <div class="pz-amt">${m(l.price * l.qty)}</div><button class="pz-x" data-action="pz-del" data-i="${i}" aria-label="Remove">✕</button></div>`).join('')}</div>
-      <div class="pz-tot"><div><span>Subtotal</span><b>${cur()} ${m(c.sub)}</b></div>${c.discount ? `<div><span>Discount</span><b>− ${m(c.discount)}</b></div>` : ''}${c.tax ? `<div><span>Tax</span><b>${m(c.tax)}</b></div>` : ''}${c.credit ? `<div><span>Exchange credit</span><b>− ${m(c.credit)}</b></div>` : ''}</div>` : '');
-    const bar = document.getElementById('pzBar');
-    if (bar) bar.innerHTML = `<div class="pos-cart-info"><span>${n} item${n === 1 ? '' : 's'}</span><strong>${cur()} ${m(c.payable)}</strong></div><button class="btn btn-outline btn-sm" data-action="pz-disc" ${P.lines.length ? '' : 'disabled'}>${c.discount ? 'Disc ' + m(c.discount) : 'Discount'}</button><button class="btn btn-outline btn-sm" data-action="pz-hold" ${P.lines.length ? '' : 'disabled'}>Hold</button><button class="btn btn-primary" data-action="pz-charge" ${P.lines.length ? '' : 'disabled'}>Charge</button>`;
+      ${E.simple() ? easyQuick(c) : ''}<div class="pz-tot"><div><span>Subtotal</span><b>${cur()} ${m(c.sub)}</b></div>${c.discount ? `<div><span>Discount</span><b>− ${m(c.discount)}</b></div>` : ''}${c.tax ? `<div><span>Tax</span><b>${m(c.tax)}</b></div>` : ''}${c.credit ? `<div><span>Exchange credit</span><b>− ${m(c.credit)}</b></div>` : ''}</div>` : '');
+    const bar = document.getElementById('pzBar'), easy = E.simple();
+    if (bar && easy) bar.innerHTML = `<div class="pos-cart-info"><span>${n} item${n === 1 ? '' : 's'}</span><strong>${cur()} ${m(c.payable)}</strong></div><button class="btn btn-outline" data-action="pz-charge" ${P.lines.length ? '' : 'disabled'}>Other</button><button class="btn btn-primary" data-action="pz-cash" data-v="${c.payable}" ${P.lines.length ? '' : 'disabled'}>Cash ${m(c.payable)}</button>`;
+    else if (bar) bar.innerHTML = `<div class="pos-cart-info"><span>${n} item${n === 1 ? '' : 's'}</span><strong>${cur()} ${m(c.payable)}</strong></div><button class="btn btn-outline btn-sm" data-action="pz-disc" ${P.lines.length ? '' : 'disabled'}>${c.discount ? 'Disc ' + m(c.discount) : 'Discount'}</button><button class="btn btn-outline btn-sm" data-action="pz-hold" ${P.lines.length ? '' : 'disabled'}>Hold</button><button class="btn btn-primary" data-action="pz-charge" ${P.lines.length ? '' : 'disabled'}>Charge</button>`;
+  }
+  function easyQuick(c) {
+    const due = c.payable, q = [due, Math.ceil(due / 50) * 50, Math.ceil(due / 100) * 100, Math.ceil(due / 500) * 500, Math.ceil(due / 1000) * 1000, Math.ceil(due / 5000) * 5000].filter((v, i, a) => v >= due && a.indexOf(v) === i).slice(0, 4);
+    return `<div class="pz-quick"><span class="text-sm text-secondary">Customer gives:</span>${q.map((v, i) => `<button class="cat-chip" data-action="pz-cash" data-v="${v}">${i === 0 ? 'Exact ' : ''}${m(v)}</button>`).join('')}</div><div class="pz-more"><a data-action="pz-disc">Discount</a> · <a data-action="pz-hold">Hold bill</a> · <a data-action="pz-charge">Card / Udhaar…</a></div>`;
   }
   const shiftBanner = () => { const sh = S().shiftOpen; if (sh) return `<div class="pz-sh ok">Shift open since ${dt(sh.openedAt)} · <a data-view="shift">drawer</a></div>`; return S().requireShift ? `<div class="pz-sh bad">Open a shift before selling · <a data-view="shift">Open shift</a></div>` : ''; };
   E.views.pos = {
@@ -182,8 +188,8 @@
   function add(id, qty) {
     const p = C().products.find(x => x.id === id); if (!p) return;
     const l = P.lines.find(x => x.productId === id);
-    if (l) l.qty = r2(l.qty + (qty || 1)); else P.lines.push({ productId: p.id, name: p.name, price: Number(p.price) || 0, cost: Number(p.cost) || 0, qty: qty || 1 });
-    if (S().enableStock !== false && (Number(p.stock) || 0) < (l ? l.qty : 1)) toast(p.name + ': only ' + Math.max(0, p.stock) + ' in stock');
+    if (l) l.qty = r2(l.qty + (qty || 1)); else P.lines.push({ productId: p.id, name: p.name, price: E.priceOf(p), cost: Number(p.cost) || 0, qty: qty || 1 });
+    if (S().enableStock !== false && E.stockAt(p) < (l ? l.qty : 1)) toast(p.name + ': only ' + Math.max(0, E.stockAt(p)) + ' in stock' + (E.brName() ? ' at ' + E.brName() : ''));
     saveDraft(); drawCart();
     try { navigator.vibrate && navigator.vibrate(15); } catch (e) {}
   }
@@ -192,13 +198,15 @@
   E.inputs['pz-price'] = el => { const l = P.lines[+el.dataset.i]; if (!l) return; l.price = Math.max(0, parseFloat(el.value) || 0); saveDraft(); updTotalsOnly(); };
   function updTotalsOnly() { const bar = document.getElementById('pzBar'); if (!bar) return; const c = posCalc(), n = P.lines.reduce((a, l) => a + l.qty, 0); const st = bar.querySelector('strong'); if (st) st.textContent = cur() + ' ' + m(c.payable); const sp = bar.querySelector('span'); if (sp) sp.textContent = n + ' item' + (n === 1 ? '' : 's'); }
   const A = E.actions;
+  E.simple = () => false;
+  E.brId = () => 'main'; E.stamp = () => {}; E.stockAt = p => Number(p.stock) || 0; E.priceOf = p => Number(p.price) || 0; E.brName = () => '';
   A['pz-add'] = (t, e) => { if (e.target.closest('[data-action="pz-fav"]')) return; add(t.dataset.id); };
   A['pz-fav'] = t => { const f = (S().favourites = S().favourites || []), i = f.indexOf(t.dataset.id); if (i >= 0) f.splice(i, 1); else f.push(t.dataset.id); C().persist(); drawGrid(); };
   A['pz-filter'] = t => { P.filter = t.dataset.v; P.q = ''; const s = document.getElementById('pzSearch'); if (s) s.value = ''; document.querySelectorAll('#pzChips .cat-chip').forEach(b => b.classList.toggle('active', b === t)); drawGrid(); };
   A['pz-inc'] = t => { const l = P.lines[+t.dataset.i]; if (l) { l.qty = r2(l.qty + 1); saveDraft(); drawCart(); } };
   A['pz-dec'] = t => { const l = P.lines[+t.dataset.i]; if (l) { l.qty = r2(l.qty - 1); if (l.qty <= 0) P.lines.splice(+t.dataset.i, 1); saveDraft(); drawCart(); } };
   A['pz-del'] = t => { P.lines.splice(+t.dataset.i, 1); saveDraft(); drawCart(); };
-  A['pz-unlock'] = async t => { if (await E.approve('discount', 'pos-price')) { const l = P.lines[+t.dataset.i]; if (l) { l.unlocked = true; drawCart(); } } };
+  A['pz-unlock'] = async t => { if (await E.approve('discount', 'pos-price')) { const l = P.lines[+t.dataset.i]; if (l) { l.unlocked = true; E.audit('price', 'Price unlocked for ' + l.name); drawCart(); } } };
   A['pz-scan'] = () => C().startScanner(code => { const p = C().products.find(x => (x.barcode || '').toLowerCase() === String(code).toLowerCase()); if (!p) return toast('Product not found'); add(p.id); toast('+1 ' + p.name); });
   A['pz-ex-off'] = () => { if (P.exchange) { const cn = C().invoices.find(x => x.number === P.exchange.ref); if (cn && cn.meta && cn.meta.exchangePending) { delete cn.meta.exchangePending; cn.meta.paymentMode = 'Cash'; cn.meta.refundMode = 'cash'; cn.updatedAt = new Date().toISOString(); C().persist(); toast('Exchange cancelled. Refund recorded as cash'); } } P.exchange = null; saveDraft(); drawCart(); };
   A['pz-disc'] = async () => {
@@ -284,6 +292,7 @@
     const modes = Object.keys(o.pay).filter(k => o.pay[k] > 0).sort((a, b) => o.pay[b] - o.pay[a]), main = modes[0] || 'Cash';
     const meta = { subtotal: calc.sub, discount: calc.discount, discType: P.discType, discValue: Number(P.discValue) || 0, taxName: 'Tax', taxRate: calc.taxRate, taxType: 'pct', tax: calc.tax, inclTax: !!s.enableInclusiveTax, chargeLabel: '', charges: 0, roundOff: 0, paymentMode: paid > 0 ? main : '', pos: 1 };
     if (s.shiftOpen) meta.shiftId = s.shiftOpen.id;
+    E.stamp(meta);
     if (c.isStaff()) meta.by = c.staffName();
     if (P.exchange) { meta.exchangeFrom = P.exchange.ref; }
     const pays = [];
@@ -307,17 +316,38 @@
       <div class="form-row" style="margin-top:12px"><button class="btn btn-outline" data-action="print-invoice" data-id="${inv.id}">Print</button><button class="btn btn-outline" data-action="pz-share" data-id="${inv.id}">Share</button></div>
       <button class="btn btn-primary btn-block" style="margin-top:8px" data-action="pz-new">New sale</button></div>`);
   }
+  function showSnack(inv, change, refund, canUndo) {
+    let el = document.getElementById('pzSnack'); if (!el) { el = document.createElement('div'); el.id = 'pzSnack'; document.body.appendChild(el); }
+    clearTimeout(E._sn);
+    el.innerHTML = `<div class="pzs-top"><b>✅ ${h(inv.number)} · ${cur()} ${m(inv.total)}</b><button data-action="pz-snack-x" aria-label="Close">✕</button></div>${change > 0 ? `<div class="pzs-change">Return change <b>${cur()} ${m(change)}</b></div>` : ''}${refund > 0.001 ? `<div class="pzs-change">Give back <b>${cur()} ${m(refund)}</b> (exchange)</div>` : ''}<div class="pzs-btns"><button data-action="print-invoice" data-id="${inv.id}">Print</button><button data-action="pz-share" data-id="${inv.id}">WhatsApp</button>${canUndo ? `<button data-action="pz-undo" data-id="${inv.id}">Undo</button>` : ''}</div>`;
+    el.className = 'show'; E._sn = setTimeout(() => el.classList.remove('show'), change > 0 ? 25000 : 12000);
+  }
+  A['pz-snack-x'] = () => { const el = document.getElementById('pzSnack'); if (el) el.classList.remove('show'); };
+  A['pz-cash'] = t => {
+    if (!P.lines.length) return;
+    if (S().requireShift && !S().shiftOpen) { toast('Start your day first'); return go('shift'); }
+    const c = posCalc(), due = c.payable, rv = Math.max(due, parseFloat(t.dataset.v) || 0), change = r2(rv - due), usedEx = !!P.exchange;
+    const inv = createSale({ pay: { Cash: due, Bank: 0, Online: 0 }, change }); if (!inv) return;
+    drawCart(); drawGrid(); showSnack(inv, change, lastRefund, !usedEx);
+  };
+  A['pz-undo'] = async t => {
+    const c = C(), inv = c.invoices.find(x => x.id === t.dataset.id); if (!inv) return toast('Already removed');
+    if (!(await c.askConfirm(`Cancel ${inv.number}? Stock is put back and the bill goes to the Recycle Bin.`, { okText: 'Cancel sale', danger: true }))) return;
+    inv.items.forEach(it => { const p = c.products.find(x => x.id === it.productId); if (p) { p.stock = r2((Number(p.stock) || 0) + it.qty); try { E.onStock(p, it.qty, 'return'); } catch (e) {} } });
+    c.trashInvoice(inv); E.audit('void', `Cancelled ${inv.number} ${cur()} ${m(inv.total)}`); c.persist(); A['pz-snack-x'](); toast('Sale cancelled'); if (c.view === 'pos') { drawGrid(); } else redraw();
+  };
   A['pz-share'] = t => { const inv = C().invoices.find(x => x.id === t.dataset.id); if (inv) { close(); C().openShareSheet(inv); } };
   A['pz-new'] = () => { close(); redraw(); };
   // allow other screens (exchange / buy again) to preload the POS
   E.loadPos = (o) => { resetPos(); Object.assign(P, o); saveDraft(); go('pos'); };
 
   // ======================= Shift & cash drawer =======================
-  function shiftStats(from, to, sh) {
+  function shiftStats(from, to, sh, bidArg) {
     const c = C(), f = new Date(from).getTime(), t = to ? new Date(to).getTime() : Date.now();
-    const inW = x => { const v = c.ts(x.date); return v >= f && v <= t; };
+    const bid = sh ? sh.branchId : (bidArg || null), okB = x => !bid || ((x.meta && x.meta.branchId) || 'main') === bid;
+    const inW = x => { const v = c.ts(x.date); return v >= f && v <= t && okB(x); };
     const sales = saleDocs().filter(inW), rets = c.invoices.filter(i => i.docType === 'return').filter(inW);
-    const rows = c.cashEntries().filter(r => r.t >= f && r.t <= t);
+    const rows = c.cashEntries().filter(r => r.t >= f && r.t <= t && (!bid || r.br === bid));
     const byMode = {}; rows.forEach(r => { if (r.mode === 'Exchange') return; const o = byMode[r.mode] || (byMode[r.mode] = { i: 0, o: 0 }); o[r.dir === 'in' ? 'i' : 'o'] += r.amount; });
     const cash = byMode.Cash || { i: 0, o: 0 };
     const moves = (sh && sh.moves) || [], mv = sumBy(moves, x => x.amount);
@@ -361,13 +391,13 @@
   };
   E.inputs['sh-req'] = el => { S().requireShift = el.checked; C().persist(); };
   E.inputs['sh-count'] = () => { const sh = S().shiftOpen, d = document.getElementById('shDiff'); if (!sh || !d) return; const v = parseFloat(val('shCount')); if (!isFinite(v)) { d.textContent = ''; return; } const diff = r2(v - shiftStats(sh.openedAt, null, sh).expected); d.innerHTML = Math.abs(diff) < 0.5 ? '<span style="color:var(--success)">Drawer matches ✅</span>' : `<span style="color:var(--danger)">${diff < 0 ? 'Short' : 'Over'} by ${cur()} ${m(Math.abs(diff))}</span>`; };
-  A['sh-open'] = () => { const v = val('shOpen'); if (v === '' || !(parseFloat(v) >= 0)) return toast('Enter opening cash (0 if empty)'); S().shiftOpen = { id: C().uid(), openedAt: new Date().toISOString(), openCash: parseFloat(v), by: C().isStaff() ? C().staffName() : 'Owner', moves: [] }; C().persist(); toast('Shift opened'); redraw(); };
+  A['sh-open'] = () => { const v = val('shOpen'); if (v === '' || !(parseFloat(v) >= 0)) return toast('Enter opening cash (0 if empty)'); S().shiftOpen = { id: C().uid(), openedAt: new Date().toISOString(), openCash: parseFloat(v), by: C().isStaff() ? C().staffName() : 'Owner', moves: [], branchId: E.brId() }; C().persist(); close(); toast('Shift opened'); redraw(); };
   A['sh-mv'] = t => { const sh = S().shiftOpen, v = num('shMv'); if (!sh || !(v > 0)) return toast('Enter an amount'); (sh.moves = sh.moves || []).push({ t: new Date().toISOString(), amount: r2(v * Number(t.dataset.d)), note: val('shMn').trim() }); C().persist(); redraw(); };
   A['sh-close'] = async () => {
     const sh = S().shiftOpen; if (!sh) return; const v = val('shCount'); if (v === '' || !(parseFloat(v) >= 0)) return toast('Count the drawer first');
     const closedAt = new Date().toISOString(), stats = shiftStats(sh.openedAt, closedAt, sh), counted = parseFloat(v), diff = r2(counted - stats.expected);
     const rec = { id: sh.id, by: sh.by, openedAt: sh.openedAt, closedAt, counted, diff, note: val('shNote').trim(), stats };
-    arr('shifts').unshift(rec); S().shifts = S().shifts.slice(0, 60); S().shiftOpen = null; C().persist(); showZ(rec); 
+    arr('shifts').unshift(rec); S().shifts = S().shifts.slice(0, 60); E.audit('shift', `Closed shift: counted ${m(counted)}, difference ${m(diff)}`); S().shiftOpen = null; C().persist(); showZ(rec); if (E.simple()) takeSnap('auto').then(() => C().persist()).catch(() => {});
   };
   function showZ(r) {
     modal('Shift report', `<div class="modal-body" id="zBody"><div class="text-sm text-secondary" style="margin-bottom:8px">${dt(r.openedAt)} → ${r.closedAt ? dt(r.closedAt) : 'now'} · ${h(r.by || '')}</div>${zHtml(r)}<div class="form-row"><button class="btn btn-outline" data-action="z-print" data-id="${r.id}">Print</button><button class="btn btn-primary" data-action="z-share" data-id="${r.id}">Share</button></div></div>`);
@@ -379,7 +409,7 @@
     const w = window.open('', '_blank'); if (!w) return toast('Allow pop-ups to print');
     w.document.write(`<pre style="font:13px/1.5 monospace;max-width:300px;margin:8px auto;white-space:pre-wrap">${h(txt)}</pre><script>setTimeout(function(){window.print()},300)<\/script>`); w.document.close();
   }
-  E.printText = printText;
+  E.printText = printText; E.helpers = { modal, close, redraw, go, empty, row, shareAny, sumBy, dt, today, val, num, arr, dayReport, shiftStats };
 
   // ======================= Return / Exchange =======================
   const R = { q: '', inv: null, qty: {}, reason: 'Customer changed mind', mode: 'cash', pm: 'Cash', restock: true, exchange: false };
@@ -447,7 +477,9 @@
     const meta = { subtotal: t.sub, discount: t.disc, discType: 'amt', discValue: t.disc, taxName: 'Tax', taxRate: (i.meta && i.meta.taxRate) || 0, taxType: (i.meta && i.meta.taxType) || 'pct', tax: t.tax || 0, inclTax: !!(i.meta && i.meta.inclTax), chargeLabel: '', charges: 0, roundOff: 0, paymentMode: pm, refId: i.id, refNumber: i.number, reason: R.reason, restock: !!R.restock, refundMode: R.mode };
     if (R.mode === 'exchange') meta.exchangePending = true;
     if (c.isStaff()) meta.by = c.staffName();
+    E.stamp(meta);
     const cn = { id: c.uid(), number, docType: 'return', customerId: i.customerId || null, customerName: i.customerName, customerPhone: i.customerPhone || '', items: lines, total: t.total, paymentStatus: paid >= t.total - 0.001 ? 'paid' : (paid > 0 ? 'partial' : 'unpaid'), paidAmount: paid, meta, date: now };
+    E.audit('return', `${number} ${cur()} ${m(t.total)} (${R.mode}, ${R.reason}) for ${i.number}`);
     c.invoices.unshift(cn); c.persist();
     const keep = { name: i.customerId ? i.customerName : '', phone: i.customerPhone || '' };
     R.inv = null; R.qty = {};
@@ -457,18 +489,19 @@
   E.perms['rt-confirm'] = null;
 
   // ======================= Daily closing report =======================
-  const DR = { day: today() };
+  const DR = { day: today(), branch: null };
+  E.DR = DR;
   function dayWin(d) { return [new Date(d + 'T00:00:00').toISOString(), new Date(d + 'T23:59:59.999').toISOString()]; }
   function dayReport(d) {
-    const c = C(), [f, t] = dayWin(d), st = shiftStats(f, t, null), F = new Date(f).getTime(), T = new Date(t).getTime();
-    const inW = x => { const v = c.ts(x.date); return v >= F && v <= T; };
+    const c = C(), [f, t] = dayWin(d), bid = DR.branch || null, st = shiftStats(f, t, null, bid), F = new Date(f).getTime(), T = new Date(t).getTime();
+    const inW = x => { const v = c.ts(x.date); return v >= F && v <= T && (!bid || ((x.meta && x.meta.branchId) || 'main') === bid); };
     const sales = saleDocs().filter(inW), rets = c.invoices.filter(i => i.docType === 'return').filter(inW);
     const prof = l => sumBy(l, i => sumBy(i.items, it => (it.price - (it.cost || 0)) * it.qty) - ((i.meta && i.meta.discount) || 0));
     const gp = r2(prof(sales) - prof(rets)), top = {};
     sales.forEach(i => i.items.forEach(it => { const o = top[it.name] || (top[it.name] = { q: 0, v: 0 }); o.q += it.qty; o.v += it.qty * it.price; }));
     const topL = Object.keys(top).map(k => ({ n: k, q: r2(top[k].q), v: r2(top[k].v) })).sort((a, b) => b.v - a.v).slice(0, 5);
-    const collected = sumBy(c.cashEntries().filter(r => r.t >= F && r.t <= T && r.dir === 'in' && r.mode !== 'Exchange'), r => r.amount);
-    const exp = sumBy(c.cashEntries().filter(r => r.t >= F && r.t <= T && /^Expense/.test(r.text)), r => r.amount);
+    const collected = sumBy(c.cashEntries().filter(r => r.t >= F && r.t <= T && r.dir === 'in' && r.mode !== 'Exchange' && (!bid || r.br === bid)), r => r.amount);
+    const exp = sumBy(c.cashEntries().filter(r => r.t >= F && r.t <= T && /^Expense/.test(r.text) && (!bid || r.br === bid)), r => r.amount);
     return { st, gp, exp, net: r2(gp - exp), topL, collected };
   }
   function drText(d, r) {
@@ -483,7 +516,7 @@
     right: () => `<button class="icon-btn" data-action="dr-share" aria-label="Share">${C().ico('share')}</button>`,
     html() {
       const r = dayReport(DR.day), k = r.st, tr = (l, v, st) => `<div class="tot-row"><span>${l}</span><b${st ? ` style="${st}"` : ''}>${v}</b></div>`;
-      return `<div class="fade-in" style="padding:12px 16px 40px"><div class="chip-row"><button class="cat-chip${DR.day === today() ? ' active' : ''}" data-action="dr-day" data-v="0">Today</button><button class="cat-chip" data-action="dr-day" data-v="1">Yesterday</button><input type="date" class="form-input" style="width:auto;padding:6px 10px" value="${DR.day}" max="${today()}" data-ch="dr-date"></div>
+      return `<div class="fade-in" style="padding:12px 16px 40px">${E.branchChips ? E.branchChips() : ''}<div class="chip-row"><button class="cat-chip${DR.day === today() ? ' active' : ''}" data-action="dr-day" data-v="0">Today</button><button class="cat-chip" data-action="dr-day" data-v="1">Yesterday</button><input type="date" class="form-input" style="width:auto;padding:6px 10px" value="${DR.day}" max="${today()}" data-ch="dr-date"></div>
         <div class="stats-grid" style="grid-template-columns:repeat(2,1fr)"><div class="stat-card"><div class="stat-label">Net sales</div><div class="stat-value" style="font-size:1.1rem">${cur()} ${m(r2(k.total - k.returns))}</div></div><div class="stat-card"><div class="stat-label">Net profit</div><div class="stat-value ${r.net >= 0 ? 'success' : 'danger'}" style="font-size:1.1rem">${cur()} ${m(r.net)}</div></div></div>
         <div class="doc-card">${tr('Bills', k.count)}${tr('Gross sales', cur() + ' ' + m(k.total))}${k.discount ? tr('Discounts given', m(k.discount)) : ''}${tr('Returns', '− ' + m(k.returns))}${tr('Gross profit', m(r.gp))}${tr('Expenses', '− ' + m(r.exp))}${k.onAccount ? tr('Went on account (udhaar)', m(k.onAccount)) : ''}</div>
         <div class="doc-card"><div class="doc-label">Money received today</div>${tr('Total', cur() + ' ' + m(r.collected), 'font-size:1.05rem')}${Object.keys(k.byMode).filter(x => x !== 'Exchange').map(x => tr(x, `<span style="color:var(--success)">+${m(k.byMode[x].i)}</span>${k.byMode[x].o ? ` <span style="color:var(--danger)">−${m(k.byMode[x].o)}</span>` : ''}`)).join('')}</div>
@@ -604,10 +637,11 @@
     const total = sumBy(items, i => i.price * i.qty), paid = Math.min(total, Math.max(0, num('rvPaid'))), mode = (document.querySelector('#rvMode .active') || {}).dataset ? document.querySelector('#rvMode .active').dataset.v : 'Cash';
     const meta = { subtotal: total, discount: 0, discType: 'amt', discValue: 0, taxName: 'Tax', taxRate: 0, taxType: 'pct', tax: 0, chargeLabel: '', charges: 0, roundOff: 0, paymentMode: paid > 0 ? mode : '', poId: po.id, poNumber: po.number, grn: 1 };
     const bn = val('rvBill').trim(); if (bn) meta.billNo = bn;
+    E.stamp(meta);
     const pur = { id: c.uid(), number, supplierId: sup ? sup.id : null, supplierName: po.supplierName || '', supplierPhone: po.supplierPhone || '', items, total, paymentStatus: paid >= total - 0.001 ? 'paid' : (paid > 0 ? 'partial' : 'unpaid'), paidAmount: paid, meta, date: now };
     c.savePurchase(pur);
     po.status = po.lines.every(l => (l.received || 0) >= l.qty - 0.0001) ? 'received' : 'partial';
-    c.persist(); close(); toast('Stock added · ' + number); redraw();
+    E.audit('purchase', `Received goods ${number} (${po.number}) ${cur()} ${m(total)}`); c.persist(); close(); toast('Stock added · ' + number); redraw();
   };
 
   // ======================= Stock count =======================
@@ -643,7 +677,7 @@
   A['sc-apply'] = async () => {
     const c = C(), d = draft(), now = new Date().toISOString(); let n = 0, loss = 0, gain = 0;
     Object.keys(d.counts).forEach(id => { const p = c.products.find(x => x.id === id); if (!p) return; const before = Number(p.stock) || 0, after = d.counts[id], diff = r2(after - before); if (!diff) return; p.stock = after; try { E.onStock(p, diff, 'adjust'); } catch (e) {} n++; if (diff < 0) loss += -diff * (Number(p.cost) || 0); else gain += diff * (Number(p.cost) || 0); c.stockMovements.unshift({ id: c.uid(), productId: id, productName: p.name, type: diff > 0 ? 'in' : 'out', qty: Math.abs(diff), date: now, note: 'Adjust: Stock count ' + (diff > 0 ? 'found ' : 'missing ') + Math.abs(diff) }); });
-    arr('counts').unshift({ id: d.id, at: now, by: c.isStaff() ? c.staffName() : 'Owner', counted: Object.keys(d.counts).length, changed: n, loss: r2(loss), gain: r2(gain) }); S().counts = S().counts.slice(0, 20); S().countDraft = null; c.persist(); close(); toast(n + ' items corrected'); redraw();
+    E.audit('count', `Stock count applied: ${n} items corrected, ${cur()} ${m(r2(loss))} short`); arr('counts').unshift({ id: d.id, at: now, by: c.isStaff() ? c.staffName() : 'Owner', counted: Object.keys(d.counts).length, changed: n, loss: r2(loss), gain: r2(gain) }); S().counts = S().counts.slice(0, 20); S().countDraft = null; c.persist(); close(); toast(n + ' items corrected'); redraw();
   };
   E.perms['sc-apply'] = 'items_edit';
   E.views['stock-losses'] = {
@@ -690,6 +724,7 @@
     const c = C(), p = c.products.find(x => x.id === t.dataset.p), l = p && bat(p.id), b = l && l[+t.dataset.i]; if (!b) return;
     if (!(await c.askConfirm(`Write off ${b.qty} × ${p.name} (expired)? Stock goes down by ${b.qty}.`))) return;
     p.stock = r2(Math.max(0, (Number(p.stock) || 0) - b.qty)); c.stockMovements.unshift({ id: c.uid(), productId: p.id, productName: p.name, type: 'out', qty: b.qty, date: new Date().toISOString(), note: 'Adjust: Expired write-off' + (b.no ? ' batch ' + b.no : '') });
+    E.audit('expiry', `Wrote off ${b.qty} × ${p.name} (expired)`);
     l.splice(+t.dataset.i, 1); c.persist(); redraw();
   };
   E.perms['ex-add'] = 'items_edit'; E.perms['ex-save'] = 'items_edit'; E.perms['ex-wo'] = 'items_edit';
@@ -729,7 +764,7 @@
   A['bk-restore'] = async t => {
     const c = C(), l = await snapList(), x = l.find(k => String(k.id) === t.dataset.id); if (!x) return;
     if (!(await c.askConfirm(`Go back to ${dt(x.at)}? Everything after that is replaced. A restore point of today's data is saved first.`, { title: 'Restore', okText: 'Restore', danger: true }))) return;
-    await takeSnap('manual'); c.applyBackupData(JSON.parse(x.data)); c.afterRestore(); toast('Restored'); go('dashboard');
+    E.audit('restore', 'Restored data to ' + dt(x.at)); await takeSnap('manual'); c.applyBackupData(JSON.parse(x.data)); c.afterRestore(); toast('Restored'); go('dashboard');
   };
   A['bk-dl'] = async t => { const l = await snapList(), x = l.find(k => String(k.id) === t.dataset.id); if (x) C().downloadText(`billaura-restorepoint-${x.at.slice(0, 10)}.json`, x.data, 'application/json'); };
   A['bk-share'] = async () => {

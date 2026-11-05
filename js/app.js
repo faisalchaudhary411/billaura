@@ -655,7 +655,7 @@
       }
     };
 
-    const _ev = window.BillauraExt && BillauraExt.views && BillauraExt.views[currentView];
+    let _ev = window.BillauraExt && BillauraExt.views && BillauraExt.views[currentView]; if (_ev && _ev.when && !_ev.when()) _ev = null;
     if (_ev) { title.textContent = typeof _ev.title === 'function' ? _ev.title() : _ev.title; if (_ev.right) right.innerHTML = _ev.right(); content.innerHTML = _ev.html(); if (_ev.bind) { try { _ev.bind(); } catch (e) { console.error(e); } } }
     else (map[currentView] || map.home)();
     try { if (window.BillauraExt && BillauraExt.afterRender) BillauraExt.afterRender(currentView, { title, right, content }); } catch (e) { console.error(e); }
@@ -1168,7 +1168,7 @@
       purchases: 'purchases', suppliers: 'purchases', expenses: 'expenses', 'sale-report': 'reports', 'profit-loss': 'reports', 'party-pl': 'reports', 'item-pl': 'reports', 'trial-balance': 'reports', 'balance-sheet': 'reports', 'bill-pnl': 'reports', 'daybook-detail': 'reports',
       banks: 'banks', 'bank-ledger': 'banks', 'cash-in-hand': 'banks', loans: 'banks', 'other-income': 'banks', cheques: 'banks', 'payments-in': 'receive_payment', 'payments-out': 'banks',
       'barcode-gen': 'items_edit', 'stock-adjust': 'items_edit', reminders: 'parties', 'payment-reminders': 'receive_payment', 'service-reminders': 'parties', pos: 'sales', recycle: 'delete' };
-    { const ev = window.BillauraExt && BillauraExt.views && BillauraExt.views[view]; if (ev) return ev.perm || null; }
+    { const ev = window.BillauraExt && BillauraExt.views && BillauraExt.views[view]; if (ev && (!ev.when || ev.when())) return ev.perm || null; }
     if (view === 'create-invoice') return type === 'purchase' ? 'purchases' : type === 'return' ? 'returns' : 'sales';
     if (view === 'app-lock' || view === 'account') return 'owner';
     return view in m ? m[view] : 'settings';
@@ -1458,8 +1458,8 @@
     const split = (doc, label, dir, party) => {
       const pays = (doc.meta && doc.meta.payments) || [];
       const first = round2((doc.paidAmount || 0) - pays.reduce((s, p) => s + p.amount, 0));
-      if (first > 0.001) out.push({ date: doc.date, mode: (doc.meta && doc.meta.paymentMode) || 'Cash', dir, amount: first, text: `${label} ${doc.number}`, party });
-      pays.forEach(p => out.push({ date: p.date, mode: p.mode || 'Cash', dir, amount: p.amount, text: `${label} ${doc.number}${p.note ? ' · ' + p.note : ''}`, party }));
+      if (first > 0.001) out.push({ date: doc.date, mode: (doc.meta && doc.meta.paymentMode) || 'Cash', dir, amount: first, text: `${label} ${doc.number}`, party, br: (doc.meta && doc.meta.branchId) || 'main' });
+      pays.forEach(p => out.push({ date: p.date, mode: p.mode || 'Cash', dir, amount: p.amount, text: `${label} ${doc.number}${p.note ? ' · ' + p.note : ''}`, party, br: (doc.meta && doc.meta.branchId) || 'main' }));
     };
     invoices.forEach(inv => {
       const g = docSign(inv); if (!g) return;
@@ -1467,7 +1467,7 @@
       else split(inv, 'Refund', 'out', inv.customerName);
     });
     purchases.forEach(p => split(p, 'Paid for', 'out', p.supplierName));
-    expenses.forEach(e => out.push({ date: e.date, mode: 'Cash', dir: 'out', amount: e.amount || 0, text: 'Expense · ' + (e.title || e.category || ''), party: '' }));
+    expenses.forEach(e => out.push({ date: e.date, mode: 'Cash', dir: 'out', amount: e.amount || 0, text: 'Expense · ' + (e.title || e.category || ''), party: '', br: (settings.expBranch || {})[e.id] || 'main' }));
     out.forEach(r => { r.day = dayKey(r.date); r.t = /^\d{4}-\d{2}-\d{2}$/.test(String(r.date)) ? ts(r.date + 'T12:00:00') : ts(r.date); });
     return out.filter(r => r.amount > 0).sort((a, b) => b.t - a.t);
   }
@@ -2133,6 +2133,7 @@
           roundOff: c.roundOff, paymentMode: paidAmount > 0 ? st.mode : '' };
         const bn = (fd.get('billNo') || '').trim(); if (bn) pmeta.billNo = bn;
         const dd = fd.get('dueDate'); if (dd && paymentStatus !== 'paid') pmeta.dueDate = dd;
+try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } catch (e) {}
         const pur = { id: uid(), number: pnum, supplierId: sid, supplierName: sname, supplierPhone: sphone, items: pitems, total: c.total, paymentStatus, paidAmount, meta: pmeta, date: pDate };
         purchases.unshift(pur);
         window._docSaved = true;
@@ -2148,7 +2149,7 @@
       const nowIso = new Date().toISOString();
       const pick = fd.get('docDate');
       const dateIso = (pick && pick !== nowIso.slice(0, 10)) ? new Date(pick + 'T12:00:00').toISOString() : nowIso;
-      const invNumber = isRet ? nextDocNumber('CN') : isEst ? nextDocNumber('QT') : `${settings.invoicePrefix || 'INV'}-${invoiceCounter++}`;
+      const invNumber = isRet ? nextDocNumber('CN') : isEst ? nextDocNumber('QT') : `${(window.BillauraExt && BillauraExt.invPrefix && BillauraExt.invPrefix()) || settings.invoicePrefix || 'INV'}-${invoiceCounter++}`;
       const items = lines.map(l => ({ productId: l.productId, name: l.name, price: l.price, cost: l.cost, qty: l.qty, custom: l.custom ? true : undefined }));
       if (!isEst) items.forEach(it => {
         const p = products.find(x => x.id === it.productId);
@@ -2180,6 +2181,7 @@
       if (isRet && ref) { meta.refId = ref.id; meta.refNumber = ref.number; }
       if (isEst) { const vu = fd.get('validUntil'); if (vu) meta.validUntil = vu; }
       if (isStaff()) meta.by = staffName();
+      try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(meta); } catch (e) {}
       if (!isPur) {
         meta.rb = fd.has('rb') ? 1 : 0;
         if (meta.rb) {
@@ -5563,7 +5565,7 @@
       const dateIso = (d && d !== today) ? new Date(d + 'T12:00:00').toISOString() : (ex && dayKey(ex.date) === d ? ex.date : new Date().toISOString());
       const rec = { category, amount, title: String(fd.get('title') || '').trim(), note: String(fd.get('note') || '').trim(), mode, date: dateIso };
       if (ex) { Object.assign(ex, rec); toast('Expense updated'); }
-      else { expenses.unshift(Object.assign({ id: uid() }, rec)); toast('Expense added'); }
+      else { const ne = Object.assign({ id: uid() }, rec); expenses.unshift(ne); try { if (window.BillauraExt && BillauraExt.stampExpense) BillauraExt.stampExpense(ne); } catch (e) {} toast('Expense added'); }
       if (!DEFAULT_EXPENSE_CATS.includes(category)) {
         settings.expenseCats = settings.expenseCats || [];
         if (!settings.expenseCats.includes(category)) settings.expenseCats.push(category);
@@ -8176,10 +8178,13 @@
     can, isStaff, staffName, staffList, ROLES, pinHash, cashEntries, nextDocNumber, nextPurNumber, findOrCreateCustomer, startScanner,
     openInvoiceDetail, openShareSheet, openPurchaseDetail, sendWhatsApp, waNumber, docSign, lowLimit, returnedQty, customerBalance,
     custDocs, calcDoc, enforceLimit, snapshotData, applyBackupData, downloadText, dayKey, ts,
-    nextInvoiceNumber() { return `${settings.invoicePrefix || 'INV'}-${invoiceCounter++}`; },
+    nextInvoiceNumber() { return `${(window.BillauraExt && BillauraExt.invPrefix && BillauraExt.invPrefix()) || settings.invoicePrefix || 'INV'}-${invoiceCounter++}`; },
     setDocCtx(c) { docCtx = c; },
     afterRestore() { normalizeData(); migrateIds(); persist(); migrateData(); },
-    savePurchase(p) { purchases.unshift(p); }
+    savePurchase(p) { purchases.unshift(p); },
+    unread() { try { return unreadNotices().length; } catch (e) { return 0; } },
+    lowStockItems() { return lowStockItems(); },
+    trashInvoice(inv) { trashPush('invoice', inv); invoices = invoices.filter(x => x.id !== inv.id); }
   };
   try { if (window.BillauraExt && BillauraExt.init) BillauraExt.init(); } catch (e) { console.error(e); }
   try { if (window.BillauraLicense) BillauraLicense.init().then(() => { try { if (typeof canRenderNow === 'function' && canRenderNow()) render(); } catch (e) {} }); } catch (e) {}
