@@ -476,6 +476,23 @@
     save(STORAGE.tombs, tombs);
   }
 
+  function applyBackupData(data) {
+    if (Array.isArray(data.products)) products = data.products;
+    if (Array.isArray(data.invoices)) invoices = data.invoices;
+    if (Array.isArray(data.customers)) customers = data.customers;
+    if (Array.isArray(data.suppliers)) suppliers = data.suppliers;
+    if (Array.isArray(data.expenses)) expenses = data.expenses;
+    if (Array.isArray(data.stockMovements)) stockMovements = data.stockMovements;
+    if (Array.isArray(data.purchases)) purchases = data.purchases;
+    if (Array.isArray(data.banks)) banks = data.banks;
+    if (Array.isArray(data.bankTxns)) bankTxns = data.bankTxns;
+    if (Array.isArray(data.otherIncome)) otherIncome = data.otherIncome;
+    if (Array.isArray(data.loans)) loans = data.loans;
+    if (data.settings) settings = Object.assign({}, settings, data.settings);
+    if (data.invoiceCounter) invoiceCounter = Math.max(invoiceCounter, Number(data.invoiceCounter) || 0);
+  }
+  function snapshotData() { return { products, invoices, customers, suppliers, expenses, stockMovements, purchases, banks, bankTxns, otherIncome, loans, settings, invoiceCounter, exportedAt: new Date().toISOString() }; }
+
   function persist() {
     stampChanges();
     saveAll();
@@ -638,7 +655,10 @@
       }
     };
 
-    (map[currentView] || map.home)();
+    const _ev = window.BillauraExt && BillauraExt.views && BillauraExt.views[currentView];
+    if (_ev) { title.textContent = typeof _ev.title === 'function' ? _ev.title() : _ev.title; if (_ev.right) right.innerHTML = _ev.right(); content.innerHTML = _ev.html(); if (_ev.bind) { try { _ev.bind(); } catch (e) { console.error(e); } } }
+    else (map[currentView] || map.home)();
+    try { if (window.BillauraExt && BillauraExt.afterRender) BillauraExt.afterRender(currentView, { title, right, content }); } catch (e) { console.error(e); }
     const hdr = $('#appHeader');
     if (hdr) {
       hdr.classList.toggle('is-home', currentView === 'home');
@@ -1148,11 +1168,13 @@
       purchases: 'purchases', suppliers: 'purchases', expenses: 'expenses', 'sale-report': 'reports', 'profit-loss': 'reports', 'party-pl': 'reports', 'item-pl': 'reports', 'trial-balance': 'reports', 'balance-sheet': 'reports', 'bill-pnl': 'reports', 'daybook-detail': 'reports',
       banks: 'banks', 'bank-ledger': 'banks', 'cash-in-hand': 'banks', loans: 'banks', 'other-income': 'banks', cheques: 'banks', 'payments-in': 'receive_payment', 'payments-out': 'banks',
       'barcode-gen': 'items_edit', 'stock-adjust': 'items_edit', reminders: 'parties', 'payment-reminders': 'receive_payment', 'service-reminders': 'parties', pos: 'sales', recycle: 'delete' };
+    { const ev = window.BillauraExt && BillauraExt.views && BillauraExt.views[view]; if (ev) return ev.perm || null; }
     if (view === 'create-invoice') return type === 'purchase' ? 'purchases' : type === 'return' ? 'returns' : 'sales';
     if (view === 'app-lock' || view === 'account') return 'owner';
     return view in m ? m[view] : 'settings';
   }
   function actionPerm(action) {
+    if (window.BillauraExt && BillauraExt.perms && action in BillauraExt.perms) return BillauraExt.perms[action];
     if (/^(delete-|recycle|restore-|purge-)/.test(action)) return 'delete';
     if (/^(add-product|edit-product|stock-|bulk-|import-items|adjust-stock|gen-barcode|lb-|pm-)/.test(action)) return 'items_edit';
     if (/^(add-expense|edit-expense|save-expense)/.test(action)) return 'expenses';
@@ -1359,6 +1381,7 @@
     if (can('items_view')) rows.push(item('Low stock', 'data-view="low-stock"'));
     if (can('items_edit')) rows.push(item('Barcode labels', 'data-view="barcode-gen"'));
     if (can('export')) rows.push(item('Backup to phone', 'data-action="export-data"'));
+    try { if (window.BillauraExt && BillauraExt.staffRows) BillauraExt.staffRows().forEach(r => rows.push(item(r[0], r[1]))); } catch (e) {}
     rows.push(item('Sync now', 'data-action="cloud-sync"'), item('Lock app / switch user', 'data-action="lock-now"'));
     return `<div class="fade-in">
       <div class="card mb-16"><div class="text-sm text-secondary">Signed in as</div><div class="font-semibold" style="font-size:1.0625rem">${escapeHtml(sf ? sf.name : 'Staff')}</div><div class="text-sm text-secondary">${escapeHtml((ROLES[(sf && sf.role) || 'cashier'] || ROLES.cashier).name)}</div></div>
@@ -2102,6 +2125,7 @@
           const pr = products.find(x => x.id === it.productId);
           if (!pr) return;
           pr.stock += it.qty; if (it.price > 0) pr.cost = it.price;
+          try { window.BillauraExt && BillauraExt.onStock && BillauraExt.onStock(pr, it.qty, 'purchase'); } catch (e) {}
           stockMovements.unshift({ id: uid(), productId: it.productId, productName: it.name, type: 'in', qty: it.qty, date: nowP, note: `Purchase ${pnum}` });
         });
         const pmeta = { subtotal: c.sub, discount: c.discount, discType: o.discType, discValue: Number(o.discValue) || 0,
@@ -2130,6 +2154,7 @@
         const p = products.find(x => x.id === it.productId);
         if (!p) return;
         p.stock += (isRet ? it.qty : -it.qty);
+        try { window.BillauraExt && BillauraExt.onStock && BillauraExt.onStock(p, isRet ? it.qty : -it.qty, isRet ? 'return' : 'sale'); } catch (e) {}
         stockMovements.unshift({ id: uid(), productId: it.productId, productName: it.name, type: isRet ? 'in' : 'out', qty: it.qty, date: nowIso, note: `${isRet ? 'Return' : 'Invoice'} ${invNumber}` });
       });
 
@@ -3444,6 +3469,7 @@
     let h = '';
     const today = new Date().toISOString().slice(0, 10);
     const low = lowStockItems();
+    try { if (window.BillauraExt && BillauraExt.homeAlerts) h += BillauraExt.homeAlerts(); } catch (e) {}
     if (low.length && settings.lowDismissed !== today) {
       const out = low.filter(p => (Number(p.stock) || 0) <= 0).length;
       h += `<div class="home-alert warn"><div class="ha-t"><b>${low.length} item${low.length === 1 ? '' : 's'} low on stock</b><span>${out ? out + ' out of stock · ' : ''}${escapeHtml(low.slice(0, 2).map(p => p.name).join(', '))}${low.length > 2 ? '…' : ''}</span></div><button data-view="low-stock">View</button><button class="x" data-action="dismiss-low" aria-label="Dismiss">✕</button></div>`;
@@ -5807,6 +5833,7 @@
         ${tg('purchase', 'cart', 'Purchase')}${msub('purchase', [['Purchase Bills', 'data-view="purchases"'], ['Payment - Out', 'data-view="payments-out"'], ['Suppliers', 'data-view="suppliers"']])}
         ${mrow('wallet', 'Expenses', 'data-view="expenses"')}${mrow('users', 'Parties (Customers)', 'data-view="customers"')}${mrow('store', 'My Online Store', 'data-view="online-store"')}${mrow('report', 'Reports', 'data-view="reports"')}
         ${mrow('box', 'Stock Adjustment', 'data-view="stock-adjust"')}${mrow('chart', 'Other Income', 'data-view="other-income"')}</div>
+      ${window.BillauraExt && BillauraExt.menuCard ? BillauraExt.menuCard() : ''}
       <div class="menu-card"><div class="menu-h">Cash &amp; Bank</div>${mrow('bank', 'Bank Accounts', 'data-view="banks"')}${mrow('cash', 'Cash In-Hand', 'data-view="cash-in-hand"')}${mrow('cheque', 'Cheques', 'data-view="cheques"')}${mrow('loan', 'Loan Accounts', 'data-view="loans"')}</div>
       <div class="menu-card"><div class="menu-h">Tools</div>
         ${mrow('sync', 'Cloud &amp; Share', 'data-view="sync"')}${mrow('company', 'My Businesses', 'data-view="companies"')}${location.protocol === 'billaura:' ? '' : mrow('desktop', 'Get Desktop Version', 'data-action="desktop-info"')}
@@ -6037,12 +6064,14 @@
     const action = t.dataset.action;
     const view = t.dataset.view || (t.classList.contains('nav-item') ? t.dataset.view : null);
     const id = t.dataset.id;
-    if (isStaff() && action) { const need = actionPerm(action); if (need && !can(need)) { toast('Your role does not allow that'); return; } }
+    if (isStaff() && action) { const need = actionPerm(action); if (need && !can(need)) { if (!(window.BillauraExt && BillauraExt.approve && await BillauraExt.approve(need, action))) { toast('Your role does not allow that'); return; } } }
 
     if (view) {
       setView(view);
       return;
     }
+
+    if (action && window.BillauraExt && BillauraExt.actions && BillauraExt.actions[action]) { try { await BillauraExt.actions[action](t, e); } catch (err) { console.error(err); toast('Something went wrong'); } return; }
 
     switch (action) {
       case 'pick-theme': {
@@ -6503,7 +6532,8 @@
         break;
       }
       case 'export-backup': {
-        const data = { products, invoices, customers, suppliers, expenses, stockMovements, purchases, banks, bankTxns, otherIncome, loans, settings, invoiceCounter, exportedAt: new Date().toISOString() };
+        settings.lastFileBackup = new Date().toISOString(); persist();
+        const data = snapshotData();
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
@@ -7023,6 +7053,7 @@
         else if (dir === 'out') after = before - qty;
         else after = qty;
         pr.stock = after;
+        try { window.BillauraExt && BillauraExt.onStock && BillauraExt.onStock(pr, after - before, 'adjust'); } catch (e) {}
         stockMovements.unshift({
           id: uid(), productId: pr.id, productName: pr.name,
           type: after >= before ? 'in' : 'out',
@@ -7143,19 +7174,7 @@
               const data = JSON.parse(reader.result);
               if (!data || typeof data !== 'object') throw new Error('Invalid');
               if (await askConfirm('Replace current data with this backup?')) {
-                if (Array.isArray(data.products)) products = data.products;
-                if (Array.isArray(data.invoices)) invoices = data.invoices;
-                if (Array.isArray(data.customers)) customers = data.customers;
-                if (Array.isArray(data.suppliers)) suppliers = data.suppliers;
-                if (Array.isArray(data.expenses)) expenses = data.expenses;
-                if (Array.isArray(data.stockMovements)) stockMovements = data.stockMovements;
-                if (Array.isArray(data.purchases)) purchases = data.purchases;
-                if (Array.isArray(data.banks)) banks = data.banks;
-                if (Array.isArray(data.bankTxns)) bankTxns = data.bankTxns;
-                if (Array.isArray(data.otherIncome)) otherIncome = data.otherIncome;
-                if (Array.isArray(data.loans)) loans = data.loans;
-                if (data.settings) settings = Object.assign({}, settings, data.settings);
-                if (data.invoiceCounter) invoiceCounter = Math.max(invoiceCounter, Number(data.invoiceCounter) || 0);
+                applyBackupData(data);
                 normalizeData();
                 migrateIds();
                 persist();
@@ -8148,6 +8167,21 @@
   }
 
   // Init
+  // ---------- Bridge for js/counter.js (counter pack: POS v2, shifts, returns, PO, counts, expiry, backups) ----------
+  window.BillauraCore = {
+    get products() { return products; }, get customers() { return customers; }, get suppliers() { return suppliers; },
+    get invoices() { return invoices; }, get purchases() { return purchases; }, get expenses() { return expenses; },
+    get stockMovements() { return stockMovements; }, get settings() { return settings; }, get view() { return currentView; },
+    uid, round2, money, escapeHtml, formatDate, initials, ico, toast, askConfirm, closeModal, modalShell, persist, setView, render,
+    can, isStaff, staffName, staffList, ROLES, pinHash, cashEntries, nextDocNumber, nextPurNumber, findOrCreateCustomer, startScanner,
+    openInvoiceDetail, openShareSheet, openPurchaseDetail, sendWhatsApp, waNumber, docSign, lowLimit, returnedQty, customerBalance,
+    custDocs, calcDoc, enforceLimit, snapshotData, applyBackupData, downloadText, dayKey, ts,
+    nextInvoiceNumber() { return `${settings.invoicePrefix || 'INV'}-${invoiceCounter++}`; },
+    setDocCtx(c) { docCtx = c; },
+    afterRestore() { normalizeData(); migrateIds(); persist(); migrateData(); },
+    savePurchase(p) { purchases.unshift(p); }
+  };
+  try { if (window.BillauraExt && BillauraExt.init) BillauraExt.init(); } catch (e) { console.error(e); }
   try { if (window.BillauraLicense) BillauraLicense.init().then(() => { try { if (typeof canRenderNow === 'function' && canRenderNow()) render(); } catch (e) {} }); } catch (e) {}
   try {
     migrateData();

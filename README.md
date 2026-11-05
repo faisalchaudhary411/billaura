@@ -90,3 +90,6 @@ Both are built from the same web files, so each new tag (`git tag v1.0.2 && git 
 - First-time visitors to the site are sent to the landing page once; "Continue in browser" opens the app (`./?app=1`).
 - Download buttons use permanent links: `https://github.com/faisalchaudhary411/billaura/releases/latest/download/Billaura.apk` and `.../Billaura-Setup.exe`.
 - Licence and announcements setup: `supabase/LICENSE-SETUP.md`.
+
+## Counter Pack (v28)
+`js/counter.js` adds: Quick Sale POS (hold/resume, discount, split pay, change calculator), Shift & cash drawer with Z-report, manager PIN approval, Return/Exchange, Daily closing report, Buy Today list, Purchase orders with goods-received (batch + expiry), Stock count with losses report, Expiry & batches (oldest sold first), and Backup & Restore (daily restore points, share file). Menu → "Counter Pack". No SQL needed; data lives in the shop settings that already sync.
