@@ -4704,7 +4704,7 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
           <button class="btn btn-secondary btn-block mt-8" data-action="rc-save-image">Save receipt as image</button>
 
           <div class="section-header" style="margin-top:20px"><h2 class="section-title">Bluetooth printer (direct)</h2></div>
-          ${btOk ? '' : `<p class="text-sm" style="color:var(--danger)">This browser has no Bluetooth printing. Open Billaura in <strong>Chrome on Android</strong>.</p>`}
+          ${btOk ? '' : `<p class="text-sm" style="color:var(--danger)">This browser has no Bluetooth printing. Use the Billaura Android app or open Billaura in <strong>Chrome on Android</strong>.</p>`}
           <div class="form-row">
             <div class="form-group"><label class="form-label">Printer</label>
               <select class="form-input" id="rcPrinter">
