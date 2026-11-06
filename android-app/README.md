@@ -19,3 +19,6 @@ Keep `billaura.jks` and its passwords safe and private (never commit it). Then i
 - `ANDROID_KEY_PASSWORD` = key password
 
 From then on every build is a signed `Billaura.apk`. Push a tag (`git tag v1.0.1 && git push --tags`) to publish it on Releases.
+
+## Why the versions are pinned
+`package.json` uses exact Capacitor versions. With `^` ranges, a new plugin release (e.g. @capacitor/filesystem 6.0.4, Nov 2025, or @capacitor/android 6.2.2/6.2.3) is picked up automatically and can break the Gradle build overnight. Update them on purpose, not by accident.
