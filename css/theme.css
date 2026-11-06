@@ -330,8 +330,8 @@ body.plan-pro .premium-badge{display:none}
 .un-row{display:flex;align-items:center;gap:8px;color:#6B7288}.un-row input{width:90px;border:1px solid #9aa3b5;border-radius:4px;padding:6px;font:inherit;text-align:center;color:#111}
 /* ===== Business profile ===== */
 .bp-page{padding-bottom:70px}.bp-hero{background:#E3F2FD;padding:12px 0 14px;position:relative}
-.bp-hero .bc-strip{padding-bottom:30px}.bp-share{position:absolute;left:50%;transform:translateX(-50%);top:150px;background:#EF1A3C;color:#fff;border:0;border-radius:30px;padding:14px 26px;font:700 1.1rem inherit;font-family:inherit;display:flex;gap:8px;align-items:center;box-shadow:0 4px 14px rgba(239,26,60,.4);cursor:pointer}
-.bp-tip{margin:34px 16px 0;color:#4a5068;font-size:.9rem}
+.bp-hero .bc-strip{padding-bottom:44px}.bp-share{position:absolute;left:50%;transform:translateX(-50%);top:166px;background:#EF1A3C;color:#fff;border:0;border-radius:30px;padding:14px 26px;font:700 1.1rem inherit;font-family:inherit;display:flex;gap:8px;align-items:center;box-shadow:0 4px 14px rgba(239,26,60,.4);cursor:pointer}
+.bp-tip{margin:48px 16px 0;color:#4a5068;font-size:.9rem}
 .bp-body{background:#fff;padding:16px}.bp-prog{height:6px;background:#dbe3ef}
 .bp-dash{border-top:2px dashed #dfe3ee;margin:16px -16px 0}
 .bp-tabs{display:flex;margin:0 -16px 18px;border-bottom:1px solid #e1e5ee}.bp-tab{flex:1;border:0;background:none;padding:14px;font:600 1rem inherit;font-family:inherit;color:#9aa0b5;border-bottom:3px solid transparent}.bp-tab.on{color:#E0102F;border-color:#E0102F}
