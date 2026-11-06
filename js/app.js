@@ -7349,6 +7349,9 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
   function mergeSettings(remoteSettings) {
     const r = (remoteSettings && typeof remoteSettings === 'object') ? remoteSettings : {};
     const rt = ts(r.updatedAt), lt = ts(settings.updatedAt);
+    // Fresh install / cleared data: the cloud profile always wins over empty defaults
+    const localEmpty = !PROFILE_FIELDS.some(f => profileFilled(f[0]));
+    if (localEmpty && Object.keys(r).length) { settings = Object.assign({}, settings, r); return null; }
     if (rt > lt) { settings = Object.assign({}, settings, r); return null; }
     if (lt > rt) return settings;
     return null;
@@ -7356,7 +7359,9 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
 
   function canRenderNow() {
     const modal = $('#modalRoot');
-    return currentView !== 'create-invoice' && !(modal && modal.innerHTML.trim());
+    const ae = document.activeElement;
+    const typing = ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName) && ae.closest && ae.closest('#appContent');
+    return currentView !== 'create-invoice' && currentView !== 'business-profile' && !typing && !(modal && modal.innerHTML.trim());
   }
 
   async function doCloudSync(opts = {}) {
