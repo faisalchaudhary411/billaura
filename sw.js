@@ -1,5 +1,5 @@
 /* Hisably service worker – offline app shell + cached libraries */
-const CACHE = 'billaura-v57';
+const CACHE = 'billaura-v58';
 
 const LOCAL_ASSETS = [
   './',
@@ -95,8 +95,13 @@ self.addEventListener('fetch', (e) => {
         caches.open(CACHE).then((c) => c.put(req, copy));
       }
       return res;
-    }).catch(() => caches.match(req, { ignoreSearch: true }).then((cached) =>
-      cached || (req.mode === 'navigate' ? caches.match('./index.html') : undefined)))
+    }).catch(() => caches.match(req, { ignoreSearch: true }).then((cached) => {
+      if (cached) return cached;
+      if (req.mode !== 'navigate') return undefined;
+      // website pages have clean URLs (/landing, /terms); offline they are the cached .html files
+      if (/\/(landing|terms)\/?$/.test(url.pathname)) return caches.match(url.pathname.replace(/\/$/, '') + '.html').then((h) => h || caches.match('./index.html'));
+      return caches.match('./index.html');
+    }))
   );
 });
 

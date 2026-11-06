@@ -1029,6 +1029,14 @@
     return PUBLIC_SITE;
   }
   function desktopSite() { return siteBase(); }
+  // true only in a normal browser tab on the real website (not the installed app, APK, desktop shell or local testing)
+  function onPublicWebsite() {
+    try {
+      if (window.Capacitor || navigator.standalone || location.protocol === 'file:' || /^billaura:/.test(location.protocol)) return false;
+      if (window.matchMedia && matchMedia('(display-mode: standalone)').matches) return false;
+      return /^https?:$/.test(location.protocol) && !/^(localhost|127\.|192\.168\.|\[::1\])/.test(location.hostname);
+    } catch (e) { return false; }
+  }
   function desktopMsg() {
     return `Billaura Desktop\n\n1) On your PC open this link in Chrome or Edge, then choose "Install app":\n${desktopSite()}\n\n2) Or download the Windows app:\n${DESKTOP_REL}\n\nSign in with the same account to see your shop data on both.`;
   }
@@ -7470,6 +7478,7 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
       }
     } catch (e) { console.error(e); }
     HisablyFreemium.clearSession();
+    if (onPublicWebsite()) { location.replace(siteBase() + 'landing'); return; }   // browser users go back to the website
     location.reload();
   }
 
@@ -7578,7 +7587,8 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
         <button type="submit" class="btn btn-primary btn-block">${isLogin ? 'Sign in' : 'Create free account'}</button>
       </form>
       <p class="auth-hint">Sign in to sync your shop across devices. Your data on this phone is kept.</p>
-      <p class="auth-hint" style="font-size:.72rem;margin-top:14px">© ${new Date().getFullYear()} Billaura. All rights reserved. Unauthorised copying or resale of this software is prohibited. <a href="terms.html" target="_blank" rel="noopener">Terms &amp; Licence</a></p>
+      ${onPublicWebsite() ? '<p class="auth-hint" style="margin-top:8px"><a href="landing">← Back to billaura website</a></p>' : ''}
+      <p class="auth-hint" style="font-size:.72rem;margin-top:14px">© ${new Date().getFullYear()} Billaura. All rights reserved. Unauthorised copying or resale of this software is prohibited. <a href="terms" target="_blank" rel="noopener">Terms &amp; Licence</a></p>
     </div>`;
   }
 

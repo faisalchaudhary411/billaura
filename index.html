@@ -17,7 +17,7 @@ if(navigator.standalone||window.Capacitor||l.protocol==='billaura:'||l.protocol=
 if(window.matchMedia&&matchMedia('(display-mode: standalone)').matches)return;
 if(localStorage.getItem('billaura_seen_v1')||localStorage.getItem('sb_invoices_v2')||localStorage.getItem('sb_products_v2'))return;
 for(var i=0;i<localStorage.length;i++){if(/auth-token|session/i.test(localStorage.key(i)))return}
-l.replace('landing.html')}catch(e){}})();</script>
+l.replace('landing')}catch(e){}})();</script>
   <script>if(navigator.standalone||window.Capacitor){document.documentElement.className+=" ios-app native-shell"}</script>
   <script>if(window.Capacitor)document.documentElement.className+=" cap-app"</script>
   <style>html.cap-app,html.cap-app body{background:#E8173C}html.cap-app #bootScreen{background:#E8173C}html.cap-app #bootScreen *{display:none!important}</style>
