@@ -29,7 +29,7 @@
   function getPrefs() {
     let p = {};
     try { p = JSON.parse(localStorage.getItem(PREF_KEY) || '{}') || {}; } catch (e) {}
-    return Object.assign({ paper: '80', printer: 'mxw01', density: 'medium', bitOrder: 'lsb', footer: '' }, p);
+    return Object.assign({ paper: '80', printer: 'mxw01', density: 'medium', bitOrder: 'lsb', flip: true, footer: '' }, p);
   }
   function setPrefs(patch) {
     const p = Object.assign(getPrefs(), patch || {});
@@ -528,25 +528,34 @@ thead{display:table-header-group}tr{break-inside:avoid}
       const tg = t.getContext('2d'); tg.fillStyle = '#fff'; tg.fillRect(0, 0, t.width, t.height);
       tg.drawImage(cv, 0, 0, t.width, t.height); cv = t;
     }
+    // Same recipe as the proven reference app: rotate 180 (default), 90-row minimum, status query first
+    if (opts.flip !== false) {
+      const f = document.createElement('canvas'); f.width = cv.width; f.height = cv.height;
+      const fg = f.getContext('2d'); fg.fillStyle = '#fff'; fg.fillRect(0, 0, f.width, f.height);
+      fg.translate(f.width, f.height); fg.rotate(Math.PI); fg.drawImage(cv, 0, 0); cv = f;
+    }
     const bmp = toBitmap(cv, opts.threshold);
     const lsb = (opts.bitOrder || 'lsb') === 'lsb';
-    const rows = bmp.height;
-    const level = { light: 50, medium: 75, dark: 93 }[opts.density] || 75;
+    const bpr = bmp.bytesPerRow;
+    const rows = Math.max(bmp.height, 90);
+    const raw = new Uint8Array(rows * bpr); raw.set(bmp.data);
+    const level = { light: 60, medium: 93, dark: 120 }[opts.density] || 93;
 
     say('Preparing…');
-    await ctl.writeValueWithoutResponse(catPacket(0xA2, [level]));
-    await sleep(60);
-    await ctl.writeValueWithoutResponse(catPacket(0xA9, [rows & 255, (rows >> 8) & 255, 0x30, 0x00]));
-    await waitFor(0xA9, 2500);
+    await ctl.writeValueWithoutResponse(catPacket(0xA2, [level])); await sleep(40);
+    await ctl.writeValueWithoutResponse(catPacket(0xA1, [0x00])); await sleep(40);
+    await waitFor(0xA1, 2500);
+    await ctl.writeValueWithoutResponse(catPacket(0xA9, [rows & 255, (rows >> 8) & 255, 0x30, 0x00])); await sleep(40);
+    await waitFor(0xA9, 4000);
 
     say('Printing…');
-    const bytes = lsb ? bmp.data.map(reverseBits) : bmp.data;
-    await writeChunks(data, bytes, 96, 8);
-    await sleep(120);
-    await ctl.writeValueWithoutResponse(catPacket(0xAD, [0x00]));
-    await waitFor(0xAA, 20000);
+    const bytes = lsb ? raw.map(reverseBits) : raw;
+    await writeChunks(data, bytes, 240, 4);
+    await sleep(100);
+    await ctl.writeValueWithoutResponse(catPacket(0xAD, [0x00])); await sleep(40);
+    await waitFor(0xAA, 40000);
     try { if (notify) await notify.stopNotifications(); } catch (e) {}
-    say('Done');
+    say('Sent ' + rows + ' rows · printer replied: ' + (seen.length ? seen.map(x => x.toString(16).toUpperCase()).join(',') : 'nothing'));
   }
 
   // Generic ESC/POS BLE printers (58/80/88 mm): GS v 0 raster
@@ -554,13 +563,13 @@ thead{display:table-header-group}tr{break-inside:avoid}
     const say = onStatus || (() => {});
     say('Connecting…');
     const server = await connectGatt('escpos');
-    let ch = null;
+    let ch = null, usedSvc = '';
     for (const uuid of ESC_SERVICES) {
       try {
         const svc = await server.getPrimaryService(uuid);
         const chars = await svc.getCharacteristics();
         ch = chars.find(c => c.properties.writeWithoutResponse) || chars.find(c => c.properties.write);
-        if (ch) break;
+        if (ch) { usedSvc = uuid.slice(4, 8); break; }
       } catch (e) { /* try next */ }
     }
     if (!ch) throw new Error('No writable printer service found. Try the MXW01 option or browser print.');
@@ -575,7 +584,7 @@ thead{display:table-header-group}tr{break-inside:avoid}
       await writeChunks(ch, bmp.data.slice(y * bmp.bytesPerRow, (y + h) * bmp.bytesPerRow), 100, 14);
     }
     await writeChunks(ch, Uint8Array.from([0x0A, 0x0A, 0x0A, 0x0A]), 20, 10);
-    say('Done');
+    say('Sent ' + bmp.height + ' rows via service ' + usedSvc);
   }
 
   async function bluetoothPrint(canvas, opts, onStatus) {

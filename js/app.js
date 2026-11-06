@@ -4720,7 +4720,8 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
             <select class="form-input" id="rcBit">
               <option value="lsb" ${pr.bitOrder === 'lsb' ? 'selected' : ''}>Standard (recommended)</option>
               <option value="msb" ${pr.bitOrder === 'msb' ? 'selected' : ''}>Alternate</option>
-            </select></div>
+            </select>
+            <label class="text-sm" style="display:flex;gap:8px;align-items:center;margin-top:10px"><input type="checkbox" id="rcFlip" ${pr.flip === false ? '' : 'checked'}> Rotate 180° (untick if the print comes out upside down)</label></div>
           <div class="flex gap-8">
             <button class="btn btn-primary" style="flex:1" data-action="rc-bt-print" ${btOk ? '' : 'disabled'}>Print via Bluetooth</button>
             <button class="btn btn-secondary" style="flex:1" data-action="rc-bt-test" ${btOk ? '' : 'disabled'}>Test print</button>
@@ -4731,6 +4732,7 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
       </div>`;
     const R2 = HisablyReceipt;
     const bind = (id, key) => { const el = document.getElementById(id); if (el) el.addEventListener('change', () => { R2.setPrefs({ [key]: el.value }); if (id === 'rcPrinter') { const w = document.getElementById('rcBitWrap'); if (w) w.style.display = el.value === 'mxw01' ? '' : 'none'; R2.forgetDevice(); } }); };
+    { const fl = document.getElementById('rcFlip'); if (fl) fl.addEventListener('change', () => HisablyReceipt.setPrefs({ flip: fl.checked })); }
     bind('rcPrinter', 'printer'); bind('rcDensity', 'density'); bind('rcBit', 'bitOrder');
     const f = document.getElementById('rcFooter');
     if (f) f.addEventListener('input', () => R2.setPrefs({ footer: f.value.trim() }));

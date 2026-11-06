@@ -21,12 +21,22 @@
   function init() { return inited || (inited = BLE.initialize({}).catch(function (e) { inited = null; throw e; })); }
   function nf(msg) { var e = new Error(msg); e.name = 'NotFoundError'; return e; }
 
-  function Characteristic(devId, svcUuid, c) {
+  function Characteristic(dev, svcUuid, c) {
+    var devId = dev.id;
     this.uuid = low(c.uuid); this.properties = c.properties || {};
     var me = this, key = 'notification|' + devId + '|' + low(svcUuid) + '|' + this.uuid, subs = [], handle = null;
     var base = { deviceId: devId, service: low(svcUuid), characteristic: this.uuid };
-    this.writeValue = function (v) { return BLE.write(Object.assign({ value: toHex(v), timeout: 10000 }, base)); };
-    this.writeValueWithoutResponse = function (v) { return BLE.writeWithoutResponse(Object.assign({ value: toHex(v), timeout: 10000 }, base)); };
+    var props = this.properties;
+    function send(v, noResp) {   // split to the negotiated MTU so a big chunk is never silently truncated
+      var u = v instanceof Uint8Array ? v : new Uint8Array(v.buffer ? v.buffer.slice(v.byteOffset || 0, (v.byteOffset || 0) + v.byteLength) : v);
+      var max = Math.max(20, (dev.mtu || 23) - 3), p = Promise.resolve();
+      for (var i = 0; i < u.length; i += max) (function (part) {
+        p = p.then(function () { return (noResp ? BLE.writeWithoutResponse : BLE.write)(Object.assign({ value: toHex(part), timeout: 10000 }, base)); });
+      })(u.slice(i, i + max));
+      return p;
+    }
+    this.writeValue = function (v) { return send(v, false); };
+    this.writeValueWithoutResponse = function (v) { return send(v, !!props.writeWithoutResponse || !props.write); };
     this.addEventListener = function (t, fn) { if (t === 'characteristicvaluechanged') subs.push(fn); };
     this.removeEventListener = function (t, fn) { subs = subs.filter(function (x) { return x !== fn; }); };
     this.startNotifications = function () {
@@ -40,9 +50,9 @@
     };
   }
 
-  function Service(devId, s) {
+  function Service(dev, s) {
     this.uuid = low(s.uuid);
-    var chars = (s.characteristics || []).map(function (c) { return new Characteristic(devId, s.uuid, c); }), me = this;
+    var chars = (s.characteristics || []).map(function (c) { return new Characteristic(dev, s.uuid, c); }), me = this;
     this.getCharacteristics = function () { return Promise.resolve(chars); };
     this.getCharacteristic = function (u) {
       var c = chars.filter(function (x) { return x.uuid === low(u); })[0];
@@ -61,14 +71,15 @@
             me.gatt.connected = false; listeners.slice().forEach(function (f) { try { f({ target: me }); } catch (e) {} });
           }));
         }).then(function (h) { handle = h; return BLE.connect({ deviceId: me.id, timeout: 15000 }); })
-          .then(function () { me.gatt.connected = true; return me.gatt; });
+          .then(function () { me.gatt.connected = true; return BLE.getMtu({ deviceId: me.id }).then(function (r) { me.mtu = Number(r && r.value) || 23; }, function () { me.mtu = 23; }); })
+          .then(function () { return me.gatt; });
       },
       disconnect: function () { me.gatt.connected = false; try { return BLE.disconnect({ deviceId: me.id }); } catch (e) {} },
       getPrimaryService: function (u) {
         return BLE.getServices({ deviceId: me.id }).then(function (r) {
           var s = (r.services || []).filter(function (x) { return low(x.uuid) === low(u); })[0];
           if (!s) throw nf('Service not found');
-          return new Service(me.id, s);
+          return new Service(me, s);
         });
       }
     };
