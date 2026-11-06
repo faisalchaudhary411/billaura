@@ -115,6 +115,10 @@
   .sheet-f { padding:12px 18px calc(16px + env(safe-area-inset-bottom)); border-top:1px solid var(--border); }
   .tot { display:flex; justify-content:space-between; font-weight:800; font-size:1.05rem; margin-bottom:10px; }
   .order { width:100%; border:0; background:#25D366; color:#fff; border-radius:14px; padding:14px; font-weight:800; font-size:1rem; cursor:pointer; }
+  .order.main { background:var(--brand); margin-bottom:8px; } .order.alt { background:#fff; color:#128C4A; border:1.5px solid #25D366; margin-bottom:0; font-size:.9rem; padding:11px; }
+  .seg { display:flex; gap:8px; margin-top:10px; } .seg label { flex:1; border:1.5px solid var(--border); border-radius:12px; padding:10px; text-align:center; font-weight:700; font-size:.88rem; cursor:pointer; } .seg input { display:none; } .seg input:checked + span { color:var(--brand); } .seg label:has(input:checked) { border-color:var(--brand); background:color-mix(in srgb,var(--brand) 8%,#fff); }
+  .notice { background:#FFF4D6; border:1px solid #F2A93B; border-radius:12px; padding:10px 13px; font-size:.84rem; margin:10px 0 0; } .closed { background:#FDE8E8; border-color:#E8A0A0; }
+  .sub { display:flex; justify-content:space-between; font-size:.85rem; color:var(--muted); margin-bottom:4px; } .done { text-align:center; padding:26px 8px 10px; } .done .ok { width:64px; height:64px; border-radius:50%; background:#E5F7EC; color:#12924F; font-size:2rem; display:grid; place-items:center; margin:0 auto 12px; } .done h3 { font-size:1.2rem; margin-bottom:6px; } .done p { color:var(--muted); font-size:.9rem; margin-bottom:14px; }
   .clear { width:100%; border:0; background:none; color:var(--muted); font-size:.82rem; padding:10px 0 0; cursor:pointer; }
   .toast { position:fixed; left:50%; bottom:calc(92px + env(safe-area-inset-bottom)); transform:translateX(-50%) translateY(20px); background:#171B2B; color:#fff; padding:9px 16px; border-radius:999px; font-size:.82rem; opacity:0; pointer-events:none; transition:all .25s; z-index:60; white-space:nowrap; }
   .toast.on { opacity:1; transform:translateX(-50%); }
@@ -155,11 +159,14 @@
 <div class="sheet-back" id="sheetBack"><div class="sheet" role="dialog" aria-label="Your cart">
   <div class="sheet-h"><b>Your order</b><button class="sheet-x" id="sheetX" aria-label="Close">✕</button></div>
   <div class="sheet-b"><div id="cartList"></div>
+    <div class="seg" id="modeRow" hidden><label><input type="radio" name="mode" value="delivery" checked><span>🚚 Delivery</span></label><label><input type="radio" name="mode" value="pickup"><span>🏬 Pickup</span></label></div>
     <input class="fld" id="cName" placeholder="Your name" autocomplete="name" />
+    <input class="fld" id="cPhone" type="tel" inputmode="tel" placeholder="Your phone number" autocomplete="tel" hidden />
     <input class="fld" id="cAddr" placeholder="Delivery address (optional)" autocomplete="street-address" />
     <input class="fld" id="cNote" placeholder="Note for the shop (optional)" />
+    <div class="notice" id="cNotice" hidden></div>
   </div>
-  <div class="sheet-f"><div class="tot"><span>Total</span><span id="cTotal"></span></div><button class="order" id="orderBtn">Send order on WhatsApp</button><button class="clear" id="clearBtn">Clear cart</button></div>
+  <div class="sheet-f"><div class="sub" id="cSub" hidden><span>Items</span><span id="cSubV"></span></div><div class="sub" id="cFee" hidden><span>Delivery</span><span id="cFeeV"></span></div><div class="tot"><span>Total</span><span id="cTotal"></span></div><button class="order" id="orderBtn">Send order on WhatsApp</button><button class="order alt" id="waBtn" hidden>Send on WhatsApp instead</button><button class="clear" id="clearBtn">Clear cart</button></div>
 </div></div>
 <div class="toast" id="toast"></div>
 <script src="js/supabase-config.js"></script>
@@ -186,9 +193,9 @@
         if (!rows.length) return { notFound: true };
         lsSet(ck, JSON.stringify(rows[0].data));
         try { history.replaceState(null, '', location.pathname.replace(/store\.html$/, 'store/' + encodeURIComponent(slug))); } catch (e) {}
-        return expand(rows[0].data);
+        return expand(rows[0].data, slug);
       } catch (e) {
-        const cached = lsGet(ck); if (cached) { try { return expand(JSON.parse(cached)); } catch (x) {} }
+        const cached = lsGet(ck); if (cached) { try { return expand(JSON.parse(cached), slug); } catch (x) {} }
         return null;
       }
     }
@@ -205,10 +212,10 @@
     try { const raw = lsGet('billaura_public_store'); if (raw) return JSON.parse(raw); } catch (e) {}
     return null;
   }
-  function expand(c) {
-    return { shop: c.n, phone: c.p, email: c.e, address: c.a, currency: c.c, tagline: c.t, wa: c.w, color: c.k,
+  function expand(c, slug) {
+    return { slug: slug || '', opts: c.o || null, shop: c.n, phone: c.p, email: c.e, address: c.a, currency: c.c, tagline: c.t, wa: c.w, color: c.k,
       links: (c.l || []).map(x => ({ label: x[0], url: x[1] })),
-      items: (c.i || []).map(x => ({ name: x[0], price: x[1], unit: x[2], category: x[3], stock: x[4], photo: x[5] ? (/^https?:/i.test(x[5]) ? x[5] : (c.b || '') + x[5]) : '' })) };
+      items: (c.i || []).map(x => ({ name: x[0], price: x[1], unit: x[2], category: x[3], stock: x[4], photo: x[5] ? (/^https?:/i.test(x[5]) ? x[5] : (c.b || '') + x[5]) : '', id: x[6] || '' })) };
   }
   const waNum = v => { v = String(v || '').replace(/\D/g, ''); return v.replace(/^0/, '92'); };
   const ICON = {
@@ -244,7 +251,7 @@
     const cur = data.currency || 'Rs';
     const wa = waNum(data.wa || data.phone);
     const cats = Array.from(new Set(data.items.map(i => i.category).filter(Boolean)));
-    $('badges').innerHTML = `<span class="badge">${data.items.length} products</span>` + (cats.length > 1 ? `<span class="badge">${cats.length} categories</span>` : '') + (wa ? '<span class="badge">Order on WhatsApp</span>' : '');
+    $('badges').innerHTML = `<span class="badge">${data.items.length} products</span>` + (cats.length > 1 ? `<span class="badge">${cats.length} categories</span>` : '') + ((data.slug && data.opts) ? '<span class="badge">Order online</span>' : (wa ? '<span class="badge">Order on WhatsApp</span>' : ''));
 
     const acts = $('acts'); acts.innerHTML = '';
     if (data.phone) acts.insertAdjacentHTML('beforeend', `<a class="act" href="tel:${esc(data.phone)}">${ICON.call} Call</a>`);
@@ -261,6 +268,11 @@
 
     // ----- state -----
     const items = data.items.map((it, i) => Object.assign({ i }, it));
+    const O = data.opts || {};
+    const online = !!(data.slug && data.opts && items.some(i => i.id));
+    const closed = online && O.a === 0;
+    let mode = (O.d === 0 && O.k !== 0) ? 'pickup' : 'delivery';
+    const canDeliver = O.d !== 0, canPickup = O.k !== 0;
     const KEY = 'billaura_cart_' + hash(name + items.length);
     let cart = {}; try { cart = JSON.parse(lsGet(KEY) || '{}') || {}; } catch (e) {}
     Object.keys(cart).forEach(k => { if (!items[k] || !(cart[k] > 0)) delete cart[k]; });
@@ -290,6 +302,7 @@
     function slot(it) {
       const n = cart[it.i] || 0;
       if (isOut(it)) return '<button class="add" disabled>Out of stock</button>';
+      if (closed) return '<button class="add" disabled>Orders paused</button>';
       const s = stockOf(it);
       if (n) return `<div class="qty"><button data-d="-1" data-i="${it.i}" aria-label="Less">−</button><b>${n}</b><button data-d="1" data-i="${it.i}" aria-label="More"${s !== null && n >= s ? ' disabled' : ''}>+</button></div>`;
       return `<button class="add" data-d="1" data-i="${it.i}">Add to cart</button>`;
@@ -321,7 +334,7 @@
     }
     function syncBar() {
       const { n, t } = totals();
-      $('cartbar').hidden = !n || !wa;
+      $('cartbar').hidden = !n || (!wa && !online) || closed;
       $('cartTxt').textContent = n + (n === 1 ? ' item' : ' items') + ' · ' + cur + ' ' + money(t);
     }
     function setQty(i, d) {
@@ -349,23 +362,83 @@
       if (!ids.length) { closeSheet(); return; }
       $('cartList').innerHTML = ids.map(k => { const it = items[k]; return `<div class="ci"><div class="n">${esc(it.name)}<small>${esc(cur)} ${money(it.price)}${it.unit ? ' / ' + esc(it.unit) : ''}</small></div>
         <div class="qty"><button data-ci="-1" data-i="${k}">−</button><b>${cart[k]}</b><button data-ci="1" data-i="${k}">+</button></div><div class="amt">${money(cart[k] * price(it))}</div></div>`; }).join('');
-      $('cTotal').textContent = cur + ' ' + money(totals().t);
+      drawTotals();
     }
     $('cartbar').onclick = openSheet; $('sheetX').onclick = closeSheet;
     back.addEventListener('click', e => { if (e.target === back) closeSheet(); });
     $('cartList').addEventListener('click', e => { const b = e.target.closest('[data-ci]'); if (!b) return; setQty(b.dataset.i, Number(b.dataset.ci)); drawCart(); });
     $('clearBtn').onclick = () => { Object.keys(cart).forEach(k => { delete cart[k]; syncCard(k); }); save(); syncBar(); closeSheet(); };
+    function feeNow() { return online && mode === 'delivery' ? (Number(O.f) || 0) : 0; }
+    function drawTotals() {
+      const t = totals().t, f = feeNow();
+      $('cSub').hidden = $('cFee').hidden = !(online && f > 0);
+      $('cSubV').textContent = cur + ' ' + money(t); $('cFeeV').textContent = cur + ' ' + money(f);
+      $('cTotal').textContent = cur + ' ' + money(t + f);
+    }
     $('cName').value = lsGet('billaura_cust_name') || ''; $('cAddr').value = lsGet('billaura_cust_addr') || '';
-    $('orderBtn').onclick = () => {
+    $('cPhone').value = lsGet('billaura_cust_phone') || '';
+    // ----- ordering mode: real order (online) or WhatsApp message (legacy links) -----
+    const notice = $('cNotice');
+    if (online) {
+      $('cPhone').hidden = false; $('cAddr').placeholder = 'Delivery address';
+      $('modeRow').hidden = !(canDeliver && canPickup);
+      document.querySelectorAll('input[name=mode]').forEach(r => { r.checked = r.value === mode; r.addEventListener('change', () => { mode = r.value; applyMode(); drawTotals(); }); });
+      $('orderBtn').textContent = 'Place order'; $('orderBtn').classList.add('main'); $('waBtn').hidden = !wa;
+      const bits = []; if (O.n) bits.push(esc(O.n)); if (O.m > 0) bits.push('Minimum order ' + cur + ' ' + money(O.m)); if (O.f > 0 && canDeliver) bits.push('Delivery charge ' + cur + ' ' + money(O.f));
+      if (closed) { notice.className = 'notice closed'; notice.innerHTML = 'We are not taking online orders right now.' + (wa ? ' You can still message us on WhatsApp.' : ''); notice.hidden = false; $('orderBtn').disabled = true; $('orderBtn').style.opacity = .5; }
+      else if (bits.length) { notice.innerHTML = bits.join('<br>'); notice.hidden = false; }
+      // closed banner on the page too
+      if (closed) $('count').insertAdjacentHTML('beforebegin', '<div class="notice closed">We are not taking online orders right now. Browse the catalogue and check back soon.</div>');
+      else if (O.n) $('count').insertAdjacentHTML('beforebegin', '<div class="notice">' + esc(O.n) + '</div>');
+      // count the visit once per browser session
+      try { if (!sessionStorage.getItem('bl_hit_' + data.slug)) { sessionStorage.setItem('bl_hit_' + data.slug, '1'); const cfg = window.HISABLY_SUPABASE || {}; if (cfg.url) fetch(cfg.url + '/rest/v1/rpc/store_hit', { method: 'POST', headers: { 'content-type': 'application/json', apikey: cfg.anonKey, Authorization: 'Bearer ' + cfg.anonKey }, body: JSON.stringify({ p_slug: data.slug }), keepalive: true }).catch(() => {}); } } catch (e) {}
+    }
+    function applyMode() { $('cAddr').hidden = online && mode === 'pickup'; }
+    applyMode();
+    function whatsapp() {
       const ids = Object.keys(cart); if (!ids.length) return;
-      const nm = $('cName').value.trim(), ad = $('cAddr').value.trim(), nt = $('cNote').value.trim();
+      const nm = $('cName').value.trim(), ad = $('cAddr').value.trim(), nt = $('cNote').value.trim(), ph = $('cPhone').value.trim();
       if (!nm) { $('cName').focus(); toast('Please enter your name'); return; }
       lsSet('billaura_cust_name', nm); lsSet('billaura_cust_addr', ad);
       let total = 0;
       const lines = ids.map(k => { const it = items[k], amt = cart[k] * price(it); total += amt; return `• ${it.name} × ${cart[k]} = ${cur} ${money(amt)}`; });
-      const msg = `Hello ${name}, I would like to order:\n\n${lines.join('\n')}\n\nTotal: ${cur} ${money(total)}\n\nName: ${nm}` + (ad ? `\nAddress: ${ad}` : '') + (nt ? `\nNote: ${nt}` : '');
+      const msg = `Hello ${name}, I would like to order:\n\n${lines.join('\n')}\n\nTotal: ${cur} ${money(total)}\n\nName: ${nm}` + (ph ? `\nPhone: ${ph}` : '') + (ad && !(online && mode === 'pickup') ? `\nAddress: ${ad}` : '') + (nt ? `\nNote: ${nt}` : '');
       location.href = 'https://wa.me/' + wa + '?text=' + encodeURIComponent(msg);
-    };
+    }
+    const ERR = { STORE_CLOSED: 'The shop is not taking orders right now.', STORE_NOT_FOUND: 'This store is not available.', STORE_UNAVAILABLE: 'This store is not taking online orders right now.', NAME_REQUIRED: 'Please enter your name.', PHONE_REQUIRED: 'Please enter a valid phone number.', ADDRESS_REQUIRED: 'Please enter your delivery address.', DELIVERY_OFF: 'Home delivery is not available. Choose pickup.', PICKUP_OFF: 'Pickup is not available. Choose delivery.', NO_ITEMS: 'Your cart is empty.', TOO_MANY: 'Too many orders from this number. Please call the shop.', ITEM_CHANGED: 'The shop updated its items. Please refresh the page and try again.' };
+    function errText(msg) {
+      msg = String(msg || ''); const k = Object.keys(ERR).find(x => msg.includes(x)); if (k) return ERR[k];
+      let r = msg.match(/OUT_OF_STOCK:(.+?)(\"|$)/); if (r) return r[1] + ' is out of stock. Please reduce the quantity.';
+      r = msg.match(/MIN_ORDER:([0-9.]+)/); if (r) return 'Minimum order is ' + cur + ' ' + money(Number(r[1])) + '.';
+      return 'Could not place the order. Please try again or use WhatsApp.';
+    }
+    let sending = false;
+    async function placeOrder() {
+      if (sending) return;
+      const ids = Object.keys(cart); if (!ids.length) return;
+      const nm = $('cName').value.trim(), ph = $('cPhone').value.trim(), ad = $('cAddr').value.trim(), nt = $('cNote').value.trim();
+      if (!nm) { $('cName').focus(); toast('Please enter your name'); return; }
+      if (ph.replace(/\D/g, '').length < 7) { $('cPhone').focus(); toast('Please enter your phone number'); return; }
+      if (mode === 'delivery' && ad.length < 5) { $('cAddr').focus(); toast('Please enter your delivery address'); return; }
+      const sub = totals().t; if (O.m > 0 && sub < O.m) { toast('Minimum order is ' + cur + ' ' + money(O.m)); return; }
+      lsSet('billaura_cust_name', nm); lsSet('billaura_cust_addr', ad); lsSet('billaura_cust_phone', ph);
+      const cfg = window.HISABLY_SUPABASE || {};
+      sending = true; const btn = $('orderBtn'); const label = btn.textContent; btn.textContent = 'Sending…'; btn.disabled = true;
+      try {
+        const r = await fetch(cfg.url + '/rest/v1/rpc/place_store_order', { method: 'POST', headers: { 'content-type': 'application/json', apikey: cfg.anonKey, Authorization: 'Bearer ' + cfg.anonKey },
+          body: JSON.stringify({ p_slug: data.slug, p_name: nm, p_phone: ph, p_address: mode === 'delivery' ? ad : '', p_mode: mode, p_note: nt, p_items: ids.map(k => ({ id: items[k].id, q: cart[k] })) }) });
+        const body = await r.json().catch(() => null);
+        if (!r.ok) { toast(errText(body && (body.message || body.hint || JSON.stringify(body)))); return; }
+        const no = typeof body === 'number' ? body : (body && body.place_store_order);
+        const total = sub + feeNow();
+        $('cartList').innerHTML = ''; ids.forEach(k => delete cart[k]); save(); ids.forEach(syncCard); syncBar();
+        document.querySelector('#sheetBack .sheet').innerHTML = `<div class="sheet-h"><b>Order placed</b><button class="sheet-x" id="doneX" aria-label="Close">✕</button></div><div class="sheet-b"><div class="done"><div class="ok">✓</div><h3>Thank you, ${esc(nm)}!</h3><p>Your order${no ? ' <b>#' + no + '</b>' : ''} (${esc(cur)} ${money(total)}) was sent to ${esc(name)}. They will contact you on ${esc(ph)}.</p>${wa ? `<a class="order alt" style="display:block;text-decoration:none" target="_blank" rel="noopener" href="https://wa.me/${wa}?text=${encodeURIComponent('Hello ' + name + ', I placed order' + (no ? ' #' + no : '') + ' on your store. Name: ' + nm)}">Message the shop on WhatsApp</a>` : ''}</div></div>`;
+        $('doneX').onclick = () => location.reload();
+      } catch (e) { toast('No connection. Check your internet or use WhatsApp.'); }
+      finally { sending = false; btn.textContent = label; btn.disabled = closed; }
+    }
+    $('orderBtn').onclick = () => online ? placeOrder() : whatsapp();
+    $('waBtn').onclick = whatsapp;
 
     drawGrid(); syncBar();
   }

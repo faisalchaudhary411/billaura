@@ -81,7 +81,7 @@
     html() {
       const sec = (t, items) => `<div class="menu-card"><div class="menu-h">${t}</div>${items.filter(Boolean).join('')}</div>`;
       return `<div class="fade-in" style="padding:8px 0 24px">
-        ${sec('Sell', [row('sale', 'Sales &amp; bills', 'data-view="invoices"'), row('sale', 'Full invoice / quotation', 'data-view="create-invoice"'), row('users', 'Customers &amp; dues', 'data-view="customers"'), row('return', 'Return / Exchange', 'data-view="returns"')])}
+        ${sec('Sell', [row('sale', 'Sales &amp; bills', 'data-view="invoices"'), row('sale', 'Full invoice / quotation', 'data-view="create-invoice"'), row('users', 'Customers &amp; dues', 'data-view="customers"'), row('return', 'Return / Exchange', 'data-view="returns"'), row('store', 'Online store &amp; orders', 'data-view="online-store"')])}
         ${sec('Stock', [row('box', 'Items', 'data-view="products"'), row('cart', 'Stock in (purchases)', 'data-view="purchases"'), row('box', 'Low stock', 'data-view="low-stock"'), row('box', 'Fix stock (damage, count)', 'data-view="stock-adjust"')])}
         ${sec('Money', [row('wallet', 'Expenses', 'data-view="expenses"'), row('cash', 'Cash &amp; bank', 'data-view="cash-in-hand"'), row('report', 'Day book', 'data-view="daybook-detail"')])}
         ${sec('Reports', [row('report', 'Daily report', 'data-view="daily-report"'), row('report', 'Profit &amp; loss', 'data-view="profit-loss"'), row('report', 'All reports', 'data-view="reports"')])}

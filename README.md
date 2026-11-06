@@ -101,3 +101,6 @@ Both are built from the same web files, so each new tag (`git tag v1.0.2 && git 
 `landing.html`, `terms.html` and `css/landing.css` were redesigned: a warm Pakistan-flavoured theme (Fraunces, Plus Jakarta Sans, Noto Nastaliq Urdu from Google Fonts), original SVG illustrations in `assets/art/`, and real app screenshots of Simple Mode in `assets/shots/`.
 `terms.html` is written around how Billaura works (offline-first data, licence and device limit, manual payments, 7-day refund rule, Supabase/GitHub/Google Fonts disclosure, FBR/PRA not integrated). Edit the operator name, refund window, liability cap (PKR 5,000) and grace-period wording there if your business rules differ.
 Set your real WhatsApp number in `js/site-config.js`.
+
+## Online Store manager (v31)
+`js/store.js` adds the Vyapar-style store dashboard (orders, open orders, views, value received), Manage Orders (New / Accepted / Delivered / Cancelled, call, WhatsApp, create bill), Manage Items (show or hide items online, out-of-stock filter) and Store settings (accept orders, delivery/pickup, delivery charge, minimum order, notice). Orders are real: see `supabase/STORE-SETUP.md`.

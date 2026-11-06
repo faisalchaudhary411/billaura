@@ -1,5 +1,5 @@
 /* Hisably service worker – offline app shell + cached libraries */
-const CACHE = 'billaura-v58';
+const CACHE = 'billaura-v60';
 
 const LOCAL_ASSETS = [
   './',
@@ -15,6 +15,7 @@ const LOCAL_ASSETS = [
   './js/counter.js',
   './js/branches.js',
   './js/easy.js',
+  './js/store.js',
   './js/license-config.js',
   './js/license.js',
   './js/app.js',

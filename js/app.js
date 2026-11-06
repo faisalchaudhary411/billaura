@@ -3988,7 +3988,8 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
       color: settings.invoiceColor || '#EF1A3C',
       links: (settings.storeLinks || []).map(l => ({ label: l.label, url: l.url })),
       currency: settings.currency || 'PKR',
-      items: products.map(p => ({ name: p.name, price: p.price, unit: p.unit || '', category: p.category || '', stock: p.stock, photo: (settings.photos && settings.photos[p.id] && settings.photoBase) ? settings.photoBase + settings.photos[p.id].f : '' })).slice(0, 400)
+      opts: { open: settings.storeOpen !== false, delivery: settings.storeDelivery !== false, pickup: settings.storePickup !== false, fee: Number(settings.storeFee) || 0, min: Number(settings.storeMin) || 0, notice: settings.storeNotice || '' },
+      items: products.filter(p => p.online !== false && !(settings.storeHideOOS && (Number(p.stock) || 0) <= 0)).map(p => ({ id: p.id, name: p.name, price: p.price, unit: p.unit || '', category: p.category || '', stock: p.stock, photo: (settings.photos && settings.photos[p.id] && settings.photoBase) ? settings.photoBase + settings.photos[p.id].f : '' })).slice(0, 400)
     };
     const h = await packCatalog(catalog);
     if (silent && h === settings._storeHash && (settings._slugLive || !settings.storeSlug)) return catalog.items.length;
@@ -3999,7 +4000,7 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
     return catalog.items.length;
   }
   function compactOf(c) {
-    return { n: c.shop, p: c.phone, e: c.email, a: c.address, c: c.currency, t: c.tagline, w: c.wa, k: c.color, b: settings.photoBase || '', l: (c.links || []).map(l => [l.label, l.url]), i: c.items.map(x => { const r = [x.name, x.price, x.unit, x.category, x.stock]; if (x.photo) r.push(settings.photoBase && x.photo.startsWith(settings.photoBase) ? x.photo.slice(settings.photoBase.length) : x.photo); return r; }) };
+    return { n: c.shop, p: c.phone, e: c.email, a: c.address, c: c.currency, t: c.tagline, w: c.wa, k: c.color, b: settings.photoBase || '', l: (c.links || []).map(l => [l.label, l.url]), o: c.opts ? { a: c.opts.open ? 1 : 0, d: c.opts.delivery ? 1 : 0, k: c.opts.pickup ? 1 : 0, f: c.opts.fee, m: c.opts.min, n: c.opts.notice } : undefined, i: c.items.map(x => [x.name, x.price, x.unit, x.category, x.stock, x.photo ? (settings.photoBase && x.photo.startsWith(settings.photoBase) ? x.photo.slice(settings.photoBase.length) : x.photo) : '', x.id || '']) };
   }
   async function packCatalog(c) {
     const compact = compactOf(c);
@@ -4064,6 +4065,7 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
         <div class="sh-stats"><div><b>${products.length}</b><span>Items</span></div><div><b>${published ? 'Live' : 'Draft'}</b><span>Status</span></div><div><b>${links.length}</b><span>Links</span></div></div>
         <button class="sh-edit" data-action="store-edit-info">Edit store info</button></div>
       ${isPro ? `
+      ${(window.BillauraExt && BillauraExt.storeDash) ? BillauraExt.storeDash() : ''}
       <div class="doc-card" style="margin:14px 16px 0"><div class="doc-label">Your store link</div>
         <div class="store-url">${escapeHtml(settings.storeSlug && settings._slugLive ? new URL(url).host + new URL(url).pathname : new URL(url).host + new URL(url).pathname + (settings._storeHash ? ' · ' + (url.length / 1000).toFixed(1) + 'k link' : ''))}</div>
         <div class="text-sm text-secondary" style="margin-top:6px">${settings.storeSlug && settings._slugLive ? 'Short link is live.' : 'This is the long link. Sign in to the cloud and tap Update Store Page to get a short name link.'} <button type="button" class="chip-btn" data-action="store-edit-slug">${settings.storeSlug ? 'Change name' : 'Choose name'}</button></div>
@@ -8201,7 +8203,10 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
     savePurchase(p) { purchases.unshift(p); },
     unread() { try { return unreadNotices().length; } catch (e) { return 0; } },
     lowStockItems() { return lowStockItems(); },
-    trashInvoice(inv) { trashPush('invoice', inv); invoices = invoices.filter(x => x.id !== inv.id); }
+    trashInvoice(inv) { trashPush('invoice', inv); invoices = invoices.filter(x => x.id !== inv.id); },
+    republishStore(silent) { return republishStore(silent); },
+    storeUrl() { return storeUrl(); },
+    storeLive() { return !!(settings.storeSlug && settings._slugLive); }
   };
   try { if (window.BillauraExt && BillauraExt.init) BillauraExt.init(); } catch (e) { console.error(e); }
   try { if (window.BillauraLicense) BillauraLicense.init().then(() => { try { if (typeof canRenderNow === 'function' && canRenderNow()) render(); } catch (e) {} }); } catch (e) {}
