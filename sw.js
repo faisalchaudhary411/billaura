@@ -1,5 +1,5 @@
 /* Hisably service worker – offline app shell + cached libraries */
-const CACHE = 'billaura-v60';
+const CACHE = 'billaura-v61';
 
 const LOCAL_ASSETS = [
   './',

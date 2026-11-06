@@ -8076,7 +8076,13 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
   }
 
   let _planPick = 'pro';
+  let _plansRefreshing = false;
   function openPlansModal(pre) {
+    if (!_plansRefreshing && navigator.onLine && window.HisablyCloud && HisablyCloud.ready() && HisablyCloud.getSession()) {
+      _plansRefreshing = true;
+      const before = JSON.stringify(HisablyFreemium.effectivePlan().key);
+      refreshPlanFromCloud().then(() => { _plansRefreshing = false; if (document.querySelector('.pm-page .pl-hero') && JSON.stringify(HisablyFreemium.effectivePlan().key) !== before) openPlansModal(pre); }).catch(() => { _plansRefreshing = false; });
+    }
     const F = HisablyFreemium;
     const pay = F.getPlanCache().payment || F.DEFAULT_PAY;
     const { key, cache, limits } = F.effectivePlan();
@@ -8171,6 +8177,7 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
     initCloudAutoSync();
     maybeAutoBackup();
     startPlanHeartbeat();
+    setTimeout(() => { if (navigator.onLine) refreshPlanFromCloud(); }, 800);
     setTimeout(() => { refreshAnnouncements(); checkAppUpdate(); }, 2500);
   }
 
