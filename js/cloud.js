@@ -254,6 +254,8 @@
   async function push(changes) {
     const sid = shopId();
     if (!need() || !sid) throw new Error('No shop linked');
+    // Settings (business profile) go FIRST: a plan-limit error on invoices/items must never block them
+    if (changes.settings) await saveShopSettings(changes.settings);
     const order = ['customers', 'products', 'suppliers', 'invoices', 'expenses', 'stock_movements', 'purchases'];
     for (const t of order) {
       const key = t === 'stock_movements' ? 'stockMovements' : t;
@@ -262,7 +264,6 @@
       const tb = (changes.tombs || {})[key];
       if (tb && Object.keys(tb).length) await tombstone(t, tb);
     }
-    if (changes.settings) await saveShopSettings(changes.settings);
   }
 
   async function saveShopSettings(settingsObj) {

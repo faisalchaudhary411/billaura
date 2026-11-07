@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2.1.0';
+  const APP_VERSION = '2.3.0';
 
   const STORAGE = {
     products: 'sb_products_v2',
@@ -498,6 +498,14 @@
     if (currentView !== 'business-profile' || !document.getElementById('bpName')) return;
     const m = { bpName: 'businessName', bpPhone: 'phone', bpPhone2: 'phone2', bpEmail: 'email', bpAddress: 'address', bpCity: 'city', bpDesc: 'businessDesc', bpTax: 'taxId', bpOwner: 'ownerName', bpPrefix: 'invoicePrefix', bpCurrency: 'currency' };
     Object.keys(m).forEach(id => { const el = document.getElementById(id); if (el) { const v = String(el.value || '').trim(); if (v || m[id] !== 'businessName') settings[m[id]] = v; } });
+  }
+  // Push the profile to the cloud right away (does not depend on any other table syncing)
+  async function pushSettingsNow() {
+    try {
+      if (!window.HisablyCloud || !HisablyCloud.ready() || !HisablyCloud.getSession() || !navigator.onLine) return null;
+      await HisablyCloud.saveShopSettings(settings);
+      return true;
+    } catch (e) { return String((e && e.message) || e).replace(/^LIMIT:\s*/, ''); }
   }
   function persist() {
     bpCapture();
@@ -6125,6 +6133,7 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
         // logo/signature/stamp/qr already on settings from pick actions
         persist();
         toast('Business profile saved');
+        pushSettingsNow().then(r => { if (r === true) toast('Profile synced to your cloud account'); else if (r) toast('Saved on this phone, but cloud sync failed: ' + r, 7000); });
         setView('more');
         break;
       }
