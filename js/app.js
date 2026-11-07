@@ -493,7 +493,14 @@
   }
   function snapshotData() { return { products, invoices, customers, suppliers, expenses, stockMovements, purchases, banks, bankTxns, otherIncome, loans, settings, invoiceCounter, exportedAt: new Date().toISOString() }; }
 
+  // Keep text typed on Business Profile when an upload / signature / template change re-renders the page
+  function bpCapture() {
+    if (currentView !== 'business-profile' || !document.getElementById('bpName')) return;
+    const m = { bpName: 'businessName', bpPhone: 'phone', bpPhone2: 'phone2', bpEmail: 'email', bpAddress: 'address', bpCity: 'city', bpDesc: 'businessDesc', bpTax: 'taxId', bpOwner: 'ownerName', bpPrefix: 'invoicePrefix', bpCurrency: 'currency' };
+    Object.keys(m).forEach(id => { const el = document.getElementById(id); if (el) { const v = String(el.value || '').trim(); if (v || m[id] !== 'businessName') settings[m[id]] = v; } });
+  }
   function persist() {
+    bpCapture();
     stampChanges();
     saveAll();
     // Auto-sync to cloud ~2s after last change (debounced)
