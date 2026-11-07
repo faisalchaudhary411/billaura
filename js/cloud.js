@@ -283,7 +283,14 @@
   }
 
   // ---------- Payments ----------
-  async function submitPaymentRequest({ planId, note, shopName }) {
+  async function checkPromo(code, planId) {
+    const sb = need();
+    const { data, error } = await sb.rpc('check_promo', { p_code: code, p_plan: planId });
+    if (error) throw error;
+    return data || { ok: false, message: 'Could not check the code' };
+  }
+
+  async function submitPaymentRequest({ planId, note, shopName, promoCode }) {
     const sb = need();
     const sid = shopId();
     const email = session && session.user && session.user.email;
@@ -294,6 +301,7 @@
       shop_name: shopName || null,
       plan_id: planId,
       note: note || null,
+      promo_code: promoCode || null,
       status: 'pending'
     });
     if (error) {
@@ -469,6 +477,7 @@
     saveShopSettings,
     wipeRemoteData,
     submitPaymentRequest,
-    latestPaymentRequest
+    latestPaymentRequest,
+    checkPromo
   };
 })();

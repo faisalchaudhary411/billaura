@@ -795,3 +795,4 @@ select, input, textarea, button { -webkit-tap-highlight-color: transparent; }
 .st-sw{flex:0 0 auto;width:46px;height:27px;border-radius:99px;border:0;background:#C9CED9;position:relative;transition:.15s;padding:0}.st-sw i{position:absolute;top:3px;left:3px;width:21px;height:21px;border-radius:50%;background:#fff;transition:.15s;box-shadow:0 1px 3px rgba(0,0,0,.25)}.st-sw.on{background:#12924F}.st-sw.on i{left:22px}
 .st-set,.st-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)}.st-set b,.st-item b{display:block;font-size:.92rem}.st-set span,.st-item span{display:block;font-size:.78rem;color:var(--text-muted)}.st-item em.bad{color:#C0213A;font-style:normal;font-weight:700}
 .st-sum{font-size:.88rem;margin-bottom:6px}
+.pl-promo{display:flex;gap:8px;margin:-6px 0 8px 38px}.pl-promo .form-input{flex:1;min-width:0;text-transform:uppercase}.pl-promo .btn{flex:none}

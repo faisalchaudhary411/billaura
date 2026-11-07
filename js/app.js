@@ -7120,8 +7120,10 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
         document.querySelectorAll('.pl-card').forEach(c => { const on = c === t; c.classList.toggle('sel', on); const sl = c.querySelector('.pl-sel'); if (sl) sl.textContent = on ? '● Selected' : 'Choose ' + c.querySelector('.pl-name').textContent; });
         const pi = $('#paidPlanSelect'); if (pi) pi.value = k;
         const nm = $('#plSelName'), am = $('#plSelAmt'); if (nm) nm.textContent = k.charAt(0).toUpperCase() + k.slice(1); if (am) am.textContent = t.dataset.amt;
+        _promo = null; { const pm = $('#promoMsg'); if (pm) pm.textContent = ''; const pc = $('#promoCode'); if (pc && pc.value.trim()) applyPromo(); }
         break;
       }
+      case 'apply-promo': applyPromo(); break;
       case 'copy-pay': { const v = t.dataset.v || ''; try { navigator.clipboard.writeText(v); toast('Copied ' + v); } catch (e) { toast(v); } break; }
       case 'open-shopify': openShopifyModal(); break;
       case 'shopify-sync': shopifyManualSync(false); break;
@@ -7507,6 +7509,23 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
     location.reload();
   }
 
+  async function applyPromo() {
+    const code = (($('#promoCode') || {}).value || '').trim().toUpperCase();
+    const plan = ($('#paidPlanSelect') || {}).value || 'basic';
+    const msg = $('#promoMsg'), am = $('#plSelAmt');
+    const say = (t, ok) => { if (msg) { msg.textContent = t; msg.style.color = ok ? '#168a4a' : '#d6283a'; } };
+    if (!code) { _promo = null; say('', true); return; }
+    if (!(window.HisablyCloud && HisablyCloud.ready() && HisablyCloud.getSession())) { say('Sign in to your cloud account to use a promo code.', false); return; }
+    say('Checking…', true);
+    try {
+      const r = await HisablyCloud.checkPromo(code, plan);
+      if (!r.ok) { _promo = null; say(r.message || 'This code is not valid', false); return; }
+      _promo = { code: r.code, plan, final: r.final, list: r.list };
+      if (am) am.textContent = Number(r.final).toLocaleString('en-US');
+      say('✓ Code applied: you save ' + Number(r.off).toLocaleString('en-US') + ' – pay ' + Number(r.final).toLocaleString('en-US'), true);
+    } catch (e) { _promo = null; say(String((e && e.message) || 'Could not check the code'), false); }
+  }
+
   async function submitPayment() {
     const plan = ($('#paidPlanSelect') || {}).value || 'basic';
     const note = (($('#paidNote') || {}).value || '').trim();
@@ -7515,7 +7534,7 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
     if (!note) { toast('Enter your transaction ID or the phone number you paid from'); return; }
     if (window.HisablyCloud && HisablyCloud.ready() && HisablyCloud.getSession()) {
       try {
-        await HisablyCloud.submitPaymentRequest({ planId: plan, note, shopName });
+        await HisablyCloud.submitPaymentRequest({ planId: plan, note, shopName, promoCode: (_promo && _promo.plan === plan) ? _promo.code : null });
       } catch (err) {
         toast(err.message || 'Could not send. Check your internet and try again.', 4000);
         return;
@@ -7527,6 +7546,7 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
       list.unshift({ id: uid(), email: sess.email, shopName, plan, note, status: 'pending', createdAt: new Date().toISOString() });
       localStorage.setItem(key, JSON.stringify(list));
     }
+    _promo = null;
     toast('Payment reported. Admin will activate your plan.', 3500);
     closeModal();
   }
@@ -8099,6 +8119,7 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
   }
 
   let _planPick = 'pro';
+  let _promo = null;   // { code, plan, final, list } once a code has been applied
   let _plansRefreshing = false;
   function openPlansModal(pre) {
     if (!_plansRefreshing && navigator.onLine && window.HisablyCloud && HisablyCloud.ready() && HisablyCloud.getSession()) {
@@ -8158,6 +8179,8 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
           ${isLife ? '<div class="pl-note" style="text-align:center;margin-top:18px">You have Lifetime access – thank you for supporting Billaura.</div>' : `
           <div class="pl-h" style="margin-top:22px">How to upgrade</div>
           <div class="pl-step"><span class="pl-n">1</span><div><b>Selected: <span id="plSelName">${_planPick.charAt(0).toUpperCase() + _planPick.slice(1)}</span> – ${cur} <span id="plSelAmt">${pf(price[_planPick])}</span></b></div></div>
+          <div class="pl-promo"><input class="form-input" id="promoCode" placeholder="Promo code (optional)" autocapitalize="characters" autocomplete="off" /><button type="button" class="btn btn-outline" data-action="apply-promo">Apply</button></div>
+          <div id="promoMsg" class="text-sm" style="margin:-4px 0 10px 40px"></div>
           <div class="pl-step"><span class="pl-n">2</span><div><b>Send the amount to</b>
             ${copyRow('JazzCash', pay.jazzcash)}${copyRow('EasyPaisa', pay.easypaisa)}${pay.bankAccount ? copyRow('Bank – ' + (pay.bankName || '') + (pay.bankTitle ? ' · ' + pay.bankTitle : ''), pay.bankAccount) : ''}
             ${pay.note ? `<div class="pl-note">${escapeHtml(pay.note)}</div>` : ''}</div></div>
