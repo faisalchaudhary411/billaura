@@ -7769,13 +7769,16 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
           }
           claimDataFor(email);
         }
-        if (settings.businessName === 'My Business' && profShopName && profShopName !== 'My Shop') {
-          settings.businessName = profShopName;
-          const s = HisablyFreemium.getSession() || {};
-          settings.ownerName = settings.ownerName || s.fullName || '';
-          settings.phone = settings.phone || s.phone || '';
+        // Signing in on a fresh install: the profile saved in the cloud always wins over the sign-up name
+        let cloudProfile = null;
+        if (!isRegister && window.HisablyCloud && HisablyCloud.ready() && HisablyCloud.getSession()) {
+          try { const sh = await HisablyCloud.fetchShop(); const rs = sh && sh.settings; if (rs && typeof rs === 'object' && rs.businessName && rs.businessName !== 'My Business') cloudProfile = rs; } catch (e) { /* fall back to seeding */ }
+        }
+        if (cloudProfile) {
+          settings = Object.assign({}, settings, cloudProfile);
           persist();
         }
+        // A new account starts with a blank, white-label profile (0% complete); nothing is copied from sign-up
         enterApp();
         toast(isRegister ? 'Welcome! 14-day trial started' : 'Welcome back');
       } catch (err) {

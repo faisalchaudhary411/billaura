@@ -27,3 +27,6 @@ From then on every build is a signed `Billaura.apk`. Push a tag (`git tag v1.0.1
 The Android WebView has no Web Bluetooth, so the app bundles `@capacitor-community/bluetooth-le`
 (pinned to 6.1.0, built for Capacitor 6) and `js/native-ble.js` maps it onto `navigator.bluetooth`.
 Android asks for the "Nearby devices" (and on older phones "Location") permission the first time you tap Print via Bluetooth.
+
+## Back button
+`@capacitor/app` + `js/native-back.js`: Back closes sheets, goes back a screen, and on Home asks "Press back again to exit".
