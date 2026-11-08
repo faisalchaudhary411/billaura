@@ -1,0 +1,7 @@
+{
+  "appId": "com.billaura.app",
+  "appName": "Billaura",
+  "webDir": "www",
+  "backgroundColor": "#E8173C",
+  "android": { "allowMixedContent": false }
+}

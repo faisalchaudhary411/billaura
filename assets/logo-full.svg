@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 160" width="560" height="160" role="img" aria-label="Billaura">
+  <defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FF3D5E"/><stop offset="1" stop-color="#D90F34"/></linearGradient></defs>
+  <g transform="scale(.3125)">
+    <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+    <path d="M352 96a176 176 0 0 1 64 64" fill="none" stroke="#fff" stroke-opacity=".35" stroke-width="14" stroke-linecap="round"/>
+    <path d="M176 132v248M176 132h112a62 62 0 0 1 0 124H176M176 256h134a62 62 0 0 1 0 124H176" fill="none" stroke="#fff" stroke-width="54" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="180" y="104" font-family="Inter,Roboto,'Segoe UI',Arial,sans-serif" font-weight="800" font-size="84" letter-spacing="-2"><tspan fill="#2C3E50">Bill</tspan><tspan fill="#EF1A3C">aura</tspan></text>
+</svg>
