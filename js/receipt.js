@@ -494,6 +494,7 @@ thead{display:table-header-group}tr{break-inside:avoid}
   // MXW01 and the other 0xAE30 "cat" printers: 384 dots/row, 1 bit per dot.
   async function printCat(canvas, opts, onStatus) {
     const say = onStatus || (() => {});
+    const isNative = !!window.BILLAURA_NATIVE_BLE;
     say('Connecting…');
     const server = await connectGatt('mxw01');
     const svc = await server.getPrimaryService(SV_CAT);
@@ -505,6 +506,8 @@ thead{display:table-header-group}tr{break-inside:avoid}
     const waiters = [];
     if (notify) {
       await notify.startNotifications();
+      // Give Android BLE stack a moment after enabling notifications
+      if (isNative) await sleep(120);
       notify.addEventListener('characteristicvaluechanged', ev => {
         const v = new Uint8Array(ev.target.value.buffer);
         if (v.length > 2 && v[0] === 0x22 && v[1] === 0x21) {
@@ -542,17 +545,28 @@ thead{display:table-header-group}tr{break-inside:avoid}
     const level = { light: 60, medium: 93, dark: 120 }[opts.density] || 93;
 
     say('Preparing…');
-    await ctl.writeValueWithoutResponse(catPacket(0xA2, [level])); await sleep(40);
-    await ctl.writeValueWithoutResponse(catPacket(0xA1, [0x00])); await sleep(40);
-    await waitFor(0xA1, 2500);
-    await ctl.writeValueWithoutResponse(catPacket(0xA9, [rows & 255, (rows >> 8) & 255, 0x30, 0x00])); await sleep(40);
-    await waitFor(0xA9, 4000);
+    await ctl.writeValueWithoutResponse(catPacket(0xA2, [level])); await sleep(isNative ? 80 : 40);
+    await ctl.writeValueWithoutResponse(catPacket(0xA1, [0x00])); await sleep(isNative ? 80 : 40);
+    await waitFor(0xA1, isNative ? 3500 : 2500);
+
+    // Some MXW01 firmwares want mode 0x00, others 0x01. Prefer 0x00 first (matches Chrome path).
+    let mode = 0x00;
+    await ctl.writeValueWithoutResponse(catPacket(0xA9, [rows & 255, (rows >> 8) & 255, 0x30, mode])); await sleep(isNative ? 80 : 40);
+    let gotA9 = await waitFor(0xA9, isNative ? 5000 : 4000);
+    if (!gotA9 && isNative) {
+      // Retry once with the alternate mode byte
+      mode = 0x01;
+      await ctl.writeValueWithoutResponse(catPacket(0xA9, [rows & 255, (rows >> 8) & 255, 0x30, mode])); await sleep(80);
+      await waitFor(0xA9, 4000);
+    }
 
     say('Printing…');
     const bytes = lsb ? raw.map(reverseBits) : raw;
-    await writeChunks(data, bytes, 240, 4);
-    await sleep(100);
-    await ctl.writeValueWithoutResponse(catPacket(0xAD, [0x00])); await sleep(40);
+    // On native BLE be more conservative: smaller logical chunks (polyfill still splits further by MTU)
+    // and a slightly longer inter-chunk delay so the printer buffer does not overflow.
+    await writeChunks(data, bytes, isNative ? 120 : 240, isNative ? 18 : 4);
+    await sleep(isNative ? 200 : 100);
+    await ctl.writeValueWithoutResponse(catPacket(0xAD, [0x00])); await sleep(isNative ? 80 : 40);
     await waitFor(0xAA, 40000);
     try { if (notify) await notify.stopNotifications(); } catch (e) {}
     say('Sent ' + rows + ' rows · printer replied: ' + (seen.length ? seen.map(x => x.toString(16).toUpperCase()).join(',') : 'nothing'));
