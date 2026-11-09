@@ -2,10 +2,11 @@
 // navigator.bluetooth look-alike on top of the native BluetoothLe plugin, so the existing
 // receipt-printer code (receipt.js) works unchanged inside the app. Does nothing in a normal browser.
 //
-// Hardened for MXW01 / cat-family thermal printers:
-// - request high connection priority after connect
-// - conservative MTU + inter-packet delay (printers drop data when flooded)
-// - reliable notification listener key matching the plugin
+// Hardened for MXW01 on Android 12–16:
+// - high connection priority
+// - control writes prefer WITH response (more reliable than writeWithoutResponse on many phones)
+// - aggressive inter-packet delays (printers drop data when flooded)
+// - AF30 service fallback
 (function () {
   var C = window.Capacitor;
   if (!C || !C.isNativePlatform || !C.isNativePlatform() || (navigator && navigator.bluetooth)) return;
@@ -42,23 +43,28 @@
     var base = { deviceId: devId, service: low(svcUuid), characteristic: this.uuid };
     var props = this.properties;
 
-    function send(v, noResp) {
-      // Split to negotiated MTU so a big chunk is never silently truncated.
-      // Also insert a short delay between every fragment – MXW01 / cat printers
-      // frequently drop data when the Android BLE stack floods them.
+    function preferWithResponse() {
+      return !!props.write;
+    }
+
+    function send(v, forceNoResp) {
       var u = v instanceof Uint8Array
         ? v
         : new Uint8Array(v.buffer ? v.buffer.slice(v.byteOffset || 0, (v.byteOffset || 0) + v.byteLength) : v);
       var max = Math.max(20, (dev.mtu || 23) - 3);
-      // Cap at 180 even if MTU is higher – some MXW01 firmwares misbehave above ~200
-      if (max > 180) max = 180;
+      if (max > 120) max = 120;
+      var useNoResp = forceNoResp && !preferWithResponse() ? true : (forceNoResp && !!props.writeWithoutResponse);
+      if (u.length <= 20 && props.write) useNoResp = false;
+
       var p = Promise.resolve();
       for (var i = 0; i < u.length; i += max) {
         (function (part) {
           p = p.then(function () {
-            var opts = Object.assign({ value: toHex(part), timeout: 12000 }, base);
-            return (noResp ? BLE.writeWithoutResponse : BLE.write)(opts);
-          }).then(function () { return sleep(12); }); // ~12 ms between packets
+            var opts = Object.assign({ value: toHex(part), timeout: 15000 }, base);
+            return (useNoResp ? BLE.writeWithoutResponse : BLE.write)(opts);
+          }).then(function () {
+            return sleep(useNoResp ? 18 : 8);
+          });
         })(u.slice(i, i + max));
       }
       return p;
@@ -66,7 +72,7 @@
 
     this.writeValue = function (v) { return send(v, false); };
     this.writeValueWithoutResponse = function (v) {
-      return send(v, !!props.writeWithoutResponse || !props.write);
+      return send(v, true);
     };
     this.addEventListener = function (t, fn) {
       if (t === 'characteristicvaluechanged') subs.push(fn);
@@ -75,21 +81,23 @@
       subs = subs.filter(function (x) { return x !== fn; });
     };
     this.startNotifications = function () {
-      // Remove any previous listener for this characteristic first
-      return Promise.resolve(
-        handle && handle.remove ? handle.remove() : null
-      ).catch(function () {}).then(function () {
-        return BLE.addListener(key, function (ev) {
-          var dv = fromHex(ev && ev.value);
-          me.value = dv;
-          subs.slice().forEach(function (f) {
-            try { f({ target: me }); } catch (e) {}
+      return Promise.resolve(handle && handle.remove ? handle.remove() : null)
+        .catch(function () {})
+        .then(function () {
+          return BLE.addListener(key, function (ev) {
+            var dv = fromHex(ev && ev.value);
+            me.value = dv;
+            subs.slice().forEach(function (f) {
+              try { f({ target: me }); } catch (e) {}
+            });
           });
-        });
-      }).then(function (h) {
-        handle = h;
-        return BLE.startNotifications(base);
-      }).then(function () { return me; });
+        })
+        .then(function (h) {
+          handle = h;
+          return BLE.startNotifications(base);
+        })
+        .then(function () { return sleep(150); })
+        .then(function () { return me; });
     };
     this.stopNotifications = function () {
       return BLE.stopNotifications(base).then(function () {
@@ -120,34 +128,43 @@
     this.gatt = {
       connected: false,
       connect: function () {
-        return init().then(function () {
-          // Clean up previous disconnect listener
-          return Promise.resolve(handle && handle.remove ? handle.remove() : null).catch(function () {});
-        }).then(function () {
-          return BLE.addListener('disconnected|' + me.id, function () {
-            me.gatt.connected = false;
-            listeners.slice().forEach(function (f) {
-              try { f({ target: me }); } catch (e) {}
+        return init()
+          .then(function () {
+            return Promise.resolve(handle && handle.remove ? handle.remove() : null).catch(function () {});
+          })
+          .then(function () {
+            return BLE.disconnect({ deviceId: me.id }).catch(function () {});
+          })
+          .then(function () { return sleep(200); })
+          .then(function () {
+            return BLE.addListener('disconnected|' + me.id, function () {
+              me.gatt.connected = false;
+              listeners.slice().forEach(function (f) {
+                try { f({ target: me }); } catch (e) {}
+              });
             });
-          });
-        }).then(function (h) {
-          handle = h;
-          return BLE.connect({ deviceId: me.id, timeout: 20000 });
-        }).then(function () {
-          me.gatt.connected = true;
-          // High priority helps bulk raster transfers on Android
-          return BLE.requestConnectionPriority
-            ? BLE.requestConnectionPriority({ deviceId: me.id, connectionPriority: 1 }).catch(function () {})
-            : Promise.resolve();
-        }).then(function () {
-          return BLE.getMtu({ deviceId: me.id }).then(
-            function (r) { me.mtu = Number(r && r.value) || 23; },
-            function () { me.mtu = 23; }
-          );
-        }).then(function () {
-          // Give the stack a moment after MTU / priority change
-          return sleep(80);
-        }).then(function () { return me.gatt; });
+          })
+          .then(function (h) {
+            handle = h;
+            return BLE.connect({ deviceId: me.id, timeout: 25000 });
+          })
+          .then(function () {
+            me.gatt.connected = true;
+            if (BLE.requestConnectionPriority) {
+              return BLE.requestConnectionPriority({
+                deviceId: me.id,
+                connectionPriority: 1
+              }).catch(function () {});
+            }
+          })
+          .then(function () {
+            return BLE.getMtu({ deviceId: me.id }).then(
+              function (r) { me.mtu = Number(r && r.value) || 23; },
+              function () { me.mtu = 23; }
+            );
+          })
+          .then(function () { return sleep(120); })
+          .then(function () { return me.gatt; });
       },
       disconnect: function () {
         me.gatt.connected = false;
@@ -156,10 +173,10 @@
       getPrimaryService: function (u) {
         return BLE.getServices({ deviceId: me.id }).then(function (r) {
           var wanted = low(u);
-          var s = (r.services || []).filter(function (x) { return low(x.uuid) === wanted; })[0];
-          // Some MXW01 units expose AF30 instead of AE30
+          var list = r.services || [];
+          var s = list.filter(function (x) { return low(x.uuid) === wanted; })[0];
           if (!s && wanted === '0000ae30-0000-1000-8000-00805f9b34fb') {
-            s = (r.services || []).filter(function (x) {
+            s = list.filter(function (x) {
               return low(x.uuid) === '0000af30-0000-1000-8000-00805f9b34fb';
             })[0];
           }
@@ -178,7 +195,6 @@
       opts = opts || {};
       var o = {};
       if (opts.optionalServices) o.optionalServices = opts.optionalServices.map(low);
-      if (opts.acceptAllDevices) o.allowDuplicates = false;
       return init().then(function () { return BLE.requestDevice(o); }).then(function (d) {
         return new Device(d);
       });

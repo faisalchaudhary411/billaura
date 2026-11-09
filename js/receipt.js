@@ -495,6 +495,13 @@ thead{display:table-header-group}tr{break-inside:avoid}
   async function printCat(canvas, opts, onStatus) {
     const say = onStatus || (() => {});
     const isNative = !!window.BILLAURA_NATIVE_BLE;
+    // On native Android prefer write-with-response for control packets when available
+    const ctlWrite = async (ch, bytes) => {
+      if (isNative && ch.writeValue) {
+        try { await ch.writeValue(bytes); return; } catch (e) {}
+      }
+      await ch.writeValueWithoutResponse(bytes);
+    };
     say('Connecting…');
     const server = await connectGatt('mxw01');
     const svc = await server.getPrimaryService(SV_CAT);
@@ -506,8 +513,7 @@ thead{display:table-header-group}tr{break-inside:avoid}
     const waiters = [];
     if (notify) {
       await notify.startNotifications();
-      // Give Android BLE stack a moment after enabling notifications
-      if (isNative) await sleep(120);
+      if (isNative) await sleep(200);
       notify.addEventListener('characteristicvaluechanged', ev => {
         const v = new Uint8Array(ev.target.value.buffer);
         if (v.length > 2 && v[0] === 0x22 && v[1] === 0x21) {
@@ -545,31 +551,30 @@ thead{display:table-header-group}tr{break-inside:avoid}
     const level = { light: 60, medium: 93, dark: 120 }[opts.density] || 93;
 
     say('Preparing…');
-    await ctl.writeValueWithoutResponse(catPacket(0xA2, [level])); await sleep(isNative ? 80 : 40);
-    await ctl.writeValueWithoutResponse(catPacket(0xA1, [0x00])); await sleep(isNative ? 80 : 40);
-    await waitFor(0xA1, isNative ? 3500 : 2500);
+    await ctlWrite(ctl, catPacket(0xA2, [level])); await sleep(isNative ? 120 : 40);
+    await ctlWrite(ctl, catPacket(0xA1, [0x00])); await sleep(isNative ? 120 : 40);
+    const gotStatus = await waitFor(0xA1, isNative ? 4000 : 2500);
 
-    // Some MXW01 firmwares want mode 0x00, others 0x01. Prefer 0x00 first (matches Chrome path).
-    let mode = 0x00;
-    await ctl.writeValueWithoutResponse(catPacket(0xA9, [rows & 255, (rows >> 8) & 255, 0x30, mode])); await sleep(isNative ? 80 : 40);
+    // Many working MXW01 implementations use mode 0x01; try that first on native.
+    let mode = isNative ? 0x01 : 0x00;
+    await ctlWrite(ctl, catPacket(0xA9, [rows & 255, (rows >> 8) & 255, 0x30, mode])); await sleep(isNative ? 120 : 40);
     let gotA9 = await waitFor(0xA9, isNative ? 5000 : 4000);
-    if (!gotA9 && isNative) {
-      // Retry once with the alternate mode byte
-      mode = 0x01;
-      await ctl.writeValueWithoutResponse(catPacket(0xA9, [rows & 255, (rows >> 8) & 255, 0x30, mode])); await sleep(80);
-      await waitFor(0xA9, 4000);
+    if (!gotA9) {
+      mode = mode === 0x01 ? 0x00 : 0x01;
+      await ctlWrite(ctl, catPacket(0xA9, [rows & 255, (rows >> 8) & 255, 0x30, mode])); await sleep(isNative ? 120 : 40);
+      await waitFor(0xA9, isNative ? 4000 : 3000);
     }
 
     say('Printing…');
     const bytes = lsb ? raw.map(reverseBits) : raw;
-    // On native BLE be more conservative: smaller logical chunks (polyfill still splits further by MTU)
-    // and a slightly longer inter-chunk delay so the printer buffer does not overflow.
-    await writeChunks(data, bytes, isNative ? 120 : 240, isNative ? 18 : 4);
-    await sleep(isNative ? 200 : 100);
-    await ctl.writeValueWithoutResponse(catPacket(0xAD, [0x00])); await sleep(isNative ? 80 : 40);
-    await waitFor(0xAA, 40000);
+    // Very conservative on native: 48-byte logical chunks + longer delay
+    await writeChunks(data, bytes, isNative ? 48 : 240, isNative ? 25 : 4);
+    await sleep(isNative ? 300 : 100);
+    await ctlWrite(ctl, catPacket(0xAD, [0x00])); await sleep(isNative ? 120 : 40);
+    await waitFor(0xAA, 45000);
     try { if (notify) await notify.stopNotifications(); } catch (e) {}
-    say('Sent ' + rows + ' rows · printer replied: ' + (seen.length ? seen.map(x => x.toString(16).toUpperCase()).join(',') : 'nothing'));
+    const reply = seen.length ? seen.map(x => x.toString(16).toUpperCase()).join(',') : 'nothing';
+    say('Sent ' + rows + ' rows · printer replied: ' + reply + (isNative && !seen.length ? ' (try Test print again)' : ''));
   }
 
   // Generic ESC/POS BLE printers (58/80/88 mm): GS v 0 raster
