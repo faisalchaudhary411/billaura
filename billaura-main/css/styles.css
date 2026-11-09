@@ -1404,6 +1404,13 @@ body {
   margin-top: 16px;
   line-height: 1.4;
 }
+.auth-title { font-size: 1.15rem; margin: 0 0 6px; color: var(--text); text-align: center; }
+.auth-sub { font-size: 0.8125rem; color: var(--text-secondary); text-align: center; margin: 0 0 16px; line-height: 1.45; }
+.auth-forgot { text-align: right; margin: -4px 0 12px; }
+.auth-link {
+  border: none; background: none; padding: 4px 0; cursor: pointer;
+  font: inherit; font-size: 0.8125rem; font-weight: 600; color: var(--primary);
+}
 [hidden] { display: none !important; }
 
 /* ========== CREATE INVOICE / DOCUMENT FORM ========== */

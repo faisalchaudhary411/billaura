@@ -126,6 +126,46 @@
     return data;
   }
 
+  // ---- Password reset ----
+  // The e-mail link opens the website with  #access_token=...&type=recovery  (or #error=...&error_code=otp_expired).
+  // Read it NOW, before supabase-js consumes and strips the hash.
+  const urlBits = (function () { try { return (location.hash || '') + '&' + (location.search || ''); } catch (e) { return ''; } })();
+  let recovery = /[#&?]type=recovery/.test(urlBits);
+  const linkExpired = /error_code=otp_expired|error=access_denied/.test(urlBits) && !recovery;
+
+  async function sendPasswordReset(email, redirectTo) {
+    const sb = need();
+    const { error } = await sb.auth.resetPasswordForEmail(email, redirectTo ? { redirectTo } : undefined);
+    if (error) throw error;
+  }
+  // Lets supabase-js read the recovery token from the URL; resolves to true when a recovery session exists
+  async function prepareRecovery() {
+    const sb = getClient();
+    if (!sb) return false;
+    sb.auth.onAuthStateChange((event) => { if (event === 'PASSWORD_RECOVERY') recovery = true; });
+    const { data } = await sb.auth.getSession();
+    return !!data.session;
+  }
+  async function updatePassword(newPassword) {
+    const sb = need();
+    const { data } = await sb.auth.getSession();
+    if (!data.session) throw new Error('RESET_LINK_EXPIRED');
+    const { error } = await sb.auth.updateUser({ password: newPassword });
+    if (error) throw error;
+    recovery = false;
+    try { history.replaceState(null, '', location.pathname); } catch (e) {}
+    await signOut();
+  }
+
+  // Signed-in password change: re-check the current password first, then set the new one
+  async function changePassword(email, currentPassword, newPassword) {
+    const sb = need();
+    const chk = await sb.auth.signInWithPassword({ email, password: currentPassword });
+    if (chk.error) throw new Error('WRONG_CURRENT');
+    const { error } = await sb.auth.updateUser({ password: newPassword });
+    if (error) throw error;
+  }
+
   async function signOut() {
     const sb = getClient();
     if (sb) { try { await sb.auth.signOut(); } catch (e) {} }
@@ -464,6 +504,12 @@
     signUp,
     signIn,
     signOut,
+    sendPasswordReset,
+    prepareRecovery,
+    updatePassword,
+    changePassword,
+    inRecovery: () => recovery,
+    resetLinkExpired: () => linkExpired,
     client: getClient,
     getSession: () => session,
     getProfile: () => profile,

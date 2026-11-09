@@ -244,6 +244,7 @@ body { font-family: var(--font); color: var(--text); }
 .auth-brand h1 { color: #2C3E50; font-weight: 800; letter-spacing: -.5px; }
 .auth-brand h1 span { color: #EF1A3C; }
 .auth-tab.active { color: #EF1A3C; border-color: #EF1A3C; }
+.auth-link { color: #EF1A3C; }
 .install-banner .btn-primary { background: #EF1A3C; }
 
 /* form inputs a little rounder & */

@@ -1158,7 +1158,7 @@
   // Device-level protection (keeps casual access out). It is not a server-side permission system.
   const ROLE_KEY = 'billaura_role_v1';
   const STAFF_VIEWS = ['home', 'dashboard', 'products', 'create-invoice', 'invoices', 'customers', 'more'];
-  const STAFF_BLOCK = /^(add-product|edit-product|delete-|bulk-|stock-in|open-settings|open-plans|open-shopify|shopify-|export-data|import-data|clear-data|add-expense|edit-expense|new-purchase|view-purchase|purchase-|view-supplier|pay-supplier|add-supplier|edit-supplier|cloud-auth|sign-out-user|submit-payment|db-|pick-|remove-|pin-|staff-|send-daily)/;
+  const STAFF_BLOCK = /^(add-product|edit-product|delete-|bulk-|stock-in|open-settings|open-plans|open-shopify|shopify-|export-data|import-data|clear-data|add-expense|edit-expense|new-purchase|view-purchase|purchase-|view-supplier|pay-supplier|add-supplier|edit-supplier|cloud-auth|change-password|do-change-password|sign-out-user|submit-payment|db-|pick-|remove-|pin-|staff-|send-daily)/;
   let _lastHidden = 0, _pinFails = 0, _pinWaitUntil = 0;
   function lockEnabled() { return !!settings.pinHash && !!(window.HisablyFreemium && HisablyFreemium.hasFeature('passcode')); }
   function getRole() { try { return sessionStorage.getItem(ROLE_KEY) || ''; } catch (e) { return ''; } }
@@ -1215,7 +1215,7 @@
     if (/^(new-return|return-from-invoice)/.test(action)) return 'returns';
     if (/^(duplicate-invoice|convert-estimate|delivery-note|new-estimate)/.test(action)) return 'sales';
     if (/^(export-data|import-data|csv-|open-csv|backup-)/.test(action)) return 'export';
-    if (/^(pin-|staff-|cloud-auth|sign-out-user|clear-data|db-)/.test(action)) return 'owner';
+    if (/^(pin-|staff-|cloud-auth|change-password|do-change-password|sign-out-user|clear-data|db-)/.test(action)) return 'owner';
     if (STAFF_BLOCK.test(action)) return 'settings';
     return null;
   }
@@ -2947,6 +2947,7 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
         ${pct < 100 ? `<div class="text-sm text-secondary">Missing: ${PROFILE_FIELDS.filter(f => !profileFilled(f[0])).map(f => f[1]).join(', ')}</div>` : '<div class="text-sm text-secondary">All set!</div>'}
         <button class="btn btn-outline btn-block" style="margin-top:10px" data-view="business-profile">Edit Business Profile &amp; Card</button></div>
       <div class="section-title">Account</div><div class="list-group">
+        ${cloud ? rowA('Change password', 'data-action="change-password"') : ''}
         ${cloud ? rowA('Sign out', 'data-action="sign-out-user"') : `${rowA('Sign in', 'data-action="show-auth" data-tab="login"')}${rowA('Sign up (create free account)', 'data-action="show-auth" data-tab="register"')}`}
         ${rowA('Billaura Plans', 'data-action="open-plans"')}
         ${rowA('Shopify Sync', 'data-action="open-shopify"')}
@@ -7177,6 +7178,23 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
         break;
       }
       case 'cloud-sync': doCloudSync(); break;
+      case 'change-password': openChangePassword(); break;
+      case 'do-change-password': doChangePassword(); break;
+      case 'cloud-forgot-acct': {
+        const email = ((HisablyFreemium.getSession() || {}).email || '').toLowerCase();
+        HisablyCloud.sendPasswordReset(email, siteBase())
+          .then(() => toast('Reset link sent to ' + email, 5000))
+          .catch(err => toast(resetErrMsg(err), 4000));
+        break;
+      }
+      case 'cloud-forgot': {
+        const email = (($('#cloudEmail') || {}).value || '').trim().toLowerCase();
+        if (!email) { toast('Enter your email first'); break; }
+        HisablyCloud.sendPasswordReset(email, siteBase())
+          .then(() => toast('Reset link sent. Open it from your email in a browser.', 5000))
+          .catch(err => toast(resetErrMsg(err), 4000));
+        break;
+      }
       case 'cloud-signin': {
         const email = (($('#cloudEmail') || {}).value || '').trim();
         const password = ($('#cloudPassword') || {}).value;
@@ -7495,6 +7513,36 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
     localStorage.setItem(OWNER_KEY, id);
   }
 
+  function openChangePassword() {
+    if (!window.HisablyCloud || !HisablyCloud.ready()) { toast('Needs an internet connection and a cloud account'); return; }
+    $('#modalRoot').innerHTML = modalShell('Change password', `
+      <div class="form-group"><label class="form-label">Current password</label><input type="password" class="form-input" id="cpOld" autocomplete="current-password" /></div>
+      <div class="form-group"><label class="form-label">New password</label><input type="password" class="form-input" id="cpNew" autocomplete="new-password" placeholder="Min 6 characters" /></div>
+      <div class="form-group"><label class="form-label">Confirm new password</label><input type="password" class="form-input" id="cpNew2" autocomplete="new-password" /></div>
+      <div id="cpMsg" class="text-sm" style="color:#B91C1C;min-height:18px;margin-bottom:8px"></div>
+      <button class="btn btn-primary btn-block" data-action="do-change-password">Save new password</button>
+      <p class="auth-hint"><button type="button" class="auth-link" data-action="cloud-forgot-acct">Forgot your current password?</button></p>`);
+  }
+  async function doChangePassword() {
+    const v = id => (document.getElementById(id) || {}).value || '';
+    const say = m => { const el = document.getElementById('cpMsg'); if (el) el.textContent = m; };
+    const old = v('cpOld'), nw = v('cpNew'), nw2 = v('cpNew2');
+    const email = ((HisablyFreemium.getSession() || {}).email || '').toLowerCase();
+    if (!old) return say('Enter your current password');
+    if (nw.length < 6) return say('New password must be at least 6 characters');
+    if (nw !== nw2) return say('The two new passwords do not match');
+    if (nw === old) return say('Choose a different password from the current one');
+    try {
+      say('Saving…');
+      await HisablyCloud.changePassword(email, old, nw);
+      closeModal();
+      toast('Password changed');
+    } catch (err) {
+      console.error(err);
+      say(/WRONG_CURRENT|invalid login/i.test(String(err && err.message)) ? 'Current password is wrong' : resetErrMsg(err));
+    }
+  }
+
   async function signOutUser() {
     toast('Signing out…');
     try {
@@ -7574,6 +7622,7 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
             <div class="form-group"><label class="form-label">Email</label><input type="email" class="form-input" id="cloudEmail" value="${escapeHtml((HisablyFreemium.getSession() || {}).email || '')}" /></div>
             <div class="form-group"><label class="form-label">Password</label><input type="password" class="form-input" id="cloudPassword" /></div>
             <button class="btn btn-primary btn-block" data-action="cloud-signin">Sign in</button>
+            <p class="auth-hint"><button type="button" class="auth-link" data-action="cloud-forgot">Forgot password?</button></p>
           `}
         </div>
       </div>`;
@@ -7589,16 +7638,17 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
     const wait = document.documentElement.classList.contains('cap-app') ? 0 : Math.max(0, (inApp ? 1300 : 1500) - (performance.now() || 0));   // browser tab: let the animated splash play once; installed app: phone already showed its own
     setTimeout(() => { boot.classList.add('out'); setTimeout(() => { boot.hidden = true; }, 220); }, wait);
   }
-  function showAuth() {
+  function showAuth(mode, msg, kind) {
     hideBoot();
     const appEl = document.getElementById('app');
     const auth = document.getElementById('authScreen');
     if (appEl) appEl.hidden = true;
     if (auth) {
       auth.hidden = false;
-      auth.innerHTML = renderAuthHTML('login');
+      auth.innerHTML = renderAuthHTML(mode || 'login');
       bindAuthScreen();
-      try { if (localStorage.getItem('billaura_demo_removed')) { localStorage.removeItem('billaura_demo_removed'); authSay('Demo mode was removed. Create a free account or sign in – your data on this phone is kept.', 'info'); } } catch (e) {}
+      if (msg) authSay(msg, kind || 'info');
+      try { if (!mode && localStorage.getItem('billaura_demo_removed')) { localStorage.removeItem('billaura_demo_removed'); authSay('Demo mode was removed. Create a free account or sign in – your data on this phone is kept.', 'info'); } } catch (e) {}
     }
   }
 
@@ -7610,14 +7660,42 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
     if (appEl) appEl.hidden = false;
   }
 
-  function renderAuthHTML(mode) {
-    const isLogin = mode !== 'register';
-    return `<div class="auth-card">
-      <div class="auth-brand">
+  function renderAuthHTML(mode, prefillEmail) {
+    const brand = `<div class="auth-brand">
         <img src="assets/icon-192.png" alt="Billaura" class="brand-mark" width="64" height="64" />
         <h1>Billaura</h1>
         <p>Inventory & invoices for micro sellers</p>
-      </div>
+      </div>`;
+    const foot = `<p class="auth-hint" style="font-size:.72rem;margin-top:14px">© ${new Date().getFullYear()} Billaura. All rights reserved. Unauthorised copying or resale of this software is prohibited. <a href="terms" target="_blank" rel="noopener">Terms &amp; Licence</a></p>`;
+    const em = escapeHtml(prefillEmail || '');
+    if (mode === 'forgot') {
+      return `<div class="auth-card">${brand}
+      <h2 class="auth-title">Forgot your password?</h2>
+      <p class="auth-sub">Enter the email you signed up with and we will send you a link to choose a new password.</p>
+      <div id="authMsg" class="auth-msg" role="alert"></div>
+      <form id="forgotForm">
+        <div class="form-group"><label class="form-label">Email</label><input class="form-input" name="email" type="email" required autocomplete="email" placeholder="you@email.com" value="${em}" /></div>
+        <button type="submit" class="btn btn-primary btn-block">Send reset link</button>
+      </form>
+      <p class="auth-hint"><button type="button" class="auth-link" data-auth-tab="login">← Back to sign in</button></p>
+      ${foot}</div>`;
+    }
+    if (mode === 'recovery') {
+      return `<div class="auth-card">${brand}
+      <h2 class="auth-title">Choose a new password</h2>
+      <p class="auth-sub">Type a new password for your Billaura account.</p>
+      <div id="authMsg" class="auth-msg" role="alert"></div>
+      <form id="resetForm">
+        <div class="form-group"><label class="form-label">New password</label><input class="form-input" name="password" type="password" required minlength="6" autocomplete="new-password" placeholder="Min 6 characters" /></div>
+        <div class="form-group"><label class="form-label">Confirm new password</label><input class="form-input" name="password2" type="password" required minlength="6" autocomplete="new-password" placeholder="Type it again" /></div>
+        <button type="submit" class="btn btn-primary btn-block">Save new password</button>
+      </form>
+      <p class="auth-hint"><button type="button" class="auth-link" data-auth-tab="login">Cancel</button></p>
+      ${foot}</div>`;
+    }
+    const isLogin = mode !== 'register';
+    return `<div class="auth-card">
+      ${brand}
       <div class="auth-tabs">
         <button type="button" class="auth-tab ${isLogin ? 'active' : ''}" data-auth-tab="login">Sign in</button>
         <button type="button" class="auth-tab ${!isLogin ? 'active' : ''}" data-auth-tab="register">Sign up</button>
@@ -7627,13 +7705,14 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
         ${!isLogin ? `<div class="form-group"><label class="form-label">Full name</label><input class="form-input" name="fullName" placeholder="Your name" /></div>
         <div class="form-group"><label class="form-label">Shop name</label><input class="form-input" name="shopName" placeholder="Business name" /></div>
         <div class="form-group"><label class="form-label">Phone</label><input class="form-input" name="phone" type="tel" placeholder="03XX..." /></div>` : ''}
-        <div class="form-group"><label class="form-label">Email</label><input class="form-input" name="email" type="email" required placeholder="you@email.com" /></div>
+        <div class="form-group"><label class="form-label">Email</label><input class="form-input" name="email" type="email" required placeholder="you@email.com" value="${em}" /></div>
         <div class="form-group"><label class="form-label">Password</label><input class="form-input" name="password" type="password" required minlength="6" placeholder="Min 6 characters" /></div>
+        ${isLogin ? '<div class="auth-forgot"><button type="button" class="auth-link" data-auth-tab="forgot">Forgot password?</button></div>' : ''}
         <button type="submit" class="btn btn-primary btn-block">${isLogin ? 'Sign in' : 'Create free account'}</button>
       </form>
       <p class="auth-hint">Sign in to sync your shop across devices. Your data on this phone is kept.</p>
       ${onPublicWebsite() ? '<p class="auth-hint" style="margin-top:8px"><a href="landing">← Back to billaura website</a></p>' : ''}
-      <p class="auth-hint" style="font-size:.72rem;margin-top:14px">© ${new Date().getFullYear()} Billaura. All rights reserved. Unauthorised copying or resale of this software is prohibited. <a href="terms" target="_blank" rel="noopener">Terms &amp; Licence</a></p>
+      ${foot}
     </div>`;
   }
 
@@ -7643,7 +7722,8 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
     auth.onclick = (e) => {
       const tab = e.target.closest('[data-auth-tab]');
       if (tab) {
-        auth.innerHTML = renderAuthHTML(tab.dataset.authTab);
+        const typed = ((auth.querySelector('input[name="email"]') || {}).value || '').trim();
+        auth.innerHTML = renderAuthHTML(tab.dataset.authTab, typed);
         bindAuthForm();
         bindGuestBtn();
       }
@@ -7707,7 +7787,59 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
     if (el) { el.textContent = msg; el.className = 'auth-msg show ' + (kind || 'info'); }
   }
 
+  function resetErrMsg(err) {
+    const m = String((err && err.message) || err || '');
+    if (/RESET_LINK_EXPIRED/.test(m)) return 'This reset link has expired or was already used. Please request a new one.';
+    if (/rate limit|too many|after \d+ seconds|security purposes/i.test(m)) return 'Too many attempts. Please wait a minute and try again.';
+    if (/same password|different from the old/i.test(m)) return 'Choose a password you have not used before.';
+    if (/weak|at least \d+ char/i.test(m)) return 'That password is too short or too weak. Use at least 6 characters.';
+    if (/failed to fetch|network/i.test(m)) return 'No internet connection. Check your connection and try again.';
+    return friendlyMsg(m);
+  }
+
+  function bindForgotForms() {
+    const ff = document.getElementById('forgotForm');
+    if (ff) ff.onsubmit = async (e) => {
+      e.preventDefault();
+      const email = String(new FormData(ff).get('email') || '').trim().toLowerCase();
+      const btn = ff.querySelector('button[type="submit"]');
+      if (!email) { authSay('Enter your email address', 'error'); return; }
+      if (!window.HisablyCloud || !HisablyCloud.ready()) { authSay('Password reset needs an internet connection and a cloud account. Please connect and try again.', 'error'); return; }
+      if (btn) btn.disabled = true;
+      try {
+        authSay('Sending…', 'info');
+        await HisablyCloud.sendPasswordReset(email, siteBase());
+        authSay('If an account exists for ' + email + ', a reset link is on its way. Check your inbox (and spam), then open the link in your browser.', 'ok');
+      } catch (err) {
+        console.error(err);
+        authSay(resetErrMsg(err), 'error');
+      } finally { if (btn) btn.disabled = false; }
+    };
+    const rf = document.getElementById('resetForm');
+    if (rf) rf.onsubmit = async (e) => {
+      e.preventDefault();
+      const fd = new FormData(rf);
+      const pw = String(fd.get('password') || ''), pw2 = String(fd.get('password2') || '');
+      const btn = rf.querySelector('button[type="submit"]');
+      if (pw.length < 6) { authSay('Password must be at least 6 characters', 'error'); return; }
+      if (pw !== pw2) { authSay('The two passwords do not match', 'error'); return; }
+      if (btn) btn.disabled = true;
+      try {
+        authSay('Saving…', 'info');
+        await HisablyCloud.prepareRecovery();
+        await HisablyCloud.updatePassword(pw);
+        try { HisablyFreemium.clearSession(); } catch (e2) {}
+        showAuth('login', 'Password changed. Sign in with your new password.', 'ok');
+      } catch (err) {
+        console.error(err);
+        if (/RESET_LINK_EXPIRED/.test(String((err && err.message) || ''))) showAuth('forgot', resetErrMsg(err), 'error');
+        else authSay(resetErrMsg(err), 'error');
+      } finally { if (btn) btn.disabled = false; }
+    };
+  }
+
   function bindAuthForm() {
+    bindForgotForms();
     const form = document.getElementById('authForm');
     if (!form) return;
     form.onsubmit = async (e) => {
@@ -8278,7 +8410,14 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
       const _lu = JSON.parse(localStorage.getItem('billaura_local_users_v1') || '[]').filter(u => u.email !== 'demo@billaura.local');
       localStorage.setItem('billaura_local_users_v1', JSON.stringify(_lu));
     } catch (e) {}
-    if (!window.HisablyFreemium || !HisablyFreemium.isLoggedIn()) {
+    if (window.HisablyCloud && HisablyCloud.ready() && HisablyCloud.inRecovery()) {
+      // Opened from the "reset password" e-mail link
+      showAuth('recovery');
+      HisablyCloud.prepareRecovery().catch(() => {});
+    } else if (window.HisablyCloud && HisablyCloud.ready() && HisablyCloud.resetLinkExpired()) {
+      try { history.replaceState(null, '', location.pathname); } catch (e) {}
+      showAuth('forgot', 'That reset link has expired or was already used. Enter your email to get a new one.', 'error');
+    } else if (!window.HisablyFreemium || !HisablyFreemium.isLoggedIn()) {
       showAuth();
     } else {
       enterApp();

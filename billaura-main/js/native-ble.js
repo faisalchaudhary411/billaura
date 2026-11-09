@@ -15,9 +15,11 @@
 
   function toHex(v) {
     var u = v instanceof Uint8Array ? v : (v && v.buffer ? new Uint8Array(v.buffer, v.byteOffset || 0, v.byteLength) : new Uint8Array(v || []));
-    var s = '';
-    for (var i = 0; i < u.length; i++) s += (u[i] < 16 ? '0' : '') + u[i].toString(16);
-    return s;
+    // The Android plugin splits the string on spaces and reads ONE byte per token, so the bytes
+    // must be space-separated ("22 21 a1 ...") or only the first byte of every write arrives.
+    var a = [];
+    for (var i = 0; i < u.length; i++) a.push((u[i] < 16 ? '0' : '') + u[i].toString(16));
+    return a.join(' ');
   }
   function fromHex(h) {
     var out = [], s = String(h || '').replace(/[^0-9a-fA-F]/g, '');
