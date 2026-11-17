@@ -797,3 +797,11 @@ select, input, textarea, button { -webkit-tap-highlight-color: transparent; }
 .st-set,.st-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)}.st-set b,.st-item b{display:block;font-size:.92rem}.st-set span,.st-item span{display:block;font-size:.78rem;color:var(--text-muted)}.st-item em.bad{color:#C0213A;font-style:normal;font-weight:700}
 .st-sum{font-size:.88rem;margin-bottom:6px}
 .pl-promo{display:flex;gap:8px;margin:-6px 0 8px 38px}.pl-promo .form-input{flex:1;min-width:0;text-transform:uppercase}.pl-promo .btn{flex:none}
+/* store item editor: extra photos */
+.st-phs{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+.st-ph{position:relative;width:70px;height:70px;border-radius:12px;overflow:hidden;background:#eef0f3;display:grid;place-items:center}
+.st-ph img{width:100%;height:100%;object-fit:cover}
+.st-ph em{position:absolute;left:4px;bottom:4px;background:rgba(0,0,0,.6);color:#fff;font-size:10px;font-style:normal;border-radius:6px;padding:1px 5px}
+.st-ph button{position:absolute;top:3px;right:3px;width:20px;height:20px;border-radius:50%;background:rgba(0,0,0,.65);color:#fff;font-size:11px}
+.st-ph.add{border:1.5px dashed #b9bec9;color:#6b7280;font-size:22px;cursor:pointer;text-align:center}
+.st-ph.add small{font-size:10px;display:block;line-height:1}

@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2.3.0';
+  const APP_VERSION = '2.4.0';
 
   const STORAGE = {
     products: 'sb_products_v2',
@@ -3996,6 +3996,14 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
   }
   // Rebuilds the public store snapshot from the current business details + items.
   // Silent mode only touches storage when something actually changed (keeps the link in sync with the app).
+  // payment methods shown at checkout: [type, label, account number, account title]
+  function storePayList() {
+    const p = settings.storePay || {}, out = [];
+    if (p.jazzcash && p.jazzcash.on && p.jazzcash.num) out.push(['jazzcash', 'JazzCash', p.jazzcash.num, p.jazzcash.title || '']);
+    if (p.easypaisa && p.easypaisa.on && p.easypaisa.num) out.push(['easypaisa', 'Easypaisa', p.easypaisa.num, p.easypaisa.title || '']);
+    if (p.bank && p.bank.on && p.bank.num) out.push(['bank', p.bank.name || 'Bank transfer', p.bank.num, p.bank.title || '']);
+    return out;
+  }
   async function republishStore(silent) {
     const catalog = {
       shop: settings.businessName || 'My Shop', phone: settings.phone || '', email: settings.email || '',
@@ -4004,8 +4012,8 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
       color: settings.invoiceColor || '#EF1A3C',
       links: (settings.storeLinks || []).map(l => ({ label: l.label, url: l.url })),
       currency: settings.currency || 'PKR',
-      opts: { open: settings.storeOpen !== false, delivery: settings.storeDelivery !== false, pickup: settings.storePickup !== false, fee: Number(settings.storeFee) || 0, min: Number(settings.storeMin) || 0, notice: settings.storeNotice || '' },
-      items: products.filter(p => p.online !== false && !(settings.storeHideOOS && (Number(p.stock) || 0) <= 0)).map(p => ({ id: p.id, name: p.name, price: p.price, unit: p.unit || '', category: p.category || '', stock: p.stock, photo: (settings.photos && settings.photos[p.id] && settings.photoBase) ? settings.photoBase + settings.photos[p.id].f : '' })).slice(0, 400)
+      opts: { open: settings.storeOpen !== false, delivery: settings.storeDelivery !== false, pickup: settings.storePickup !== false, fee: Number(settings.storeFee) || 0, min: Number(settings.storeMin) || 0, notice: settings.storeNotice || '', pay: storePayList() },
+      items: products.filter(p => p.online !== false && !(settings.storeHideOOS && (Number(p.stock) || 0) <= 0)).map(p => ({ id: p.id, name: p.name, price: p.price, unit: p.unit || '', category: p.category || '', stock: p.stock, photo: (settings.photos && settings.photos[p.id] && settings.photoBase) ? settings.photoBase + settings.photos[p.id].f : '', info: (settings.storeInfo && settings.storeInfo[p.id]) || null })).slice(0, 400)
     };
     const h = await packCatalog(catalog);
     if (silent && h === settings._storeHash && (settings._slugLive || !settings.storeSlug)) return catalog.items.length;
@@ -4016,7 +4024,7 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
     return catalog.items.length;
   }
   function compactOf(c) {
-    return { n: c.shop, p: c.phone, e: c.email, a: c.address, c: c.currency, t: c.tagline, w: c.wa, k: c.color, b: settings.photoBase || '', l: (c.links || []).map(l => [l.label, l.url]), o: c.opts ? { a: c.opts.open ? 1 : 0, d: c.opts.delivery ? 1 : 0, k: c.opts.pickup ? 1 : 0, f: c.opts.fee, m: c.opts.min, n: c.opts.notice } : undefined, i: c.items.map(x => [x.name, x.price, x.unit, x.category, x.stock, x.photo ? (settings.photoBase && x.photo.startsWith(settings.photoBase) ? x.photo.slice(settings.photoBase.length) : x.photo) : '', x.id || '']) };
+    return { n: c.shop, p: c.phone, e: c.email, a: c.address, c: c.currency, t: c.tagline, w: c.wa, k: c.color, b: settings.photoBase || '', l: (c.links || []).map(l => [l.label, l.url]), o: c.opts ? { a: c.opts.open ? 1 : 0, d: c.opts.delivery ? 1 : 0, k: c.opts.pickup ? 1 : 0, f: c.opts.fee, m: c.opts.min, n: c.opts.notice, y: c.opts.pay || [] } : undefined, i: c.items.map(x => { const inf = x.info || {}; return [x.name, x.price, x.unit, x.category, x.stock, x.photo ? (settings.photoBase && x.photo.startsWith(settings.photoBase) ? x.photo.slice(settings.photoBase.length) : x.photo) : '', x.id || '', (inf.o || []).filter(o => o && o.l).map(o => [o.l, (o.p === '' || o.p == null) ? null : Number(o.p)]), (inf.x || []).slice(0, 4), String(inf.d || '').slice(0, 600)]; }) };
   }
   async function packCatalog(c) {
     const compact = compactOf(c);
@@ -8393,6 +8401,19 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
     lowStockItems() { return lowStockItems(); },
     trashInvoice(inv) { trashPush('invoice', inv); invoices = invoices.filter(x => x.id !== inv.id); },
     republishStore(silent) { return republishStore(silent); },
+    compressImage(f, max) { return compressImage(f, max); },
+    // uploads an extra gallery photo for an item; returns the stored file name
+    async uploadExtraPhoto(pid, blob) {
+      const Cl = window.HisablyCloud; if (!Cl || !Cl.ready() || !Cl.shopId || !Cl.shopId()) throw new Error('Sign in to the cloud first');
+      const sb = Cl.client(); const sid = Cl.shopId();
+      const file = pid.replace(/-/g, '').slice(0, 10) + '-x' + Date.now().toString(36) + '.jpg';
+      const { error } = await sb.storage.from('product-photos').upload(sid + '/' + file, blob, { contentType: 'image/jpeg', upsert: true, cacheControl: '31536000' });
+      if (error) throw error;
+      settings.photoBase = sb.storage.from('product-photos').getPublicUrl(sid + '/x').data.publicUrl.replace(/x$/, '');
+      return file;
+    },
+    async removeExtraPhoto(file) { try { const Cl = window.HisablyCloud; if (Cl && Cl.shopId && Cl.shopId()) await Cl.client().storage.from('product-photos').remove([Cl.shopId() + '/' + file]); } catch (e) {} },
+    photoSrc(pid) { return photoSrc(pid); },
     storeUrl() { return storeUrl(); },
     storeLive() { return !!(settings.storeSlug && settings._slugLive); }
   };

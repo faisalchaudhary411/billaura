@@ -10,7 +10,9 @@
   const sbc = () => { try { const c = cloud(); return c && c.ready() && c.getSession() && c.shopId && c.shopId() ? c.client() : null; } catch (e) { return null; } };
   const KEY = () => 'billaura_store_orders_v1_' + (cloud() && cloud().shopId ? (cloud().shopId() || 'x') : 'x');
   const ST = { orders: [], views: 0, at: 0, err: '', loading: false, tab: 'new', f: 'all', q: '', seen: -1 };
-  const STATUS = { new: 'New', accepted: 'Accepted', delivered: 'Delivered', cancelled: 'Cancelled' };
+  const STATUS = { new: 'New', accepted: 'Accepted', shipped: 'On the way', delivered: 'Delivered', cancelled: 'Cancelled' };
+  const COLS = 'id,shop_id,no,slug,customer_name,phone,address,mode,note,items,subtotal,delivery_fee,total,status,paid,invoice_id,cancel_reason,created_at,updated_at,discount,coupon,pay_method,has_proof,ship_info,accepted_at,shipped_at,delivered_at';
+  const PAYN = { cod: 'Cash on delivery', jazzcash: 'JazzCash', easypaisa: 'Easypaisa', bank: 'Bank transfer' };
 
   function loadCache() { if (ST.orders.length || ST.at) return; try { const j = JSON.parse(localStorage.getItem(KEY()) || 'null'); if (j) { ST.orders = j.orders || []; ST.views = j.views || 0; } } catch (e) {} }
   function saveCache() { try { localStorage.setItem(KEY(), JSON.stringify({ orders: ST.orders.slice(0, 300), views: ST.views })); } catch (e) {} }
@@ -19,7 +21,8 @@
     if (ST.loading || (!force && Date.now() - ST.at < 45000)) return false;
     ST.loading = true;
     try {
-      const o = await c.from('store_orders').select('*').order('created_at', { ascending: false }).limit(300);
+      let o = await c.from('store_orders').select(COLS).order('created_at', { ascending: false }).limit(300);
+      if (o.error && /discount|pay_method|ship_info|has_proof|accepted_at/i.test(o.error.message || '')) { const o1 = await c.from('store_orders').select('*').order('created_at', { ascending: false }).limit(300); if (!o1.error) { o = o1; ST.v2 = false; } }
       if (o.error) { ST.err = /relation|does not exist|42P01|schema cache|PGRST/i.test((o.error.message || '') + (o.error.code || '')) ? 'SETUP' : 'ERR'; return false; }
       let views = ST.views; try { const s = await c.from('store_stats').select('views').maybeSingle(); if (s && s.data) views = Number(s.data.views) || 0; } catch (e) {}
       ST.err = ''; ST.orders = o.data || []; ST.views = views; ST.at = Date.now(); saveCache(); return true;
@@ -28,7 +31,8 @@
   const newCount = () => ST.orders.filter(o => o.status === 'new').length;
   const ago = iso => { const s = (Date.now() - new Date(iso)) / 1000; if (s < 90) return 'just now'; if (s < 3600) return Math.round(s / 60) + ' min ago'; if (s < 86400) return Math.round(s / 3600) + ' h ago'; return C().formatDate(iso); };
   const waNum = v => String(v || '').replace(/\D/g, '').replace(/^0/, '92');
-  const summary = o => (o.items || []).map(i => `${h(i.name)} ×${m(i.qty)}`).join(', ');
+  const lname = i => i.name + (i.opt ? ' (' + i.opt + ')' : '');
+  const summary = o => (o.items || []).map(i => `${h(lname(i))} ×${m(i.qty)}`).join(', ');
   const pill = s => `<span class="st-pill ${s}">${STATUS[s] || s}</span>`;
   const sw = (on, attr) => `<button type="button" class="st-sw${on ? ' on' : ''}" ${attr} aria-pressed="${on}"><i></i></button>`;
 
@@ -37,12 +41,13 @@
     if (!C().storeLive()) return `<div class="doc-card" style="margin:14px 16px 0"><div class="doc-label">Orders</div><div class="text-sm text-secondary">Sign in to the cloud and tap <b>Publish Store Page</b> to get a short link. Customers can then place orders that arrive here.</div></div>`;
     loadCache();
     fetchAll().then(ok => { if (ok && C().view === 'online-store') redraw(); });
-    const o = ST.orders, open = o.filter(x => x.status === 'new' || x.status === 'accepted').length, nw = newCount();
+    const o = ST.orders, open = o.filter(x => x.status === 'new' || x.status === 'accepted' || x.status === 'shipped').length, nw = newCount();
     const received = r2(o.filter(x => x.status === 'delivered').reduce((a, x) => a + Number(x.total || 0), 0));
     const oos = C().products.filter(p => (Number(p.stock) || 0) <= 0).length;
     const delivered = o.filter(x => x.status === 'delivered').length;
     const on = S().storeOpen !== false;
     return `<div class="st-dash">
+      ${ST.v2 === false ? `<div class="st-warn"><b>Store upgrade needed</b><br>Run <code>supabase/store-v2.sql</code> in Supabase → SQL Editor to turn on options, coupons, payment proof and tracking.</div>` : ''}
       ${ST.err === 'SETUP' ? `<div class="st-warn"><b>One-time setup needed</b><br>Run <code>supabase/store-orders.sql</code> in Supabase → SQL Editor so orders can reach this screen.</div>` : ''}
       <div class="st-row"><div class="st-open ${on ? 'on' : ''}"><span></span>${on ? 'Accepting orders' : 'Orders paused'}</div><button class="chip-btn" data-action="st-settings">⚙ Store settings</button></div>
       <div class="st-grid">
@@ -53,6 +58,8 @@
       </div>
       <div class="section-title" style="padding-left:0">Quick actions</div>
       <div class="st-act" data-view="store-items"><div class="st-ai amb">${C().ico('box')}</div><div><b>Manage Items</b><span class="${oos ? 'warn' : ''}">${oos ? 'Out of stock · ' + oos + ' item' + (oos === 1 ? '' : 's') : 'All items in stock'}</span></div><i>›</i></div>
+      <div class="st-act" data-action="st-pay"><div class="st-ai amb">💳</div><div><b>Payment methods</b><span>JazzCash · Easypaisa · Bank · COD</span></div><i>›</i></div>
+      <div class="st-act" data-action="st-coupons"><div class="st-ai pnk">🏷</div><div><b>Coupons</b><span>Discount codes for customers</span></div><i>›</i></div>
       <div class="st-act" data-view="store-orders"><div class="st-ai pnk">${C().ico('cart')}</div><div><b>Manage Orders</b><span>${delivered} delivered till date</span></div><i>›</i></div>
     </div>`;
   };
@@ -64,7 +71,7 @@
     right: () => `<button class="icon-btn" data-action="so-refresh" aria-label="Refresh">${C().ico('sync') || '↻'}</button>`,
     html() {
       loadCache(); fetchAll().then(ok => { if (ok && C().view === 'store-orders') redraw(); });
-      const tabs = ['new', 'accepted', 'delivered', 'cancelled'], cnt = t => ST.orders.filter(o => o.status === t).length;
+      const tabs = ['new', 'accepted', 'shipped', 'delivered', 'cancelled'], cnt = t => ST.orders.filter(o => o.status === t).length;
       const l = ST.orders.filter(o => o.status === ST.tab);
       return `<div class="fade-in" style="padding:12px 16px 40px">
         ${ST.err === 'SETUP' ? `<div class="st-warn">Run <code>supabase/store-orders.sql</code> in Supabase to turn on orders.</div>` : ''}
@@ -82,23 +89,50 @@
 
   const byId = id => ST.orders.find(x => x.id === id);
   function openOrder(o) {
-    const lines = (o.items || []).map(i => `<div class="st-line"><span>${h(i.name)} <small>× ${m(i.qty)}${i.unit ? ' ' + h(i.unit) : ''}</small></span><b>${m(r2(i.qty * i.price))}</b></div>`).join('');
+    const lines = (o.items || []).map(i => `<div class="st-line"><span>${h(lname(i))} <small>× ${m(i.qty)}${i.unit ? ' ' + h(i.unit) : ''}</small></span><b>${m(r2(i.qty * i.price))}</b></div>`).join('');
     const b = [];
     if (o.status === 'new') b.push(`<button class="btn btn-primary btn-block" data-action="so-set" data-id="${o.id}" data-v="accepted">Accept order</button>`, `<button class="btn btn-outline btn-block" style="margin-top:8px;color:#C0213A" data-action="so-cancel" data-id="${o.id}">Reject order</button>`);
-    if (o.status === 'accepted') b.push(`<button class="btn btn-primary btn-block" data-action="so-set" data-id="${o.id}" data-v="delivered">Mark ${o.mode === 'pickup' ? 'picked up' : 'delivered'}</button>`, `<button class="btn btn-outline btn-block" style="margin-top:8px" data-action="so-bill" data-id="${o.id}">Create bill</button>`, `<button class="btn btn-ghost btn-block" style="margin-top:4px;color:#C0213A" data-action="so-cancel" data-id="${o.id}">Cancel order</button>`);
+    if (o.status === 'accepted') b.push(`<button class="btn btn-primary btn-block" data-action="so-ship" data-id="${o.id}">${o.mode === 'pickup' ? 'Ready for pickup' : 'Out for delivery'}</button>`, `<button class="btn btn-outline btn-block" style="margin-top:8px" data-action="so-set" data-id="${o.id}" data-v="delivered">Mark ${o.mode === 'pickup' ? 'picked up' : 'delivered'}</button>`, `<button class="btn btn-ghost btn-block" style="margin-top:4px;color:#C0213A" data-action="so-cancel" data-id="${o.id}">Cancel order</button>`);
+    if (o.status === 'shipped') b.push(`<button class="btn btn-primary btn-block" data-action="so-set" data-id="${o.id}" data-v="delivered">Mark ${o.mode === 'pickup' ? 'picked up' : 'delivered'}</button>`, `<button class="btn btn-ghost btn-block" style="margin-top:4px;color:#C0213A" data-action="so-cancel" data-id="${o.id}">Cancel order</button>`);
     if (o.status === 'delivered' && !o.invoice_id) b.push(`<button class="btn btn-primary btn-block" data-action="so-bill" data-id="${o.id}">Create bill</button>`);
     const inv = o.invoice_id && C().invoices.find(x => x.id === o.invoice_id);
-    const msg = { new: `Hello ${o.customer_name}, we received your order #${o.no} (${cur()} ${m(o.total)}).`, accepted: `Hello ${o.customer_name}, your order #${o.no} is confirmed. ${o.mode === 'pickup' ? 'You can pick it up soon.' : 'We will deliver it soon.'}`, delivered: `Thank you ${o.customer_name}! Order #${o.no} is complete. Total ${cur()} ${m(o.total)}.`, cancelled: `Hello ${o.customer_name}, sorry, we could not complete order #${o.no}.${o.cancel_reason ? ' ' + o.cancel_reason : ''}` }[o.status];
+    const link = (() => { try { return C().storeUrl(); } catch (e) { return ''; } })();
+    const trk = link ? ` You can track it here: ${link} (tap the box icon, order #${o.no}).` : '';
+    const msg = { new: `Hello ${o.customer_name}, we received your order #${o.no} (${cur()} ${m(o.total)}).${trk}`, accepted: `Hello ${o.customer_name}, your order #${o.no} is confirmed. ${o.mode === 'pickup' ? 'We will tell you when it is ready.' : 'We will dispatch it soon.'}${trk}`, shipped: `Hello ${o.customer_name}, your order #${o.no} is ${o.mode === 'pickup' ? 'ready for pickup.' : 'out for delivery.'}${o.ship_info ? ' ' + o.ship_info + '.' : ''}`, delivered: `Thank you ${o.customer_name}! Order #${o.no} is complete. Total ${cur()} ${m(o.total)}.`, cancelled: `Hello ${o.customer_name}, sorry, we could not complete order #${o.no}.${o.cancel_reason ? ' ' + o.cancel_reason : ''}` }[o.status];
+    const payLine = `<div class="st-cust" style="margin-top:8px"><span>💳 ${h(PAYN[o.pay_method] || o.pay_method || 'Cash on delivery')}${o.paid ? ' · <b style="color:#12924F">Paid</b>' : ''}${o.coupon ? ` · Coupon ${h(o.coupon)}` : ''}</span>${o.ship_info ? `<span>📦 ${h(o.ship_info)}</span>` : ''}${o.has_proof ? `<button class="chip-btn" style="margin-top:6px" data-action="so-proof" data-id="${o.id}">View payment screenshot</button>` : ''}${(o.pay_method && o.pay_method !== 'cod' && !o.paid && o.status !== 'cancelled') ? `<button class="chip-btn" style="margin-top:6px" data-action="so-paid" data-id="${o.id}">Mark payment received</button>` : ''}</div>`;
     H().modal(`Order #${o.no}`, `<div class="modal-body">
       <div style="display:flex;justify-content:space-between;align-items:center">${pill(o.status)}<span class="text-sm text-secondary">${ago(o.created_at)}</span></div>
       <div class="st-cust"><b>${h(o.customer_name)}</b><a href="tel:${h(o.phone)}">${h(o.phone)}</a>${o.mode === 'delivery' ? `<span>📍 ${h(o.address)}</span>` : '<span>🏬 Customer will pick up</span>'}${o.note ? `<span>📝 ${h(o.note)}</span>` : ''}</div>
-      <div class="st-lines">${lines}${o.delivery_fee > 0 ? `<div class="st-line"><span>Delivery</span><b>${m(o.delivery_fee)}</b></div>` : ''}<div class="st-line tot"><span>Total</span><b>${cur()} ${m(o.total)}</b></div></div>
+      <div class="st-lines">${lines}${o.delivery_fee > 0 ? `<div class="st-line"><span>Delivery</span><b>${m(o.delivery_fee)}</b></div>` : ''}${o.discount > 0 ? `<div class="st-line"><span>Discount${o.coupon ? ' (' + h(o.coupon) + ')' : ''}</span><b>− ${m(o.discount)}</b></div>` : ''}<div class="st-line tot"><span>Total</span><b>${cur()} ${m(o.total)}</b></div></div>
+      ${payLine}
       ${inv ? `<div class="text-sm" style="margin:8px 0">Bill: <a data-action="so-view-bill" data-id="${inv.id}">${h(inv.number)}</a></div>` : ''}
       ${o.status === 'cancelled' && o.cancel_reason ? `<div class="text-sm text-secondary">Reason: ${h(o.cancel_reason)}</div>` : ''}
       <div class="form-row" style="margin:10px 0"><a class="btn btn-outline" href="tel:${h(o.phone)}">Call</a><a class="btn btn-outline" href="https://wa.me/${waNum(o.phone)}?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">WhatsApp</a></div>
       ${b.join('')}</div>`);
   }
   A['so-open'] = t => { const o = byId(t.dataset.id); if (o) openOrder(o); };
+  A['so-proof'] = async t => {
+    const c = sbc(); if (!c) return toast('Go online first'); toast('Loading…');
+    const { data, error } = await c.from('store_orders').select('proof').eq('id', t.dataset.id).maybeSingle();
+    if (error || !data || !data.proof) return toast('No screenshot found');
+    H().modal('Payment screenshot', `<div class="modal-body"><img src="${h(data.proof)}" alt="" style="width:100%;border-radius:12px"></div>`);
+  };
+  A['so-paid'] = async t => {
+    const o = byId(t.dataset.id); if (!o) return; const c = sbc(); if (!c) return toast('Go online first');
+    const { error } = await c.from('store_orders').update({ paid: true, updated_at: new Date().toISOString() }).eq('id', o.id);
+    if (error) return toast('Could not update'); o.paid = true; saveCache(); toast('Marked as paid'); openOrder(o);
+  };
+  A['so-ship'] = t => {
+    const o = byId(t.dataset.id); if (!o) return;
+    H().modal(o.mode === 'pickup' ? 'Ready for pickup' : 'Out for delivery', `<div class="modal-body">
+      ${o.mode === 'pickup' ? '' : `<div class="form-group"><label class="form-label">Courier / tracking details (optional)</label><input class="form-input" id="soShip" maxlength="120" placeholder="e.g. TCS CN 1234567890, or Rider: Ali 0300…"></div>`}
+      <button class="btn btn-primary btn-block" data-action="so-ship-go" data-id="${o.id}">Update &amp; notify</button>
+      <p class="text-sm text-secondary" style="margin-top:8px">The customer sees this on their tracking page. You can also send it on WhatsApp from the order.</p></div>`);
+  };
+  A['so-ship-go'] = async t => {
+    const o = byId(t.dataset.id); if (!o) return; const info = ((document.getElementById('soShip') || {}).value || '').trim();
+    if (await setStatus(o, 'shipped', { ship_info: info })) { C().persist(); H().close(); toast('Order updated'); ST.tab = 'shipped'; openOrder(o); redraw(); }
+  };
   A['so-view-bill'] = t => { H().close(); const inv = C().invoices.find(x => x.id === t.dataset.id); if (inv) C().openInvoiceDetail(inv); };
   async function setStatus(o, status, extra) {
     const c = sbc(); if (!c || !navigator.onLine) { toast('Go online to update orders'); return false; }
@@ -131,11 +165,12 @@
     const c = C(), s = S(), now = new Date().toISOString(), paid = t.dataset.paid === '1';
     if (!c.enforceLimit('invoices', c.invoices.length)) return;
     const number = c.nextInvoiceNumber();
-    const items = (o.items || []).map(i => { const p = c.products.find(x => x.id === i.id); return { productId: p ? p.id : null, name: i.name, price: Number(i.price) || 0, cost: p ? Number(p.cost) || 0 : 0, qty: Number(i.qty) || 0 }; });
+    const items = (o.items || []).map(i => { const p = c.products.find(x => x.id === i.id); return { productId: p ? p.id : null, name: lname(i), price: Number(i.price) || 0, cost: p ? Number(p.cost) || 0 : 0, qty: Number(i.qty) || 0 }; });
     items.forEach(it => { const p = c.products.find(x => x.id === it.productId); if (!p) return; p.stock = r2((Number(p.stock) || 0) - it.qty); try { E.onStock(p, -it.qty); } catch (e) {} c.stockMovements.unshift({ id: c.uid(), productId: it.productId, productName: it.name, type: 'out', qty: it.qty, date: now, note: 'Online order #' + o.no + ' · ' + number }); });
     const cu = c.findOrCreateCustomer(o.customer_name, o.phone);
     const fee = Number(o.delivery_fee) || 0, total = Number(o.total) || 0;
-    const meta = { subtotal: Number(o.subtotal) || 0, discount: 0, discType: 'amount', discValue: 0, taxName: 'Tax', taxRate: 0, taxType: 'pct', tax: 0, inclTax: false, chargeLabel: fee ? 'Delivery' : '', charges: fee, roundOff: 0, paymentMode: paid ? 'Cash' : '', onlineOrder: o.no };
+    const dsc = Number(o.discount) || 0;
+    const meta = { subtotal: Number(o.subtotal) || 0, discount: dsc, discType: 'amount', discValue: dsc, taxName: 'Tax', taxRate: 0, taxType: 'pct', tax: 0, inclTax: false, chargeLabel: fee ? 'Delivery' : '', charges: fee, roundOff: 0, paymentMode: paid ? 'Cash' : '', onlineOrder: o.no };
     if (paid && s.shiftOpen) meta.shiftId = s.shiftOpen.id;
     E.stamp(meta); if (c.isStaff()) meta.by = c.staffName();
     const inv = { id: c.uid(), number, docType: 'sale', customerId: cu ? cu.id : null, customerName: cu ? cu.name : o.customer_name, customerPhone: o.phone, items, total, paymentStatus: paid ? 'paid' : 'unpaid', paidAmount: paid ? total : 0, meta, date: now };
@@ -158,10 +193,12 @@
         <div class="st-set"><div><b>Hide out-of-stock items</b><span>They disappear from the store until you restock</span></div>${sw(!!S().storeHideOOS, 'data-action="si-oos"')}</div>
         <input class="form-input" data-in="si-q" placeholder="Search items" value="${h(ST.q)}" style="margin:10px 0">
         <div class="chip-row" style="margin-bottom:8px"><button class="cat-chip${ST.f === 'all' ? ' active' : ''}" data-action="si-f" data-v="all">All (${ps.length})</button><button class="cat-chip${ST.f === 'oos' ? ' active' : ''}" data-action="si-f" data-v="oos">Out of stock (${oos.length})</button><button class="cat-chip${ST.f === 'hidden' ? ' active' : ''}" data-action="si-f" data-v="hidden">Hidden (${hid.length})</button></div>
-        ${l.slice(0, 200).map(p => `<div class="st-item"><div style="min-width:0"><b>${h(p.name)}</b><span>${cur()} ${m(p.price)} · ${(Number(p.stock) || 0) <= 0 ? '<em class="bad">Out of stock</em>' : 'Stock ' + m(p.stock)}</span></div>${sw(p.online !== false, `data-action="si-toggle" data-id="${p.id}"`)}</div>`).join('') || '<div class="text-sm text-secondary" style="text-align:center;padding:30px">Nothing here.</div>'}
+        ${l.slice(0, 200).map(p => `<div class="st-item"><div style="min-width:0" data-action="si-edit" data-id="${p.id}"><b>${h(p.name)}</b><span>${cur()} ${m(p.price)} · ${(Number(p.stock) || 0) <= 0 ? '<em class="bad">Out of stock</em>' : 'Stock ' + m(p.stock)}${infoBadge(p.id)} · <u>Edit details</u></span></div>${sw(p.online !== false, `data-action="si-toggle" data-id="${p.id}"`)}</div>`).join('') || '<div class="text-sm text-secondary" style="text-align:center;padding:30px">Nothing here.</div>'}
         ${l.length > 200 ? `<div class="text-sm text-secondary" style="text-align:center">Showing 200 of ${l.length}. Use search.</div>` : ''}</div>`;
     }
   };
+  const infoOf = id => (S().storeInfo && S().storeInfo[id]) || {};
+  const infoBadge = id => { const i = infoOf(id), b = []; if ((i.o || []).length) b.push((i.o || []).length + ' options'); if ((i.x || []).length) b.push((i.x.length + 1) + ' photos'); if (i.d) b.push('description'); return b.length ? ' · ' + b.join(', ') : ''; };
   let pubT; const schedulePublish = () => { clearTimeout(pubT); pubT = setTimeout(() => { C().republishStore(true).then(() => toast('Store updated')).catch(() => {}); }, 2500); };
   A['si-f'] = t => { ST.f = t.dataset.v; redraw(); };
   E.inputs['si-q'] = el => { ST.q = el.value; const pos = el.selectionStart; redraw(); const n = document.querySelector('[data-in="si-q"]'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (e) {} } };
@@ -189,6 +226,106 @@
     try { await C().republishStore(true); toast('Store updated'); } catch (e) { toast('Saved. Tap Update Store Page to publish.'); }
     redraw();
   };
+
+  // ---------- item details: description, options (size / colour…), extra photos ----------
+  let ED = null;
+  const optsToText = o => (o || []).map(x => x.l + (x.p === '' || x.p == null ? '' : ' = ' + x.p)).join('\n');
+  function parseOpts(t) {
+    const out = [];
+    String(t || '').split('\n').forEach(line => {
+      line = line.trim(); if (!line) return;
+      const mm = line.match(/^(.*?)\s*[=:]\s*([0-9][0-9.,]*)\s*$/);
+      const l = (mm ? mm[1] : line).trim().slice(0, 30); if (!l || out.some(x => x.l.toLowerCase() === l.toLowerCase())) return;
+      out.push({ l, p: mm ? Number(mm[2].replace(/,/g, '')) : null });
+    });
+    return out.slice(0, 12);
+  }
+  const phUrl = f => (S().photoBase || '') + f;
+  function drawEdPhotos() {
+    const box = document.getElementById('siPhBox'); if (!box || !ED) return;
+    const main = C().photoSrc ? C().photoSrc(ED.id) : '';
+    box.innerHTML = (main ? `<div class="st-ph"><img src="${h(main)}" alt=""><em>Main</em></div>` : '') +
+      ED.x.map((f, k) => `<div class="st-ph"><img src="${h(phUrl(f))}" alt=""><button type="button" data-action="si-ph-del" data-k="${k}" aria-label="Remove">✕</button></div>`).join('') +
+      (ED.x.length < 4 ? `<label class="st-ph add" for="siPhIn">＋<small>Add photo</small></label>` : '');
+  }
+  A['si-edit'] = t => {
+    const p = C().products.find(x => x.id === t.dataset.id); if (!p) return; const i = infoOf(p.id);
+    ED = { id: p.id, x: (i.x || []).slice(), gone: [] };
+    H().modal('Store details · ' + p.name, `<div class="modal-body">
+      <div class="form-group"><label class="form-label">Description</label><textarea class="form-input" id="siDesc" rows="3" maxlength="600" placeholder="What customers should know: material, warranty, size guide…">${h(i.d || '')}</textarea></div>
+      <div class="form-group"><label class="form-label">Options (one per line)</label><textarea class="form-input" id="siOpts" rows="4" placeholder="Small\\nMedium\\nLarge = 1200">${h(optsToText(i.o))}</textarea>
+        <div class="text-sm text-secondary" style="margin-top:4px">For size, colour, flavour… Add <b>= price</b> to a line if that option costs different. Customers must pick one. Stock is counted for the whole item.</div></div>
+      <div class="form-label">More photos (up to 4)</div><div class="st-phs" id="siPhBox"></div><input type="file" id="siPhIn" accept="image/*" hidden>
+      <button class="btn btn-primary btn-block" style="margin-top:12px" data-action="si-save">Save &amp; update store</button></div>`);
+    drawEdPhotos();
+    const inp = document.getElementById('siPhIn');
+    if (inp) inp.onchange = async e => {
+      const f = e.target.files && e.target.files[0]; if (!f || !ED) return;
+      try { toast('Uploading photo…'); const pk = await C().compressImage(f, 900); const file = await C().uploadExtraPhoto(ED.id, pk.blob); ED.x.push(file); drawEdPhotos(); toast('Photo added'); }
+      catch (er) { toast(er.message || 'Could not upload the photo'); }
+    };
+  };
+  A['si-ph-del'] = t => { if (!ED) return; const f = ED.x.splice(Number(t.dataset.k), 1)[0]; if (f) ED.gone.push(f); drawEdPhotos(); };
+  A['si-save'] = () => {
+    if (!ED) return; const s = S(); s.storeInfo = s.storeInfo || {};
+    const d = ((document.getElementById('siDesc') || {}).value || '').trim(), o = parseOpts((document.getElementById('siOpts') || {}).value);
+    if (!d && !o.length && !ED.x.length) delete s.storeInfo[ED.id]; else s.storeInfo[ED.id] = { d, o, x: ED.x.slice() };
+    ED.gone.forEach(f => { try { C().removeExtraPhoto(f); } catch (e) {} });
+    ED = null; C().persist(); H().close(); toast('Updating your store…'); C().republishStore(true).then(() => toast('Store updated')).catch(() => toast('Saved. Tap Update Store Page to publish.')); redraw();
+  };
+
+  // ---------- payment methods ----------
+  A['st-pay'] = () => {
+    if (C().isStaff()) return toast('Only the owner can change payment methods');
+    const p = S().storePay || {}, row = (k, label, extra) => { const v = p[k] || {}; return `<div class="st-set" style="margin-top:10px"><div><b>${label}</b></div>${sw(!!v.on, `data-action="sp-sw" data-k="${k}"`)}</div>
+      <div class="form-row"><div class="form-group"><label class="form-label">${k === 'bank' ? 'Account / IBAN' : 'Number'}</label><input class="form-input" id="sp_${k}_n" value="${h(v.num || '')}" inputmode="${k === 'bank' ? 'text' : 'tel'}"></div><div class="form-group"><label class="form-label">Account title</label><input class="form-input" id="sp_${k}_t" value="${h(v.title || '')}"></div></div>${extra || ''}`; };
+    H().modal('Payment methods', `<div class="modal-body"><p class="text-sm text-secondary">Cash on delivery is always on. Customers see these numbers at checkout and can attach a payment screenshot.</p>
+      ${row('jazzcash', 'JazzCash')}${row('easypaisa', 'Easypaisa')}${row('bank', 'Bank transfer', `<div class="form-group"><label class="form-label">Bank name</label><input class="form-input" id="sp_bank_b" value="${h((p.bank || {}).name || '')}" placeholder="e.g. Meezan Bank"></div>`)}
+      <button class="btn btn-primary btn-block" data-action="sp-save">Save &amp; update store</button></div>`);
+  };
+  A['sp-sw'] = t => { const s = S(); s.storePay = s.storePay || {}; const k = t.dataset.k; s.storePay[k] = s.storePay[k] || {}; s.storePay[k].on = !s.storePay[k].on; t.classList.toggle('on', s.storePay[k].on); t.setAttribute('aria-pressed', !!s.storePay[k].on); };
+  A['sp-save'] = async () => {
+    const s = S(), v = id => ((document.getElementById(id) || {}).value || '').trim(); s.storePay = s.storePay || {};
+    ['jazzcash', 'easypaisa', 'bank'].forEach(k => { const o = s.storePay[k] = s.storePay[k] || {}; o.num = v('sp_' + k + '_n'); o.title = v('sp_' + k + '_t'); if (k === 'bank') o.name = v('sp_bank_b'); if (o.on && !o.num) o.on = false; });
+    C().persist(); H().close(); toast('Updating your store…');
+    try { await C().republishStore(true); toast('Store updated'); } catch (e) { toast('Saved. Tap Update Store Page to publish.'); } redraw();
+  };
+
+  // ---------- coupons ----------
+  const CP = { list: [], err: '' };
+  async function loadCoupons() {
+    const c = sbc(); if (!c) { CP.err = 'Sign in and go online to manage coupons.'; return; }
+    const { data, error } = await c.from('store_coupons').select('*').order('created_at', { ascending: false });
+    if (error) { CP.err = /relation|does not exist|42P01|schema cache|PGRST/i.test(error.message || '') ? 'Run supabase/store-v2.sql in Supabase to turn on coupons.' : 'Could not load coupons.'; CP.list = []; return; }
+    CP.err = ''; CP.list = data || [];
+  }
+  function couponHtml() {
+    const row = x => `<div class="st-item"><div style="min-width:0"><b>${h(x.code)}</b><span>${x.kind === 'pct' ? m(x.value) + '% off' : cur() + ' ' + m(x.value) + ' off'}${x.min_order > 0 ? ' · min ' + m(x.min_order) : ''} · used ${x.used}${x.max_uses ? '/' + x.max_uses : ''}${x.expires_at ? ' · till ' + C().formatDate(x.expires_at) : ''}</span></div>
+      <div style="display:flex;gap:8px;align-items:center">${sw(x.active, `data-action="sc-toggle" data-id="${x.id}"`)}<button class="chip-btn" data-action="sc-del" data-id="${x.id}" style="color:#C0213A">✕</button></div></div>`;
+    return `<div class="modal-body">${CP.err ? `<div class="st-warn">${h(CP.err)}</div>` : ''}
+      ${CP.list.map(row).join('') || (CP.err ? '' : '<div class="text-sm text-secondary" style="margin-bottom:10px">No coupons yet.</div>')}
+      <div class="doc-label" style="margin-top:12px">New coupon</div>
+      <div class="form-row"><div class="form-group"><label class="form-label">Code</label><input class="form-input" id="scCode" maxlength="20" placeholder="EID10" style="text-transform:uppercase"></div>
+        <div class="form-group"><label class="form-label">Type</label><select class="form-input" id="scKind"><option value="pct">Percent %</option><option value="amt">Fixed amount</option></select></div></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">Value</label><input class="form-input" id="scVal" type="number" inputmode="decimal" min="0" step="any"></div>
+        <div class="form-group"><label class="form-label">Min. order</label><input class="form-input" id="scMin" type="number" inputmode="decimal" min="0" step="any" placeholder="0"></div></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">Max uses</label><input class="form-input" id="scMax" type="number" inputmode="numeric" min="1" placeholder="No limit"></div>
+        <div class="form-group"><label class="form-label">Expires</label><input class="form-input" id="scExp" type="date"></div></div>
+      <button class="btn btn-primary btn-block" data-action="sc-add">Add coupon</button></div>`;
+  }
+  async function showCoupons() { await loadCoupons(); H().modal('Coupons', couponHtml()); }
+  A['st-coupons'] = () => { if (C().isStaff()) return toast('Only the owner can manage coupons'); toast('Loading…'); showCoupons(); };
+  A['sc-add'] = async () => {
+    const c = sbc(); if (!c) return toast('Go online first'); const v = id => ((document.getElementById(id) || {}).value || '').trim();
+    const code = v('scCode').toUpperCase().replace(/[^A-Z0-9_-]/g, ''), kind = v('scKind'), val = parseFloat(v('scVal'));
+    if (code.length < 3) return toast('Code needs at least 3 letters or digits'); if (!(val > 0)) return toast('Enter the discount value'); if (kind === 'pct' && val > 100) return toast('Percent cannot be above 100');
+    const row = { shop_id: cloud().shopId(), code, kind, value: val, min_order: parseFloat(v('scMin')) || 0, max_uses: parseInt(v('scMax'), 10) || null, expires_at: v('scExp') ? new Date(v('scExp') + 'T23:59:59').toISOString() : null };
+    const { error } = await c.from('store_coupons').insert(row);
+    if (error) return toast(/duplicate|unique/i.test(error.message || '') ? 'That code already exists' : 'Could not save: ' + (error.message || ''));
+    toast('Coupon added'); showCoupons();
+  };
+  A['sc-toggle'] = async t => { const c = sbc(); if (!c) return; const x = CP.list.find(y => y.id === t.dataset.id); if (!x) return; const { error } = await c.from('store_coupons').update({ active: !x.active }).eq('id', x.id); if (!error) { x.active = !x.active; t.classList.toggle('on', x.active); t.setAttribute('aria-pressed', x.active); } else toast('Could not update'); };
+  A['sc-del'] = async t => { const c = sbc(); if (!c) return; if (!(await C().askConfirm('Delete this coupon?'))) return; await c.from('store_coupons').delete().eq('id', t.dataset.id); showCoupons(); };
 
   // ---------- alerts + background check ----------
   const ha = E.homeAlerts;
