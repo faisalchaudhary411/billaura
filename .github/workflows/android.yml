@@ -26,6 +26,25 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      - name: Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android-app/package.json') }}
+          restore-keys: gradle-${{ runner.os }}-
+      - name: Use a Maven Central mirror first (avoids "429 Too Many Requests" on shared runners)
+        run: |
+          mkdir -p ~/.gradle/init.d
+          cat > ~/.gradle/init.d/mirror.gradle <<'G'
+          def mirror = 'https://maven-central.storage-download.googleapis.com/maven2/'
+          gradle.beforeProject { p ->
+              p.buildscript.repositories { maven { url mirror } }
+              p.repositories { maven { url mirror } }
+          }
+          G
+          mkdir -p ~/.gradle && printf "org.gradle.internal.http.connectionTimeout=60000\norg.gradle.internal.http.socketTimeout=60000\n" >> ~/.gradle/gradle.properties
       - name: Bundle the web app
         run: |
           mkdir -p android-app/www
@@ -74,11 +93,13 @@ jobs:
       - name: Build signed release APK
         if: env.KS_B64 != ''
         working-directory: android-app/android
-        run: ./gradlew assembleRelease --no-daemon
+        run: |
+          n=0; until ./gradlew assembleRelease --no-daemon; do n=$((n+1)); [ $n -ge 3 ] && exit 1; echo "Build failed, retrying in 45s ($n/3)"; sleep 45; done
       - name: Build debug APK (no keystore yet)
         if: env.KS_B64 == ''
         working-directory: android-app/android
-        run: ./gradlew assembleDebug --no-daemon
+        run: |
+          n=0; until ./gradlew assembleDebug --no-daemon; do n=$((n+1)); [ $n -ge 3 ] && exit 1; echo "Build failed, retrying in 45s ($n/3)"; sleep 45; done
       - name: Collect
         run: |
           mkdir -p out
