@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2.4.3';
+  const APP_VERSION = '2.5.0';
 
   const STORAGE = {
     products: 'sb_products_v2',
@@ -4075,6 +4075,16 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
     if (p.bank && p.bank.on && p.bank.num) out.push(['bank', p.bank.name || 'Bank transfer', p.bank.num, p.bank.title || '']);
     return out;
   }
+  // store look & feel: only the fields the owner actually set are published (the storefront fills the rest from the theme)
+  function storeStyleOut() {
+    const s = settings.storeStyle || {}, o = {};
+    if (s.theme && s.theme !== 'classic') o.t = s.theme;
+    if (/^#[0-9a-f]{6}$/i.test(s.color || '')) o.k = s.color;
+    ['font:f', 'radius:r', 'hero:h', 'card:c'].forEach(x => { const [a, b] = x.split(':'); if (s[a]) o[b] = s[a]; });
+    if (s.logo) o.lg = s.logo; if (s.banner) o.bn = s.banner;
+    if (s.about) o.ab = String(s.about).slice(0, 400); if (s.ann) o.an = String(s.ann).slice(0, 90);
+    return Object.keys(o).length ? o : undefined;
+  }
   async function republishStore(silent) {
     const catalog = {
       shop: settings.businessName || 'My Shop', phone: settings.phone || '', email: settings.email || '',
@@ -4084,6 +4094,7 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
       links: (settings.storeLinks || []).map(l => ({ label: l.label, url: l.url })),
       currency: settings.currency || 'PKR',
       opts: { open: settings.storeOpen !== false, delivery: settings.storeDelivery !== false, pickup: settings.storePickup !== false, fee: Number(settings.storeFee) || 0, min: Number(settings.storeMin) || 0, notice: settings.storeNotice || '', pay: storePayList() },
+      style: storeStyleOut(),
       items: products.filter(p => p.online !== false && !(settings.storeHideOOS && (Number(p.stock) || 0) <= 0)).map(p => ({ id: p.id, name: p.name, price: p.price, unit: p.unit || '', category: p.category || '', stock: p.stock, photo: (settings.photos && settings.photos[p.id] && settings.photoBase) ? settings.photoBase + settings.photos[p.id].f : '', info: (settings.storeInfo && settings.storeInfo[p.id]) || null })).slice(0, 400)
     };
     const h = await packCatalog(catalog);
@@ -4095,7 +4106,7 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
     return catalog.items.length;
   }
   function compactOf(c) {
-    return { n: c.shop, p: c.phone, e: c.email, a: c.address, c: c.currency, t: c.tagline, w: c.wa, k: c.color, b: settings.photoBase || '', l: (c.links || []).map(l => [l.label, l.url]), o: c.opts ? { a: c.opts.open ? 1 : 0, d: c.opts.delivery ? 1 : 0, k: c.opts.pickup ? 1 : 0, f: c.opts.fee, m: c.opts.min, n: c.opts.notice, y: c.opts.pay || [] } : undefined, i: c.items.map(x => { const inf = x.info || {}; return [x.name, x.price, x.unit, x.category, x.stock, x.photo ? (settings.photoBase && x.photo.startsWith(settings.photoBase) ? x.photo.slice(settings.photoBase.length) : x.photo) : '', x.id || '', (inf.o || []).filter(o => o && o.l).map(o => [o.l, (o.p === '' || o.p == null) ? null : Number(o.p)]), (inf.x || []).slice(0, 4), String(inf.d || '').slice(0, 600)]; }) };
+    return { n: c.shop, p: c.phone, e: c.email, a: c.address, c: c.currency, t: c.tagline, w: c.wa, k: c.color, b: settings.photoBase || '', l: (c.links || []).map(l => [l.label, l.url]), o: c.opts ? { a: c.opts.open ? 1 : 0, d: c.opts.delivery ? 1 : 0, k: c.opts.pickup ? 1 : 0, f: c.opts.fee, m: c.opts.min, n: c.opts.notice, y: c.opts.pay || [] } : undefined, s: c.style || undefined, i: c.items.map(x => { const inf = x.info || {}; return [x.name, x.price, x.unit, x.category, x.stock, x.photo ? (settings.photoBase && x.photo.startsWith(settings.photoBase) ? x.photo.slice(settings.photoBase.length) : x.photo) : '', x.id || '', (inf.o || []).filter(o => o && o.l).map(o => [o.l, (o.p === '' || o.p == null) ? null : Number(o.p)]), (inf.x || []).slice(0, 4), String(inf.d || '').slice(0, 600)]; }) };
   }
   async function packCatalog(c) {
     const compact = compactOf(c);

@@ -23,7 +23,10 @@ const b64u = (buf: ArrayBuffer | Uint8Array) => {
 let keyPromise: Promise<CryptoKey> | null = null;
 function signingKey() {
   if (!keyPromise) {
-    const jwk = JSON.parse(Deno.env.get("LICENSE_PRIVATE_JWK") || "{}");
+    let jwk: Record<string, unknown> = {};
+    try { jwk = JSON.parse((Deno.env.get("LICENSE_PRIVATE_JWK") || "{}").trim()); } catch (_) { throw new Error("LICENSE_PRIVATE_JWK is not valid JSON"); }
+    if (!jwk.d) throw new Error("LICENSE_PRIVATE_JWK has no private part ('d'). You probably pasted the PUBLIC key. Use the PRIVATE key.");
+    delete jwk.key_ops; delete jwk.ext; delete jwk.use;
     keyPromise = crypto.subtle.importKey("jwk", jwk, { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
   }
   return keyPromise;
@@ -45,8 +48,8 @@ Deno.serve(async (req) => {
     const label = String(body.label || "").slice(0, 80);
     if (device.length < 16) return json({ error: "device" }, 400);
 
-    const { data: prof } = await admin.from("profiles").select("shop_id").eq("id", u.user.id).maybeSingle();
-    if (!prof?.shop_id) return json({ error: "no_shop" }, 404);
+    const { data: prof, error: pe } = await admin.from("profiles").select("shop_id").eq("id", u.user.id).maybeSingle();
+    if (!prof?.shop_id) return json({ error: "no_shop", message: pe ? "profiles query failed: " + pe.message : (prof ? "profile has no shop_id" : "no profile row for user " + String(u.user.id).slice(0, 8) + " (" + (u.user.email || "") + ")") }, 404);
     const { data: shop } = await admin.from("shops")
       .select("id,plan_id,status,trial_ends_at,paid_until").eq("id", prof.shop_id).single();
     const { data: plat } = await admin.from("platform_settings")

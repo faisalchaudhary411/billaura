@@ -58,6 +58,7 @@
       </div>
       <div class="section-title" style="padding-left:0">Quick actions</div>
       <div class="st-act" data-view="store-items"><div class="st-ai amb">${C().ico('box')}</div><div><b>Manage Items</b><span class="${oos ? 'warn' : ''}">${oos ? 'Out of stock · ' + oos + ' item' + (oos === 1 ? '' : 's') : 'All items in stock'}</span></div><i>›</i></div>
+      <div class="st-act" data-action="st-design"><div class="st-ai pnk">🎨</div><div><b>Store design</b><span>Theme · logo · banner · colours · layout</span></div><i>›</i></div>
       <div class="st-act" data-action="st-pay"><div class="st-ai amb">💳</div><div><b>Payment methods</b><span>JazzCash · Easypaisa · Bank · COD</span></div><i>›</i></div>
       <div class="st-act" data-action="st-coupons"><div class="st-ai pnk">🏷</div><div><b>Coupons</b><span>Discount codes for customers</span></div><i>›</i></div>
       <div class="st-act" data-view="store-orders"><div class="st-ai pnk">${C().ico('cart')}</div><div><b>Manage Orders</b><span>${delivered} delivered till date</span></div><i>›</i></div>
@@ -272,6 +273,79 @@
     if (!d && !o.length && !ED.x.length) delete s.storeInfo[ED.id]; else s.storeInfo[ED.id] = { d, o, x: ED.x.slice() };
     ED.gone.forEach(f => { try { C().removeExtraPhoto(f); } catch (e) {} });
     ED = null; C().persist(); H().close(); toast('Updating your store…'); C().republishStore(true).then(() => toast('Store updated')).catch(() => toast('Saved. Tap Update Store Page to publish.')); redraw();
+  };
+
+  // ---------- store design (theme, logo, banner, colours, fonts, layout) ----------
+  const THEME_META = [
+    { id: 'classic', name: 'Classic', bg: '#F6F7F9', card: '#fff', hero: null, ink: '#14161B' },
+    { id: 'minimal', name: 'Minimal', bg: '#FFFFFF', card: '#fff', hero: '#111111', ink: '#111', plain: true },
+    { id: 'bold', name: 'Bold', bg: '#F4F4F5', card: '#fff', hero: '#F43F5E', ink: '#14161B' },
+    { id: 'elegant', name: 'Elegant', bg: '#FBF8F3', card: '#fff', hero: '#8B6B3E', ink: '#2B2118', plain: true },
+    { id: 'fresh', name: 'Fresh', bg: '#F1F9F4', card: '#fff', hero: '#12924F', ink: '#14161B' },
+    { id: 'night', name: 'Night', bg: '#0F1115', card: '#181B21', hero: '#FF4D6A', ink: '#F2F3F5' }
+  ];
+  const SW = ['#EF1A3C', '#F97316', '#F59E0B', '#12924F', '#0E7C8A', '#2563EB', '#7C3AED', '#DB2777', '#111111'];
+  let SD = null;
+  const opt = (k, items) => `<div class="chip-row" style="margin-bottom:10px">${items.map(([v, l]) => `<button type="button" class="cat-chip${(SD[k] || '') === v ? ' active' : ''}" data-action="sd-opt" data-k="${k}" data-v="${v}">${l}</button>`).join('')}</div>`;
+  const imgBox = (k, label, hint) => { const f = SD[k]; return `<div class="form-group"><label class="form-label">${label}</label><div style="display:flex;gap:10px;align-items:center">
+      <div class="sd-img ${k}">${f ? `<img src="${h(phUrl(f))}" alt="">` : '<span>None</span>'}</div>
+      <div style="display:grid;gap:6px;flex:1"><label class="btn btn-outline btn-sm" for="sdIn_${k}" style="text-align:center">${f ? 'Change' : 'Upload'}</label>
+      ${k === 'logo' && S().logo ? '<button type="button" class="btn btn-ghost btn-sm" data-action="sd-biz-logo">Use my business logo</button>' : ''}
+      ${f ? `<button type="button" class="btn btn-ghost btn-sm" style="color:#C0213A" data-action="sd-img-clear" data-k="${k}">Remove</button>` : ''}</div>
+      <input type="file" id="sdIn_${k}" accept="image/*" hidden></div><div class="text-sm text-secondary" style="margin-top:4px">${hint}</div></div>`; };
+  function sdBody() {
+    const col = /^#[0-9a-f]{6}$/i.test(SD.color || '') ? SD.color : '';
+    return `<div class="form-label">Theme</div>
+      <div class="sd-themes">${THEME_META.map(t => `<button type="button" class="sd-th${(SD.theme || 'classic') === t.id ? ' on' : ''}" data-action="sd-theme" data-v="${t.id}"><div class="sd-mock" style="background:${t.bg}"><div class="sd-hero" style="background:${t.plain ? t.card : (t.hero || '#EF1A3C')};${t.plain ? 'border-bottom:1px solid #0001' : ''}"><i style="background:${t.plain ? t.ink : '#fff8'}"></i></div><div class="sd-cards"><b style="background:${t.card}"></b><b style="background:${t.card}"></b><b style="background:${t.card}"></b></div></div><span>${t.name}</span></button>`).join('')}</div>
+      ${imgBox('logo', 'Store logo', 'Square picture works best. Shown in the header and top banner.')}
+      ${imgBox('banner', 'Banner photo (optional)', 'Wide photo of your shop or products. Turn on "Photo banner" below to show it.')}
+      <div class="form-group"><label class="form-label">Brand colour</label><div class="sd-sw">${SW.map(c => `<button type="button" class="${col.toLowerCase() === c.toLowerCase() ? 'on' : ''}" style="background:${c}" data-action="sd-swatch" data-v="${c}" aria-label="${c}"></button>`).join('')}<label class="sd-custom" title="Pick any colour"><input type="color" id="sdColor" value="${col || '#EF1A3C'}">＋</label>${col ? '<button type="button" class="btn btn-ghost btn-sm" data-action="sd-swatch" data-v="">Theme colour</button>' : ''}</div></div>
+      <div class="form-label">Header style</div>${opt('hero', [['', 'Theme'], ['grad', 'Colour'], ['img', 'Photo banner'], ['plain', 'Plain']])}
+      <div class="form-label">Product cards</div>${opt('card', [['', 'Theme'], ['square', 'Square'], ['tall', 'Tall'], ['list', 'List'], ['bare', 'Minimal']])}
+      <div class="form-label">Font</div>${opt('font', [['', 'Theme'], ['sans', 'Modern'], ['serif', 'Classic serif'], ['rounded', 'Rounded'], ['mono', 'Mono']])}
+      <div class="form-label">Corners</div>${opt('radius', [['', 'Theme'], ['sm', 'Sharp'], ['md', 'Soft'], ['lg', 'Round'], ['pill', 'Pill']])}
+      <div class="form-group"><label class="form-label">Top announcement bar (optional)</label><input class="form-input" id="sdAnn" maxlength="90" value="${h(SD.ann || '')}" placeholder="e.g. Free delivery above Rs 3000"></div>
+      <div class="form-group"><label class="form-label">About your shop (optional)</label><textarea class="form-input" id="sdAbout" rows="3" maxlength="400" placeholder="Tell customers who you are, how long you have been open, return policy…">${h(SD.about || '')}</textarea></div>
+      <button class="btn btn-primary btn-block" data-action="sd-save">Save &amp; update store</button>
+      <button class="btn btn-ghost btn-block" style="margin-top:6px" data-action="sd-reset">Reset to default look</button>`;
+  }
+  function sdKeep() { const g = id => document.getElementById(id); if (g('sdAnn')) SD.ann = g('sdAnn').value.trim(); if (g('sdAbout')) SD.about = g('sdAbout').value.trim(); }
+  function sdDraw() {
+    sdKeep(); const box = document.getElementById('sdBody'); if (!box) return; box.innerHTML = sdBody();
+    ['logo', 'banner'].forEach(k => { const el = document.getElementById('sdIn_' + k); if (el) el.onchange = async e => { const f = e.target.files && e.target.files[0]; if (f) sdUpload(k, f); }; });
+    const c = document.getElementById('sdColor'); if (c) c.onchange = () => { sdKeep(); SD.color = c.value; sdDraw(); };
+  }
+  async function sdUpload(k, fileOrBlob) {
+    try {
+      toast('Uploading…');
+      const pk = fileOrBlob.blob ? fileOrBlob : await C().compressImage(fileOrBlob, k === 'logo' ? 360 : 1400);
+      const file = await C().uploadExtraPhoto(k, pk.blob); const old = SD[k]; SD[k] = file; if (old && old !== file) SD._gone = (SD._gone || []).concat(old);
+      if (k === 'banner' && !SD.hero) SD.hero = 'img';
+      sdDraw(); toast('Uploaded');
+    } catch (er) { toast(er.message || 'Could not upload. Check your internet and cloud sign-in.'); }
+  }
+  A['st-design'] = () => {
+    if (C().isStaff()) return toast('Only the owner can change the store design');
+    SD = Object.assign({}, S().storeStyle || {});
+    H().modal('Store design', `<div class="modal-body" id="sdBody"></div>`); sdDraw();
+  };
+  A['sd-theme'] = t => { sdKeep(); const keep = { logo: SD.logo, banner: SD.banner, ann: SD.ann, about: SD.about, _gone: SD._gone }; SD = Object.assign({ theme: t.dataset.v }, keep); sdDraw(); };
+  A['sd-opt'] = t => { sdKeep(); const k = t.dataset.k, v = t.dataset.v; if (v) SD[k] = v; else delete SD[k]; if (k === 'hero' && v === 'img' && !SD.banner) toast('Upload a banner photo to see this style'); sdDraw(); };
+  A['sd-swatch'] = t => { sdKeep(); if (t.dataset.v) SD.color = t.dataset.v; else delete SD.color; sdDraw(); };
+  A['sd-img-clear'] = t => { sdKeep(); const k = t.dataset.k; if (SD[k]) SD._gone = (SD._gone || []).concat(SD[k]); delete SD[k]; sdDraw(); };
+  A['sd-biz-logo'] = async () => {
+    try { const b = await (await fetch(S().logo)).blob(); const f = new File([b], 'logo.png', { type: b.type || 'image/png' }); sdUpload('logo', f); } catch (e) { toast('Could not read your business logo'); }
+  };
+  A['sd-reset'] = () => { if (SD) { (SD._gone = (SD._gone || [])); if (SD.logo) SD._gone.push(SD.logo); if (SD.banner) SD._gone.push(SD.banner); } const g = SD && SD._gone; SD = { _gone: g }; sdDraw(); };
+  A['sd-save'] = async () => {
+    if (!SD) return; sdKeep(); const s = S(), gone = SD._gone || []; const o = Object.assign({}, SD); delete o._gone;
+    Object.keys(o).forEach(k => { if (o[k] === '' || o[k] == null) delete o[k]; });
+    if (o.theme === 'classic') delete o.theme;
+    if (Object.keys(o).length) s.storeStyle = o; else delete s.storeStyle;
+    gone.filter(f => f && f !== o.logo && f !== o.banner).forEach(f => { try { C().removeExtraPhoto(f); } catch (e) {} });
+    SD = null; C().persist(); H().close(); toast('Updating your store…');
+    try { await C().republishStore(true); toast('Store design saved'); } catch (e) { toast('Saved. Tap Update Store Page to publish.'); }
+    redraw();
   };
 
   // ---------- payment methods ----------
