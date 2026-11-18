@@ -232,22 +232,27 @@
 
   // ---- checkout ----
   let PAY = { mode: 'Cash', cash: 0, bank: 0, online: 0 };
+  A['pz-pick'] = t => { const el = document.getElementById('pzName'); if (!el) return; el.value = t.dataset.n; const sg = document.getElementById('pzSug'); if (sg) sg.innerHTML = ''; pzFill(el); };
   A['pz-charge'] = () => {
     if (!P.lines.length) return;
     if (S().requireShift && !S().shiftOpen) { toast('Open a shift first'); return go('shift'); }
     const c = posCalc();
     PAY = { mode: 'Cash', cash: 0, bank: 0, online: 0 };
-    const dl = C().customers.map(x => `<option value="${h(x.name)}">`).join('');
     modal('Payment', `<div class="modal-body">
       <div class="pz-due"><span>${c.credit ? 'To pay after exchange' : 'Amount due'}</span><b>${cur()} ${m(c.payable)}</b></div>${P.exchange && P.exchange.amount > c.total + 0.001 ? `<div class="pz-change">Exchange credit is more than this bill. You will give back <b>${cur()} ${m(r2(P.exchange.amount - c.total))}</b>.</div>` : ''}
       <div class="chip-row" id="pzModes">${['Cash', 'Bank', 'Online', 'Split', 'Credit'].map((k, i) => `<button class="cat-chip${i ? '' : ' active'}" data-action="pz-mode" data-v="${k}">${k === 'Bank' ? 'Card/Bank' : k === 'Online' ? 'Wallet' : k === 'Credit' ? 'Udhaar' : k}</button>`).join('')}</div>
       <div id="pzPayBody"></div>
-      <div class="form-row" style="margin-top:10px"><div class="form-group"><label class="form-label">Customer ${'(optional)'}</label><input class="form-input" id="pzName" list="pzCust" value="${h(P.name)}" data-in="pz-cname" placeholder="Walk-in" autocomplete="off"><datalist id="pzCust">${dl}</datalist></div>
+      <div class="form-row" style="margin-top:10px"><div class="form-group"><label class="form-label">Customer ${'(optional)'}</label><input class="form-input" id="pzName" value="${h(P.name)}" data-in="pz-cname" placeholder="Walk-in" autocomplete="off"><div class="pz-sug" id="pzSug"></div></div>
       <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="pzPhone" type="tel" value="${h(P.phone)}" placeholder="03XX…"></div></div>
       <button class="btn btn-primary btn-block btn-lg" data-action="pz-pay">Complete sale</button></div>`);
     drawPay();
   };
-  E.inputs['pz-cname'] = el => { const x = C().customers.find(k => k.name.toLowerCase() === el.value.trim().toLowerCase()); if (x && x.phone) { const ph = document.getElementById('pzPhone'); if (ph && !ph.value) ph.value = x.phone; } };
+  E.inputs['pz-cname'] = el => {
+    const sg = document.getElementById('pzSug'), q = el.value.trim().toLowerCase();
+    if (sg) sg.innerHTML = !q ? '' : C().customers.filter(k => k.name && k.name.toLowerCase().includes(q) && k.name.toLowerCase() !== q).slice(0, 4).map(k => `<button type="button" class="cat-chip" data-action="pz-pick" data-n="${h(k.name)}">${h(k.name)}</button>`).join('');
+    pzFill(el);
+  };
+  const pzFill = el => { const x = C().customers.find(k => k.name.toLowerCase() === el.value.trim().toLowerCase()); if (x && x.phone) { const ph = document.getElementById('pzPhone'); if (ph && !ph.value) ph.value = x.phone; } };
   function drawPay() {
     const c = posCalc(), b = document.getElementById('pzPayBody'); if (!b) return;
     const k = PAY.mode, due = c.payable;

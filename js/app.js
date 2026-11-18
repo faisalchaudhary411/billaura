@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2.4.0';
+  const APP_VERSION = '2.4.2';
 
   const STORAGE = {
     products: 'sb_products_v2',
@@ -627,6 +627,7 @@
         if (settings._storeHash && !window._storeChecked) { window._storeChecked = true; republishStore(true).then(() => { if (currentView === 'online-store') render(); }).catch(() => {}); } title.textContent = 'Online Store'; content.innerHTML = viewOnlineStore(); },
       pos: () => { title.textContent = 'Quick Sale (POS)'; content.innerHTML = viewPOS(); bindPOS(); },
       'stock-adjust': () => { title.textContent = 'Stock Adjustment'; content.innerHTML = viewStockAdjust(); },
+      'bulk-restock': () => { title.textContent = 'Restock by Category'; content.innerHTML = viewBulkRestock(); },
       'payments-in': () => { title.textContent = 'Payment-In'; content.innerHTML = paymentList('in'); },
       'payments-out': () => { title.textContent = 'Payment-Out'; content.innerHTML = paymentList('out'); },
       cheques: () => { title.textContent = 'Cheque'; content.innerHTML = viewCheques(); },
@@ -1196,7 +1197,7 @@
     const m = { home: null, more: null, dashboard: 'reports', products: 'items_view', invoices: 'sales', customers: 'parties', 'stock-summary': 'items_view', 'low-stock': 'items_view',
       purchases: 'purchases', suppliers: 'purchases', expenses: 'expenses', 'sale-report': 'reports', 'profit-loss': 'reports', 'party-pl': 'reports', 'item-pl': 'reports', 'trial-balance': 'reports', 'balance-sheet': 'reports', 'bill-pnl': 'reports', 'daybook-detail': 'reports',
       banks: 'banks', 'bank-ledger': 'banks', 'cash-in-hand': 'banks', loans: 'banks', 'other-income': 'banks', cheques: 'banks', 'payments-in': 'receive_payment', 'payments-out': 'banks',
-      'barcode-gen': 'items_edit', 'stock-adjust': 'items_edit', reminders: 'parties', 'payment-reminders': 'receive_payment', 'service-reminders': 'parties', pos: 'sales', recycle: 'delete' };
+      'barcode-gen': 'items_edit', 'stock-adjust': 'items_edit', 'bulk-restock': 'items_edit', reminders: 'parties', 'payment-reminders': 'receive_payment', 'service-reminders': 'parties', pos: 'sales', recycle: 'delete' };
     { const ev = window.BillauraExt && BillauraExt.views && BillauraExt.views[view]; if (ev && (!ev.when || ev.when())) return ev.perm || null; }
     if (view === 'create-invoice') return type === 'purchase' ? 'purchases' : type === 'return' ? 'returns' : 'sales';
     if (view === 'app-lock' || view === 'account') return 'owner';
@@ -3895,6 +3896,7 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
   function viewStockAdjust() {
     const cur = settings.currency || 'Rs';
     return `<div class="fade-in" style="padding:16px">
+      <button class="btn btn-outline btn-block" style="margin-bottom:14px" data-view="bulk-restock">Restock a whole category →</button>
       <p class="text-sm text-secondary mb-16">Record damage, loss, found stock, or corrections. This updates quantity only.</p>
       <div class="form-group"><label class="form-label">Product</label>
         <select class="form-select" id="saProduct">
@@ -3924,6 +3926,75 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
       <button class="btn btn-primary btn-lg btn-block" data-action="save-stock-adjust">Save Adjustment</button>
     </div>`;
   }
+
+  // ---------- Restock by category ----------
+  const BRK = { cat: null, mode: 'in', only: 'all', q: '', vals: {}, fill: '' };
+  const brkItems = () => products.filter(p => ((p.category || '').trim() || '__none__') === BRK.cat && (!BRK.q || p.name.toLowerCase().includes(BRK.q))
+    && (BRK.only === 'all' || (BRK.only === 'out' ? (Number(p.stock) || 0) <= 0 : (Number(p.stock) || 0) <= (Number(p.lowStock) || 5))));
+  function viewBulkRestock() {
+    const cats = categoryList(), hasNone = products.some(p => !(p.category || '').trim());
+    const all = cats.concat(hasNone ? ['__none__'] : []);
+    if (!all.includes(BRK.cat)) { BRK.cat = all[0] || null; BRK.vals = {}; }
+    if (!all.length) return emptyState('box', 'No items yet', 'Add items first, then you can restock them by category.', 'Add Product', null, 'add-product');
+    const nm = c => c === '__none__' ? 'No category' : c;
+    const n = c => products.filter(p => ((p.category || '').trim() || '__none__') === c).length;
+    return `<div class="fade-in brk" style="padding:12px 16px 110px">
+      <div class="form-label">1. Choose category</div>
+      <div class="cat-chips" style="padding:0;margin-bottom:12px">${all.map(c => `<button class="cat-chip${c === BRK.cat ? ' active' : ''}" data-brk-cat="${escapeHtml(c)}">${escapeHtml(nm(c))} (${n(c)})</button>`).join('')}</div>
+      <div class="form-label">2. What do you want to do?</div>
+      <div class="cat-chips" style="padding:0;margin-bottom:12px"><button class="cat-chip${BRK.mode === 'in' ? ' active' : ''}" data-brk-mode="in">Add to stock (+)</button><button class="cat-chip${BRK.mode === 'set' ? ' active' : ''}" data-brk-mode="set">Set stock to</button></div>
+      <div class="form-label">3. Quantity</div>
+      <div style="display:flex;gap:8px;margin-bottom:6px"><input class="form-input" id="brkFill" type="number" inputmode="decimal" min="0" step="any" placeholder="Same qty for every item below" value="${escapeHtml(BRK.fill)}" style="flex:1;min-width:0"><button class="btn btn-outline" data-brk-fill>Fill all</button></div>
+      <div class="text-sm text-secondary" style="margin-bottom:10px">Or type a different quantity for each item. Leave blank to skip an item.</div>
+      <div class="cat-chips" style="padding:0;margin-bottom:8px"><button class="cat-chip${BRK.only === 'all' ? ' active' : ''}" data-brk-only="all">All</button><button class="cat-chip${BRK.only === 'out' ? ' active' : ''}" data-brk-only="out">Out of stock</button><button class="cat-chip${BRK.only === 'low' ? ' active' : ''}" data-brk-only="low">Low stock</button></div>
+      <input class="form-input" id="brkSearch" type="search" placeholder="Search in this category" value="${escapeHtml(BRK.q)}" style="margin-bottom:8px">
+      <div id="brkList">${brkListHtml()}</div>
+      <div class="brk-bar"><div><b id="brkCount">0 items</b><span class="text-sm text-secondary" id="brkSub"></span></div><button class="btn btn-primary" data-brk-save>Save restock</button></div>
+    </div>`;
+  }
+  function brkListHtml() {
+    const list = brkItems();
+    if (!list.length) return '<div class="doc-empty" style="padding:20px 0">No items match.</div>';
+    return `<div class="list-group" style="border-radius:12px;overflow:hidden">${list.map(p => `<div class="brk-row"><div style="min-width:0"><div class="brk-n">${escapeHtml(p.name)}</div><div class="text-sm text-secondary">Stock ${Number(p.stock) || 0}${p.unit ? ' ' + escapeHtml(p.unit) : ''} <span class="brk-new" data-new="${p.id}"></span></div></div>
+      <input class="brk-q" type="number" inputmode="decimal" min="0" step="any" data-id="${p.id}" placeholder="0" value="${escapeHtml(BRK.vals[p.id] == null ? '' : String(BRK.vals[p.id]))}"></div>`).join('')}</div>`;
+  }
+  function brkRefresh() {
+    let n = 0;
+    document.querySelectorAll('.brk-q').forEach(inp => {
+      const p = products.find(x => x.id === inp.dataset.id), v = parseFloat(inp.value), tag = document.querySelector('.brk-new[data-new="' + inp.dataset.id + '"]');
+      if (!p || !(v >= 0) || inp.value === '') { if (tag) tag.textContent = ''; return; }
+      n++; const b = Number(p.stock) || 0; if (tag) tag.textContent = '→ ' + (BRK.mode === 'in' ? b + v : v);
+    });
+    const c = document.getElementById('brkCount'); if (c) c.textContent = n + (n === 1 ? ' item' : ' items') + ' to update';
+  }
+  function brkRedraw() { const c = document.getElementById('appContent'); if (c) { c.innerHTML = viewBulkRestock(); brkRefresh(); } }
+  function brkSave() {
+    const cur = [];
+    Object.keys(BRK.vals).forEach(id => { const v = parseFloat(BRK.vals[id]); const p = products.find(x => x.id === id); if (p && v >= 0 && BRK.vals[id] !== '') cur.push([p, v]); });
+    if (!cur.length) { toast('Enter a quantity for at least one item'); return; }
+    let changed = 0;
+    cur.forEach(([p, v]) => {
+      const before = Number(p.stock) || 0, after = BRK.mode === 'in' ? before + v : v; if (after === before) return;
+      p.stock = after; changed++;
+      try { window.BillauraExt && BillauraExt.onStock && BillauraExt.onStock(p, after - before, 'adjust'); } catch (e) {}
+      stockMovements.unshift({ id: uid(), productId: p.id, productName: p.name, type: after >= before ? 'in' : 'out', qty: Math.abs(after - before), date: new Date().toISOString(), note: 'Restock by category' + (BRK.cat === '__none__' ? '' : ': ' + BRK.cat) });
+    });
+    BRK.vals = {}; BRK.fill = ''; persist(); toast(changed ? 'Stock updated for ' + changed + (changed === 1 ? ' item' : ' items') : 'Nothing changed'); brkRedraw();
+  }
+  document.addEventListener('click', e => {
+    const t = e.target.closest('[data-brk-cat],[data-brk-mode],[data-brk-only],[data-brk-fill],[data-brk-save]'); if (!t || !document.querySelector('.brk')) return;
+    if (t.hasAttribute('data-brk-cat')) { BRK.cat = t.dataset.brkCat; BRK.vals = {}; brkRedraw(); }
+    else if (t.hasAttribute('data-brk-mode')) { BRK.mode = t.dataset.brkMode; brkRedraw(); }
+    else if (t.hasAttribute('data-brk-only')) { BRK.only = t.dataset.brkOnly; brkRedraw(); }
+    else if (t.hasAttribute('data-brk-fill')) { const v = (document.getElementById('brkFill') || {}).value; if (v === '' || !(parseFloat(v) >= 0)) { toast('Type a quantity first'); return; } BRK.fill = v; brkItems().forEach(p => { BRK.vals[p.id] = v; }); document.getElementById('brkList').innerHTML = brkListHtml(); brkRefresh(); }
+    else if (t.hasAttribute('data-brk-save')) brkSave();
+  });
+  document.addEventListener('input', e => {
+    if (!document.querySelector('.brk')) return;
+    if (e.target.classList && e.target.classList.contains('brk-q')) { BRK.vals[e.target.dataset.id] = e.target.value; brkRefresh(); }
+    else if (e.target.id === 'brkSearch') { BRK.q = e.target.value.trim().toLowerCase(); document.getElementById('brkList').innerHTML = brkListHtml(); brkRefresh(); }
+    else if (e.target.id === 'brkFill') BRK.fill = e.target.value;
+  });
 
   // ---------- Item photos ----------
   // Cloud copy lives in the Supabase 'product-photos' bucket (settings.photos = { itemId: { f: fileName } }, synced with settings).
@@ -5069,6 +5140,7 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
             <button class="modal-close" data-action="close-modal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
           </div>
           <div class="menu-list">
+            <button class="menu-item" data-action="bulk-restock-go"><div>Restock by category<span class="menu-sub">Add or set stock for a whole category</span></div></button>
             <button class="menu-item" data-action="bulk-price"><div>Change prices in bulk<span class="menu-sub">+/− by % or by ${escapeHtml(settings.currency)} amount</span></div></button>
             <button class="menu-item" data-action="bulk-export"><div>Export products (CSV)<span class="menu-sub">Opens in Excel / Google Sheets</span></div></button>
             <button class="menu-item" data-action="bulk-import-pick"><div>Import products (CSV)<span class="menu-sub">Add new or update existing</span></div></button>
@@ -5877,7 +5949,7 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
         ${tg('sale', 'sale', 'Sale')}${msub('sale', [['Sale Invoice', 'data-action="list-sales"'], ['Payment-In', 'data-view="payments-in"'], settings.enableGoodsReturn !== false && ['Sale Return (Credit Note)', 'data-action="list-returns"'], settings.enableEstimate !== false && ['Estimate/Quotation', 'data-action="list-estimates"'], settings.enableDeliveryNote !== false && ['Delivery Note', 'data-action="list-sales-dn"'], ['Mobile POS', 'data-view="pos"']].filter(Boolean))}
         ${tg('purchase', 'cart', 'Purchase')}${msub('purchase', [['Purchase Bills', 'data-view="purchases"'], ['Payment - Out', 'data-view="payments-out"'], ['Suppliers', 'data-view="suppliers"']])}
         ${mrow('wallet', 'Expenses', 'data-view="expenses"')}${mrow('users', 'Parties (Customers)', 'data-view="customers"')}${mrow('store', 'My Online Store', 'data-view="online-store"')}${mrow('report', 'Reports', 'data-view="reports"')}
-        ${mrow('box', 'Stock Adjustment', 'data-view="stock-adjust"')}${mrow('chart', 'Other Income', 'data-view="other-income"')}</div>
+        ${mrow('box', 'Stock Adjustment', 'data-view="stock-adjust"')}${mrow('box', 'Restock by Category', 'data-view="bulk-restock"')}${mrow('chart', 'Other Income', 'data-view="other-income"')}</div>
       ${window.BillauraExt && BillauraExt.menuCard ? BillauraExt.menuCard() : ''}
       <div class="menu-card"><div class="menu-h">Cash &amp; Bank</div>${mrow('bank', 'Bank Accounts', 'data-view="banks"')}${mrow('cash', 'Cash In-Hand', 'data-view="cash-in-hand"')}${mrow('cheque', 'Cheques', 'data-view="cheques"')}${mrow('loan', 'Loan Accounts', 'data-view="loans"')}</div>
       <div class="menu-card"><div class="menu-h">Tools</div>
@@ -6646,6 +6718,7 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
       case 'add-product': openProductModal(); break;
       case 'filter-cat': productCat = t.dataset.cat || ''; render(); break;
       case 'bulk-tools': openBulkModal(); break;
+      case 'bulk-restock-go': closeModal(); setView('bulk-restock'); break;
       case 'bulk-export': exportProductsCSV(false); break;
       case 'bulk-template': exportProductsCSV(true); break;
       case 'bulk-price': if (!needPro('Bulk price change')) break; openBulkPriceModal(); break;
