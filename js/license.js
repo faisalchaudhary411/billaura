@@ -80,24 +80,25 @@
       const res = await sb.functions.invoke('license', { body: { device_id: deviceId(), label: deviceLabel() } });
       if (res.error) {
         let info = {};
+        const st = res.error.context && res.error.context.status;
         try { info = await res.error.context.json(); } catch (e) {}
-        lastErr = { code: info.error || 'network', message: info.message || '' };
+        lastErr = { code: info.error || (st ? 'http_' + st : 'network'), message: info.message || info.msg || (res.error.message || ''), status: st || 0 };
         if (info.error === 'device_limit' || info.error === 'device_revoked') { current = null; try { localStorage.removeItem(TOKEN_KEY); } catch (e) {} }
         return { ok: false, code: lastErr.code, message: lastErr.message };
       }
       const token = res.data && res.data.token;
       const p = await verify(token);
-      if (!p || p.dev !== deviceId() || p.sub !== sess.user.id) { lastErr = { code: 'bad_token', message: 'Licence could not be verified.' }; return { ok: false, code: 'bad_token' }; }
+      if (!p || p.dev !== deviceId() || p.sub !== sess.user.id) { lastErr = { code: 'bad_token', message: !p ? 'Signature did not match the public key in license-config.js' : (p.dev !== deviceId() ? 'Token is for another device' : 'Token is for another account') }; return { ok: false, code: 'bad_token' }; }
       current = p; lastErr = null; lastSeen = Math.max(lastSeen, p.iat * 1000);
       try { localStorage.setItem(TOKEN_KEY, token); } catch (e) {}
       return { ok: true };
-    } catch (e) { lastErr = { code: 'network', message: '' }; return { ok: false, code: 'network' }; }
+    } catch (e) { lastErr = { code: 'network', message: String(e && e.message || e).slice(0, 120) }; return { ok: false, code: 'network', message: lastErr.message }; }
   }
   function clear() { current = null; lastErr = null; try { localStorage.removeItem(TOKEN_KEY); } catch (e) {} }
   function state() {
     if (!enabled()) return { enabled: false, ok: true };
     if (current && now() / 1000 <= current.exp) return { enabled: true, ok: true, daysLeft: Math.max(0, Math.ceil((current.exp - now() / 1000) / 86400)) };
-    return { enabled: true, ok: false, reason: current ? 'expired' : (lastErr ? lastErr.code : 'unverified'), message: lastErr ? lastErr.message : '' };
+    return { enabled: true, ok: false, reason: current ? 'expired' : (lastErr ? lastErr.code : 'unverified'), message: lastErr ? lastErr.message : '', status: lastErr ? lastErr.status : 0 };
   }
   window.BillauraLicense = { enabled, init, refresh, clear, entitlement, now, state, deviceId };
 })();

@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2.4.2';
+  const APP_VERSION = '2.4.3';
 
   const STORAGE = {
     products: 'sb_products_v2',
@@ -6717,6 +6717,13 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
       case 'open-item-custom': openFieldsModal('Item Custom Fields', 'itemFields', 4); break;
       case 'add-product': openProductModal(); break;
       case 'filter-cat': productCat = t.dataset.cat || ''; render(); break;
+      case 'recheck-license': {
+        toast('Checking licence…');
+        const lr = window.BillauraLicense ? await BillauraLicense.refresh() : { ok: false };
+        window._lastPlanKey = undefined; toast(lr.ok ? 'Licence verified' : 'Still failing: ' + (lr.code || '') + (lr.message ? ' – ' + lr.message : ''), 5000);
+        try { render(); } catch (e) {}
+        break;
+      }
       case 'bulk-tools': openBulkModal(); break;
       case 'bulk-restock-go': closeModal(); setView('bulk-restock'); break;
       case 'bulk-export': exportProductsCSV(false); break;
@@ -8145,8 +8152,9 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
       if (st.ok) return '';
       const msg = st.reason === 'device_limit' || st.reason === 'device_revoked' ? (st.message || 'This device is not allowed on your licence. Contact support.')
         : st.reason === 'expired' ? 'Your licence needs to be re-checked. Connect to the internet and open Billaura.'
-        : 'Checking your licence… connect to the internet once so your plan can be verified.';
-      return `<div class="plan-banner" style="background:#FFF3CD;border-color:#F5B301;color:#7A5200"><strong>Licence:</strong> ${escapeHtml(msg)}</div>`;
+        : (st.reason === 'unverified' ? 'Checking your licence… connect to the internet once so your plan can be verified.'
+          : (st.reason === 'no_session' ? 'Sign in to verify your licence.' : 'Licence check failed (' + st.reason + (st.status ? ', HTTP ' + st.status : '') + ')' + (st.message ? ': ' + st.message : '') + '. Your plan shows as Free until this is fixed.'));
+      return `<div class="plan-banner" style="background:#FFF3CD;border-color:#F5B301;color:#7A5200"><strong>Licence:</strong> ${escapeHtml(msg)} <button type="button" class="linkish" data-action="recheck-license">Check again</button></div>`;
     } catch (e) { return ''; }
   }
   function planBannerHTML() {
@@ -8383,6 +8391,7 @@ try { window.BillauraExt && BillauraExt.stamp && BillauraExt.stamp(pmeta); } cat
     $('#modalRoot').innerHTML = `<div class="modal-overlay"><div class="pm-page">
       <div class="pm-head"><button class="pm-back" data-action="close-modal" aria-label="Back">←</button><h2>Plans &amp; Packages</h2></div>
       <div class="pm-scroll" style="padding:0 0 90px">
+        ${(() => { const b = licenseBannerHTML(); return b ? '<div style="padding:12px 16px 0">' + b + '</div>' : ''; })()}
         <div class="pl-hero"><div class="pl-hero-top"><div><small>Your plan</small><div class="pl-hero-name">${escapeHtml(planLabel())}</div></div><span class="pl-pill">${pill}</span></div>
           <div class="pl-hero-sub">${escapeHtml(statusTxt)}</div>${meters ? `<div class="pl-meters">${meters}</div>` : ''}</div>
         <div class="pl-wrap">
